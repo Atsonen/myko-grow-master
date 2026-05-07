@@ -22,8 +22,13 @@ export const Route = createFileRoute("/qc")({
 });
 
 function QcPage() {
-  const { units, events, strains } = useDataStore();
+  const store = useDataStore();
   const [q, setQ] = useState("");
+  const [showArchived, setShowArchived] = useState(false);
+
+  const units = store.units.filter((u) => showArchived || u.status !== "ARCHIVED");
+  const events = store.events.filter((e) => showArchived || !e.archived);
+  const strains = store.strains.filter((s) => showArchived || !s.archived);
 
   const qcEvents = useMemo(
     () => events.filter((e) => e.functionCode === "QC" || e.statusChange === "CONTAMINATED" || e.statusChange === "DISCARDED").sort((a, b) => b.eventTime.localeCompare(a.eventTime)),
@@ -34,12 +39,14 @@ function QcPage() {
   const riskyEvents = qcEvents.filter((e) => /haju|smell|märkä|moist|kuiv|dry|home|contam|trike|vihre/i.test(`${e.title} ${e.note ?? ""}`));
 
   const filtered = qcEvents.filter((e) => {
-    if (!q) return true;
     const unit = units.find((u) => u.code === e.unitCode);
+    if (!unit && !showArchived) return false;
+    if (!q) return true;
     const strain = strains.find((s) => s.code === unit?.strainCode);
     const text = `${e.unitCode} ${e.title} ${e.note ?? ""} ${unit?.type ?? ""} ${unit?.status ?? ""} ${strain?.code ?? ""}`.toLowerCase();
     return text.includes(q.toLowerCase());
   });
+  const hiddenCount = store.events.filter((e) => e.archived).length + store.units.filter((u) => u.status === "ARCHIVED").length;
 
   return (
     <div className="p-4 space-y-4">
@@ -58,16 +65,20 @@ function QcPage() {
             onChange={(e) => setQ(e.target.value)}
             className="max-w-sm h-8 font-mono text-xs"
           />
-          <div className="ml-auto text-[10px] font-mono text-muted-foreground">{filtered.length} / {qcEvents.length}</div>
+          <label className="flex items-center gap-1 text-[10px] font-mono uppercase text-muted-foreground">
+            <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} />
+            Show archived
+          </label>
+          <div className="ml-auto text-[10px] font-mono text-muted-foreground">{filtered.length} / {qcEvents.length}{!showArchived ? ` (${hiddenCount} archived hidden)` : ""}</div>
         </div>
         <div className="space-y-2">
           {filtered.map((event) => {
-            const unit = units.find((u) => u.code === event.unitCode);
-            const strain = strains.find((s) => s.code === unit?.strainCode);
+            const unit = units.find((u) => u.code === event.unitCode) ?? store.units.find((u) => u.code === event.unitCode);
+            const strain = strains.find((s) => s.code === unit?.strainCode) ?? store.strains.find((s) => s.code === unit?.strainCode);
             const note = `${event.title} ${event.note ?? ""}`.toLowerCase();
             const tags = inferRiskTags(note);
             return (
-              <div key={event.id} className="border border-border rounded p-3 bg-secondary/20">
+              <div key={event.id} className={`border border-border rounded p-3 bg-secondary/20 ${event.archived || unit?.status === "ARCHIVED" ? "opacity-60" : ""}`}>
                 <div className="flex flex-wrap items-start gap-2">
                   <FunctionBadge code={event.functionCode} />
                   {unit && <TypeBadge type={unit.type} />}
@@ -77,9 +88,7 @@ function QcPage() {
                   </Link>
                   <span className="ml-auto text-[10px] text-muted-foreground">{relativeTime(event.eventTime)}</span>
                 </div>
-                <div className="mt-2">
-                  <IdentifierTag value={identifierForEvent(event, unit, strain)} className="text-[10px]" />
-                </div>
+                <div className="mt-2"><IdentifierTag value={identifierForEvent(event, unit, strain)} className="text-[10px]" /></div>
                 <div className="mt-2 text-sm font-medium">{event.title}</div>
                 {event.note && <div className="text-xs text-muted-foreground mt-1 whitespace-pre-wrap">{event.note}</div>}
                 <div className="mt-2 flex flex-wrap gap-1">
@@ -113,10 +122,5 @@ function RiskPill({ tag }: { tag: string }) {
 
 function Stat({ icon, label, value, danger, warning }: { icon: React.ReactNode; label: string; value: number; danger?: boolean; warning?: boolean }) {
   const cls = danger ? "border-status-contaminated/40" : warning ? "border-status-warning/40" : "border-border";
-  return (
-    <div className={`bg-card rounded border ${cls} p-3`}>
-      <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">{icon}{label}</div>
-      <div className="mt-1 text-2xl font-mono">{value}</div>
-    </div>
-  );
+  return <div className={`bg-card rounded border ${cls} p-3`}><div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">{icon}{label}</div><div className="mt-1 text-2xl font-mono">{value}</div></div>;
 }
