@@ -14,6 +14,7 @@ import { Route as EventsRouteImport } from './routes/events'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as LineageRouteImport } from './routes/lineage'
 import { Route as QcRouteImport } from './routes/qc'
+import { Route as TransfersRouteImport } from './routes/transfers'
 import { Route as EventsNewRouteImport } from './routes/events.new'
 import { Route as TransfersNewRouteImport } from './routes/transfers.new'
 import { Route as UnitsUnitCodeRouteImport } from './routes/units.$unitCode'
@@ -43,6 +44,11 @@ const QcRoute = QcRouteImport.update({
   path: '/qc',
   getParentRoute: () => rootRouteImport,
 } as any)
+const TransfersRoute = TransfersRouteImport.update({
+  id: '/transfers',
+  path: '/transfers',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const EventsNewRoute = EventsNewRouteImport.update({
   id: '/new',
   path: '/new',
@@ -58,10 +64,6 @@ const UnitsUnitCodeRoute = UnitsUnitCodeRouteImport.update({
   path: '/$unitCode',
   getParentRoute: () => UnitsRoute,
 } as any)
-const TransfersRoute = rootRouteImport.createRoute({
-  id: '/transfers',
-  path: '/transfers',
-} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -69,6 +71,7 @@ export interface FileRoutesByFullPath {
   '/units': typeof UnitsRouteWithChildren
   '/lineage': typeof LineageRoute
   '/qc': typeof QcRoute
+  '/transfers': typeof TransfersRouteWithChildren
   '/events/new': typeof EventsNewRoute
   '/transfers/new': typeof TransfersNewRoute
   '/units/$unitCode': typeof UnitsUnitCodeRoute
@@ -79,6 +82,7 @@ export interface FileRoutesByTo {
   '/units': typeof UnitsRouteWithChildren
   '/lineage': typeof LineageRoute
   '/qc': typeof QcRoute
+  '/transfers': typeof TransfersRouteWithChildren
   '/events/new': typeof EventsNewRoute
   '/transfers/new': typeof TransfersNewRoute
   '/units/$unitCode': typeof UnitsUnitCodeRoute
@@ -90,16 +94,17 @@ export interface FileRoutesById {
   '/units': typeof UnitsRouteWithChildren
   '/lineage': typeof LineageRoute
   '/qc': typeof QcRoute
+  '/transfers': typeof TransfersRouteWithChildren
   '/events/new': typeof EventsNewRoute
   '/transfers/new': typeof TransfersNewRoute
   '/units/$unitCode': typeof UnitsUnitCodeRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/events' | '/units' | '/lineage' | '/qc' | '/events/new' | '/transfers/new' | '/units/$unitCode'
+  fullPaths: '/' | '/events' | '/units' | '/lineage' | '/qc' | '/transfers' | '/events/new' | '/transfers/new' | '/units/$unitCode'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/events' | '/units' | '/lineage' | '/qc' | '/events/new' | '/transfers/new' | '/units/$unitCode'
-  id: '__root__' | '/' | '/events' | '/units' | '/lineage' | '/qc' | '/events/new' | '/transfers/new' | '/units/$unitCode'
+  to: '/' | '/events' | '/units' | '/lineage' | '/qc' | '/transfers' | '/events/new' | '/transfers/new' | '/units/$unitCode'
+  id: '__root__' | '/' | '/events' | '/units' | '/lineage' | '/qc' | '/transfers' | '/events/new' | '/transfers/new' | '/units/$unitCode'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -148,6 +153,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof QcRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/transfers': {
+      id: '/transfers'
+      path: '/transfers'
+      fullPath: '/transfers'
+      preLoaderRoute: typeof TransfersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/events/new': {
       id: '/events/new'
       path: '/new'
@@ -180,8 +192,7 @@ const EventsRouteChildren: EventsRouteChildren = {
   EventsNewRoute: EventsNewRoute,
 }
 
-const EventsRouteWithChildren =
-  EventsRoute._addFileChildren(EventsRouteChildren)
+const EventsRouteWithChildren = EventsRoute._addFileChildren(EventsRouteChildren)
 
 interface UnitsRouteChildren {
   UnitsUnitCodeRoute: typeof UnitsUnitCodeRoute
@@ -191,8 +202,7 @@ const UnitsRouteChildren: UnitsRouteChildren = {
   UnitsUnitCodeRoute: UnitsUnitCodeRoute,
 }
 
-const UnitsRouteWithChildren =
-  UnitsRoute._addFileChildren(UnitsRouteChildren)
+const UnitsRouteWithChildren = UnitsRoute._addFileChildren(UnitsRouteChildren)
 
 interface TransfersRouteChildren {
   TransfersNewRoute: typeof TransfersNewRoute
@@ -202,8 +212,7 @@ const TransfersRouteChildren: TransfersRouteChildren = {
   TransfersNewRoute: TransfersNewRoute,
 }
 
-const TransfersRouteWithChildren =
-  TransfersRoute._addFileChildren(TransfersRouteChildren)
+const TransfersRouteWithChildren = TransfersRoute._addFileChildren(TransfersRouteChildren)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
