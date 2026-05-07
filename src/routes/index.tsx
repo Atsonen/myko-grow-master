@@ -19,7 +19,10 @@ export const Route = createFileRoute("/")({
 });
 
 function Dashboard() {
-  const { units, events, transfers } = useDataStore();
+  const store = useDataStore();
+  const units = store.units.filter((u) => u.status !== "ARCHIVED");
+  const events = store.events.filter((e) => !e.archived && units.some((u) => u.code === e.unitCode));
+  const transfers = store.transfers.filter((t) => !t.archived && units.some((u) => u.code === t.sourceUnitCode || u.code === t.targetUnitCode));
 
   const activeUnits = units.filter((u) => u.status === "ACTIVE");
   const activeBoxes = activeUnits.filter((u) => u.type === "BOX");
@@ -39,7 +42,6 @@ function Dashboard() {
     .sort((a, b) => b.transferTime.localeCompare(a.transferTime))
     .slice(0, 5);
 
-  // Stale = no event in 7+ days
   const lastEventByUnit = new Map<string, string>();
   for (const e of events) {
     const prev = lastEventByUnit.get(e.unitCode);
@@ -115,17 +117,9 @@ function Dashboard() {
           <CardContent className="space-y-1">
             {qcWarnings.length === 0 && <Empty />}
             {qcWarnings.map((e) => (
-              <Link
-                key={e.id}
-                to="/units/$unitCode"
-                params={{ unitCode: e.unitCode }}
-                className="flex items-start gap-2 text-xs p-2 rounded hover:bg-secondary border border-transparent hover:border-border"
-              >
+              <Link key={e.id} to="/units/$unitCode" params={{ unitCode: e.unitCode }} className="flex items-start gap-2 text-xs p-2 rounded hover:bg-secondary border border-transparent hover:border-border">
                 <FunctionBadge code={e.functionCode} />
-                <div className="flex-1 min-w-0">
-                  <div className="font-mono truncate">{e.unitCode}</div>
-                  <div className="text-muted-foreground truncate">{e.title}</div>
-                </div>
+                <div className="flex-1 min-w-0"><div className="font-mono truncate">{e.unitCode}</div><div className="text-muted-foreground truncate">{e.title}</div></div>
                 <span className="text-[10px] text-muted-foreground whitespace-nowrap">{relativeTime(e.eventTime)}</span>
               </Link>
             ))}
@@ -133,25 +127,13 @@ function Dashboard() {
         </Card>
 
         <Card className="bg-card border-border">
-          <CardHeader className="py-3">
-            <CardTitle className="text-sm font-mono uppercase tracking-wider text-muted-foreground">
-              Recent observations
-            </CardTitle>
-          </CardHeader>
+          <CardHeader className="py-3"><CardTitle className="text-sm font-mono uppercase tracking-wider text-muted-foreground">Recent observations</CardTitle></CardHeader>
           <CardContent className="space-y-1">
             {recentObservations.length === 0 && <Empty />}
             {recentObservations.map((e) => (
-              <Link
-                key={e.id}
-                to="/units/$unitCode"
-                params={{ unitCode: e.unitCode }}
-                className="flex items-start gap-2 text-xs p-2 rounded hover:bg-secondary border border-transparent hover:border-border"
-              >
+              <Link key={e.id} to="/units/$unitCode" params={{ unitCode: e.unitCode }} className="flex items-start gap-2 text-xs p-2 rounded hover:bg-secondary border border-transparent hover:border-border">
                 <FunctionBadge code={e.functionCode} />
-                <div className="flex-1 min-w-0">
-                  <div className="font-mono truncate">{e.unitCode}</div>
-                  <div className="text-muted-foreground truncate">{e.title}</div>
-                </div>
+                <div className="flex-1 min-w-0"><div className="font-mono truncate">{e.unitCode}</div><div className="text-muted-foreground truncate">{e.title}</div></div>
                 <span className="text-[10px] text-muted-foreground whitespace-nowrap">{relativeTime(e.eventTime)}</span>
               </Link>
             ))}
@@ -159,45 +141,24 @@ function Dashboard() {
         </Card>
 
         <Card className="bg-card border-border">
-          <CardHeader className="py-3">
-            <CardTitle className="text-sm font-mono uppercase tracking-wider text-muted-foreground">
-              Stale units (no update 7d+)
-            </CardTitle>
-          </CardHeader>
+          <CardHeader className="py-3"><CardTitle className="text-sm font-mono uppercase tracking-wider text-muted-foreground">Stale units (no update 7d+)</CardTitle></CardHeader>
           <CardContent className="space-y-1">
             {staleUnits.length === 0 && <Empty />}
             {staleUnits.map((u) => (
-              <Link
-                key={u.code}
-                to="/units/$unitCode"
-                params={{ unitCode: u.code }}
-                className="flex items-center justify-between text-xs p-2 rounded hover:bg-secondary border border-transparent hover:border-border"
-              >
-                <span className="font-mono">{u.code}</span>
-                <TypeBadge type={u.type} />
-                <span className="text-[10px] text-muted-foreground">
-                  {relativeTime(lastEventByUnit.get(u.code) ?? u.batchTime)}
-                </span>
+              <Link key={u.code} to="/units/$unitCode" params={{ unitCode: u.code }} className="flex items-center justify-between text-xs p-2 rounded hover:bg-secondary border border-transparent hover:border-border">
+                <span className="font-mono">{u.code}</span><TypeBadge type={u.type} /><span className="text-[10px] text-muted-foreground">{relativeTime(lastEventByUnit.get(u.code) ?? u.batchTime)}</span>
               </Link>
             ))}
           </CardContent>
         </Card>
 
         <Card className="bg-card border-border">
-          <CardHeader className="py-3">
-            <CardTitle className="text-sm font-mono uppercase tracking-wider text-muted-foreground">
-              Recent transfers
-            </CardTitle>
-          </CardHeader>
+          <CardHeader className="py-3"><CardTitle className="text-sm font-mono uppercase tracking-wider text-muted-foreground">Recent transfers</CardTitle></CardHeader>
           <CardContent className="space-y-1">
             {recentTransfers.length === 0 && <Empty />}
             {recentTransfers.map((t) => (
               <div key={t.id} className="flex items-center gap-2 text-xs p-2 rounded border border-border bg-secondary/30">
-                <ArrowLeftRight className="h-3 w-3 text-muted-foreground" />
-                <span className="font-mono">{t.sourceUnitCode}</span>
-                <span className="text-muted-foreground">→</span>
-                <span className="font-mono">{t.targetUnitCode}</span>
-                <span className="ml-auto text-[10px] text-muted-foreground">{relativeTime(t.transferTime)}</span>
+                <ArrowLeftRight className="h-3 w-3 text-muted-foreground" /><span className="font-mono">{t.sourceUnitCode}</span><span className="text-muted-foreground">→</span><span className="font-mono">{t.targetUnitCode}</span><span className="ml-auto text-[10px] text-muted-foreground">{relativeTime(t.transferTime)}</span>
               </div>
             ))}
           </CardContent>
@@ -207,34 +168,9 @@ function Dashboard() {
   );
 }
 
-function Empty() {
-  return <div className="text-xs text-muted-foreground italic px-2 py-3">— no entries —</div>;
-}
+function Empty() { return <div className="text-xs text-muted-foreground italic px-2 py-3">— no entries —</div>; }
 
-function StatTile({
-  label,
-  value,
-  icon,
-  accent,
-}: {
-  label: string;
-  value: number | string;
-  icon: React.ReactNode;
-  accent?: "contaminated" | "warning";
-}) {
-  const accentClass =
-    accent === "contaminated"
-      ? "border-status-contaminated/40"
-      : accent === "warning"
-        ? "border-status-warning/40"
-        : "border-border";
-  return (
-    <div className={`bg-card rounded border ${accentClass} p-3`}>
-      <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
-        {icon}
-        {label}
-      </div>
-      <div className="mt-1 text-2xl font-mono">{value}</div>
-    </div>
-  );
+function StatTile({ label, value, icon, accent }: { label: string; value: number | string; icon: React.ReactNode; accent?: "contaminated" | "warning"; }) {
+  const accentClass = accent === "contaminated" ? "border-status-contaminated/40" : accent === "warning" ? "border-status-warning/40" : "border-border";
+  return <div className={`bg-card rounded border ${accentClass} p-3`}><div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">{icon}{label}</div><div className="mt-1 text-2xl font-mono">{value}</div></div>;
 }
