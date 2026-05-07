@@ -9,9 +9,6 @@ import { Label } from "@/components/ui/label";
 import type { FunctionCode, UnitStatus } from "@/types";
 import { toast } from "sonner";
 
-const FUNCTIONS: FunctionCode[] = ["COL", "FRU", "OBS", "QC", "TRF", "HAR", "PREP"];
-const STATUSES: ("" | UnitStatus)[] = ["", "ACTIVE", "CONTAMINATED", "DISCARDED", "HARVESTED", "ARCHIVED"];
-
 export const Route = createFileRoute("/events/$eventId/edit")({
   head: () => ({ meta: [{ title: "Edit event — Myko Valvomo" }] }),
   component: EditEvent,
@@ -20,7 +17,9 @@ export const Route = createFileRoute("/events/$eventId/edit")({
 function EditEvent() {
   const { eventId } = Route.useParams();
   const navigate = useNavigate();
-  const { events, units } = useDataStore();
+  const { events, units, taxonomy } = useDataStore();
+  const FUNCTIONS = taxonomy.functions as FunctionCode[];
+  const STATUSES: ("" | UnitStatus)[] = ["", ...(taxonomy.statuses as UnitStatus[])];
   const ev = events.find((e) => e.id === eventId);
 
   const [functionCode, setFunctionCode] = useState<FunctionCode>(ev?.functionCode ?? "OBS");

@@ -9,9 +9,6 @@ import { Label } from "@/components/ui/label";
 import type { ContainerType, UnitStatus } from "@/types";
 import { toast } from "sonner";
 
-const TYPES: ContainerType[] = ["BOX", "JAR", "PD", "LC", "BAG", "OTHER"];
-const STATUSES: UnitStatus[] = ["ACTIVE", "CONTAMINATED", "DISCARDED", "HARVESTED", "ARCHIVED"];
-
 export const Route = createFileRoute("/units/$unitCode/edit")({
   head: ({ params }) => ({ meta: [{ title: `Edit ${params.unitCode} — Myko Valvomo` }] }),
   component: EditUnit,
@@ -20,7 +17,9 @@ export const Route = createFileRoute("/units/$unitCode/edit")({
 function EditUnit() {
   const { unitCode } = Route.useParams();
   const navigate = useNavigate();
-  const { units, strains } = useDataStore();
+  const { units, strains, taxonomy } = useDataStore();
+  const TYPES = taxonomy.types as ContainerType[];
+  const STATUSES = taxonomy.statuses as UnitStatus[];
   const unit = units.find((u) => u.code === unitCode);
 
   const [type, setType] = useState<ContainerType>(unit?.type ?? "BOX");

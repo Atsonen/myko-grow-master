@@ -7,11 +7,33 @@ import {
 } from "@/data/mockData";
 import type { MEvent, Strain, Transfer, Unit, UnitStatus } from "@/types";
 
+export interface Taxonomy {
+  functions: string[];
+  types: string[];
+  statuses: string[];
+  qcTags: string[];
+}
+
+const defaultTaxonomy: Taxonomy = {
+  functions: ["COL", "FRU", "OBS", "QC", "TRF", "HAR", "PREP"],
+  types: ["BOX", "JAR", "PD", "LC", "BAG", "OTHER"],
+  statuses: ["ACTIVE", "CONTAMINATED", "DISCARDED", "HARVESTED", "ARCHIVED"],
+  qcTags: [
+    "CONTAMINATION_SUSPECTED",
+    "CONTAMINATION_CONFIRMED",
+    "BAD_SMELL",
+    "EXCESSIVE_MOISTURE",
+    "DRYING",
+    "DISCARDED",
+  ],
+};
+
 interface State {
   strains: Strain[];
   units: Unit[];
   events: MEvent[];
   transfers: Transfer[];
+  taxonomy: Taxonomy;
 }
 
 let state: State = {
@@ -19,6 +41,7 @@ let state: State = {
   units: [...initialUnits],
   events: [...initialEvents],
   transfers: [...initialTransfers],
+  taxonomy: { ...defaultTaxonomy, functions: [...defaultTaxonomy.functions], types: [...defaultTaxonomy.types], statuses: [...defaultTaxonomy.statuses], qcTags: [...defaultTaxonomy.qcTags] },
 };
 
 const listeners = new Set<() => void>();
@@ -118,5 +141,40 @@ export const dataActions = {
     setState({
       units: state.units.map((u) => (u.code === unitCode ? { ...u, status } : u)),
     });
+  },
+  addTag(category: keyof Taxonomy, value: string) {
+    const v = value.trim().toUpperCase();
+    if (!v) return;
+    if (state.taxonomy[category].includes(v)) return;
+    setState({ taxonomy: { ...state.taxonomy, [category]: [...state.taxonomy[category], v] } });
+  },
+  renameTag(category: keyof Taxonomy, oldValue: string, newValue: string) {
+    const v = newValue.trim().toUpperCase();
+    if (!v || v === oldValue) return;
+    const list = state.taxonomy[category].map((x) => (x === oldValue ? v : x));
+    let units = state.units;
+    let events = state.events;
+    if (category === "types") {
+      units = units.map((u) => (u.type === oldValue ? { ...u, type: v as Unit["type"] } : u));
+    } else if (category === "statuses") {
+      units = units.map((u) => (u.status === oldValue ? { ...u, status: v as UnitStatus } : u));
+      events = events.map((e) => (e.statusChange === oldValue ? { ...e, statusChange: v as UnitStatus } : e));
+    } else if (category === "functions") {
+      events = events.map((e) => (e.functionCode === oldValue ? { ...e, functionCode: v as MEvent["functionCode"] } : e));
+    } else if (category === "qcTags") {
+      events = events.map((e) =>
+        e.qcTags ? { ...e, qcTags: e.qcTags.map((t) => (t === oldValue ? (v as any) : t)) as MEvent["qcTags"] } : e,
+      );
+    }
+    setState({ taxonomy: { ...state.taxonomy, [category]: list }, units, events });
+  },
+  removeTag(category: keyof Taxonomy, value: string) {
+    const inUse =
+      (category === "types" && state.units.some((u) => u.type === value)) ||
+      (category === "statuses" && (state.units.some((u) => u.status === value) || state.events.some((e) => e.statusChange === value))) ||
+      (category === "functions" && state.events.some((e) => e.functionCode === value)) ||
+      (category === "qcTags" && state.events.some((e) => e.qcTags?.includes(value as any)));
+    if (inUse) throw new Error(`Tag "${value}" is in use and cannot be removed.`);
+    setState({ taxonomy: { ...state.taxonomy, [category]: state.taxonomy[category].filter((x) => x !== value) } });
   },
 };
