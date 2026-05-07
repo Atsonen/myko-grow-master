@@ -9,6 +9,9 @@ import {
 } from "@tanstack/react-router";
 
 import appCss from "../styles.css?url";
+import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import { AppSidebar } from "@/components/layout/AppSidebar";
+import { Toaster } from "@/components/ui/sonner";
 
 function NotFoundComponent() {
   return (
@@ -72,11 +75,11 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Lovable App" },
-      { name: "description", content: "Lovable Generated Project" },
-      { name: "author", content: "Lovable" },
-      { property: "og:title", content: "Lovable App" },
-      { property: "og:description", content: "Lovable Generated Project" },
+      { title: "Myko Valvomo — Cultivation Control" },
+      { name: "description", content: "Industrial control room for mushroom cultivation: track strains, units, events, transfers, lineage, and contamination risks." },
+      { name: "author", content: "Myko Valvomo" },
+      { property: "og:title", content: "Myko Valvomo — Cultivation Control" },
+      { property: "og:description", content: "Industrial control room for mushroom cultivation: track strains, units, events, transfers, lineage, and contamination risks." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
       { name: "twitter:site", content: "@Lovable" },
@@ -113,7 +116,26 @@ function RootComponent() {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <Outlet />
+      <SidebarProvider>
+        <div className="min-h-screen flex w-full bg-background text-foreground">
+          <AppSidebar />
+          <div className="flex-1 flex flex-col min-w-0">
+            <header className="h-12 flex items-center gap-2 border-b border-border px-3 bg-card/50 backdrop-blur sticky top-0 z-10">
+              <SidebarTrigger />
+              <div className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
+                Myko Valvomo / Console
+              </div>
+              <div className="ml-auto text-[10px] font-mono text-muted-foreground hidden sm:block">
+                {new Date().toLocaleString()}
+              </div>
+            </header>
+            <main className="flex-1 min-w-0">
+              <Outlet />
+            </main>
+          </div>
+        </div>
+        <Toaster />
+      </SidebarProvider>
     </QueryClientProvider>
   );
 }
