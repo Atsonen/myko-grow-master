@@ -24,6 +24,7 @@ export interface Unit {
   status: UnitStatus;
   batchTime: string; // ISO
   parentUnitCode?: string;
+  substrate?: string; // Material/substrate, e.g. BR, FCR, OAT, WBR, popcorn. Not part of +TYPE.
   description?: string;
   notes?: string;
 }
