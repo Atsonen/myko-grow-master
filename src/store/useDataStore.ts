@@ -163,7 +163,7 @@ export const dataActions = {
       events = events.map((e) => (e.functionCode === oldValue ? { ...e, functionCode: v as MEvent["functionCode"] } : e));
     } else if (category === "qcTags") {
       events = events.map((e) =>
-        e.qcTags ? { ...e, qcTags: e.qcTags.map((t) => (t === oldValue ? (v as MEvent["qcTags"][number]) : t)) as MEvent["qcTags"] } : e,
+        e.qcTags ? { ...e, qcTags: e.qcTags.map((t) => (t === oldValue ? (v as any) : t)) as MEvent["qcTags"] } : e,
       );
     }
     setState({ taxonomy: { ...state.taxonomy, [category]: list }, units, events });
@@ -173,7 +173,7 @@ export const dataActions = {
       (category === "types" && state.units.some((u) => u.type === value)) ||
       (category === "statuses" && (state.units.some((u) => u.status === value) || state.events.some((e) => e.statusChange === value))) ||
       (category === "functions" && state.events.some((e) => e.functionCode === value)) ||
-      (category === "qcTags" && state.events.some((e) => e.qcTags?.includes(value as MEvent["qcTags"][number])));
+      (category === "qcTags" && state.events.some((e) => e.qcTags?.includes(value as any)));
     if (inUse) throw new Error(`Tag "${value}" is in use and cannot be removed.`);
     setState({ taxonomy: { ...state.taxonomy, [category]: state.taxonomy[category].filter((x) => x !== value) } });
   },
