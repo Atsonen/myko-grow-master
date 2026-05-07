@@ -1,7 +1,6 @@
 import { cn } from "@/lib/utils";
-import type { ContainerType } from "@/types";
 
-export function TypeBadge({ type, className }: { type: ContainerType; className?: string }) {
+export function TypeBadge({ type, className }: { type: string; className?: string }) {
   return (
     <span
       className={cn(
