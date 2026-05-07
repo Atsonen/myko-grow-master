@@ -18,6 +18,7 @@ import { Route as EventsRouteImport } from './routes/events'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as UnitsUnitCodeRouteImport } from './routes/units.$unitCode'
 import { Route as TransfersNewRouteImport } from './routes/transfers.new'
+import { Route as LineageGraphRouteImport } from './routes/lineage.graph'
 import { Route as EventsNewRouteImport } from './routes/events.new'
 import { Route as UnitsUnitCodeEditRouteImport } from './routes/units.$unitCode.edit'
 import { Route as TransfersTransferIdEditRouteImport } from './routes/transfers.$transferId.edit'
@@ -69,6 +70,11 @@ const TransfersNewRoute = TransfersNewRouteImport.update({
   path: '/new',
   getParentRoute: () => TransfersRoute,
 } as any)
+const LineageGraphRoute = LineageGraphRouteImport.update({
+  id: '/graph',
+  path: '/graph',
+  getParentRoute: () => LineageRoute,
+} as any)
 const EventsNewRoute = EventsNewRouteImport.update({
   id: '/new',
   path: '/new',
@@ -98,12 +104,13 @@ const EventsEventIdEditRoute = EventsEventIdEditRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/events': typeof EventsRouteWithChildren
-  '/lineage': typeof LineageRoute
+  '/lineage': typeof LineageRouteWithChildren
   '/qc': typeof QcRoute
   '/strains': typeof StrainsRouteWithChildren
   '/transfers': typeof TransfersRouteWithChildren
   '/units': typeof UnitsRouteWithChildren
   '/events/new': typeof EventsNewRoute
+  '/lineage/graph': typeof LineageGraphRoute
   '/transfers/new': typeof TransfersNewRoute
   '/units/$unitCode': typeof UnitsUnitCodeRouteWithChildren
   '/events/$eventId/edit': typeof EventsEventIdEditRoute
@@ -114,12 +121,13 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/events': typeof EventsRouteWithChildren
-  '/lineage': typeof LineageRoute
+  '/lineage': typeof LineageRouteWithChildren
   '/qc': typeof QcRoute
   '/strains': typeof StrainsRouteWithChildren
   '/transfers': typeof TransfersRouteWithChildren
   '/units': typeof UnitsRouteWithChildren
   '/events/new': typeof EventsNewRoute
+  '/lineage/graph': typeof LineageGraphRoute
   '/transfers/new': typeof TransfersNewRoute
   '/units/$unitCode': typeof UnitsUnitCodeRouteWithChildren
   '/events/$eventId/edit': typeof EventsEventIdEditRoute
@@ -131,12 +139,13 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/events': typeof EventsRouteWithChildren
-  '/lineage': typeof LineageRoute
+  '/lineage': typeof LineageRouteWithChildren
   '/qc': typeof QcRoute
   '/strains': typeof StrainsRouteWithChildren
   '/transfers': typeof TransfersRouteWithChildren
   '/units': typeof UnitsRouteWithChildren
   '/events/new': typeof EventsNewRoute
+  '/lineage/graph': typeof LineageGraphRoute
   '/transfers/new': typeof TransfersNewRoute
   '/units/$unitCode': typeof UnitsUnitCodeRouteWithChildren
   '/events/$eventId/edit': typeof EventsEventIdEditRoute
@@ -155,6 +164,7 @@ export interface FileRouteTypes {
     | '/transfers'
     | '/units'
     | '/events/new'
+    | '/lineage/graph'
     | '/transfers/new'
     | '/units/$unitCode'
     | '/events/$eventId/edit'
@@ -171,6 +181,7 @@ export interface FileRouteTypes {
     | '/transfers'
     | '/units'
     | '/events/new'
+    | '/lineage/graph'
     | '/transfers/new'
     | '/units/$unitCode'
     | '/events/$eventId/edit'
@@ -187,6 +198,7 @@ export interface FileRouteTypes {
     | '/transfers'
     | '/units'
     | '/events/new'
+    | '/lineage/graph'
     | '/transfers/new'
     | '/units/$unitCode'
     | '/events/$eventId/edit'
@@ -198,7 +210,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   EventsRoute: typeof EventsRouteWithChildren
-  LineageRoute: typeof LineageRoute
+  LineageRoute: typeof LineageRouteWithChildren
   QcRoute: typeof QcRoute
   StrainsRoute: typeof StrainsRouteWithChildren
   TransfersRoute: typeof TransfersRouteWithChildren
@@ -270,6 +282,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TransfersNewRouteImport
       parentRoute: typeof TransfersRoute
     }
+    '/lineage/graph': {
+      id: '/lineage/graph'
+      path: '/graph'
+      fullPath: '/lineage/graph'
+      preLoaderRoute: typeof LineageGraphRouteImport
+      parentRoute: typeof LineageRoute
+    }
     '/events/new': {
       id: '/events/new'
       path: '/new'
@@ -321,6 +340,17 @@ const EventsRouteChildren: EventsRouteChildren = {
 const EventsRouteWithChildren =
   EventsRoute._addFileChildren(EventsRouteChildren)
 
+interface LineageRouteChildren {
+  LineageGraphRoute: typeof LineageGraphRoute
+}
+
+const LineageRouteChildren: LineageRouteChildren = {
+  LineageGraphRoute: LineageGraphRoute,
+}
+
+const LineageRouteWithChildren =
+  LineageRoute._addFileChildren(LineageRouteChildren)
+
 interface StrainsRouteChildren {
   StrainsCodeEditRoute: typeof StrainsCodeEditRoute
 }
@@ -371,7 +401,7 @@ const UnitsRouteWithChildren = UnitsRoute._addFileChildren(UnitsRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   EventsRoute: EventsRouteWithChildren,
-  LineageRoute: LineageRoute,
+  LineageRoute: LineageRouteWithChildren,
   QcRoute: QcRoute,
   StrainsRoute: StrainsRouteWithChildren,
   TransfersRoute: TransfersRouteWithChildren,
