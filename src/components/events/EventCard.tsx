@@ -4,7 +4,7 @@ import { formatDateTime } from "@/lib/format";
 import { identifierForEvent } from "@/lib/identifier";
 import type { MEvent, Strain, Unit } from "@/types";
 import { Link } from "@tanstack/react-router";
-import { Droplets, Thermometer } from "lucide-react";
+import { Droplets, Thermometer, Pencil } from "lucide-react";
 
 export function EventCard({ event, unit, strain, hideUnit }: { event: MEvent; unit?: Unit; strain?: Strain; hideUnit?: boolean }) {
   return (
@@ -27,7 +27,18 @@ export function EventCard({ event, unit, strain, hideUnit }: { event: MEvent; un
           {formatDateTime(event.eventTime)}
         </span>
       </div>
-      <div className="text-sm">{event.title}</div>
+      <div className="text-sm flex items-center justify-between gap-2">
+        <span>{event.title}</span>
+        <Link
+          to="/events/$eventId/edit"
+          params={{ eventId: event.id }}
+          className="text-muted-foreground hover:text-primary"
+          title="Edit event"
+        >
+          <Pencil className="h-3 w-3" />
+        </Link>
+      </div>
+      {event.description && <div className="text-xs text-muted-foreground italic">{event.description}</div>}
       {event.note && <div className="text-xs text-muted-foreground">{event.note}</div>}
       <div className="flex items-center gap-3 text-[11px] font-mono text-muted-foreground">
         {event.temperatureC !== undefined && (

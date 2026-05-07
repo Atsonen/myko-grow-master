@@ -7,6 +7,7 @@ import {
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
 
 import appCss from "../styles.css?url";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
@@ -125,9 +126,7 @@ function RootComponent() {
               <div className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
                 Myko Valvomo / Console
               </div>
-              <div className="ml-auto text-[10px] font-mono text-muted-foreground hidden sm:block">
-                {new Date().toLocaleString()}
-              </div>
+              <LiveClock />
             </header>
             <main className="flex-1 min-w-0">
               <Outlet />
@@ -137,5 +136,20 @@ function RootComponent() {
         <Toaster />
       </SidebarProvider>
     </QueryClientProvider>
+  );
+}
+
+function LiveClock() {
+  const [now, setNow] = useState<string>("");
+  useEffect(() => {
+    const update = () => setNow(new Date().toLocaleString());
+    update();
+    const id = setInterval(update, 1000);
+    return () => clearInterval(id);
+  }, []);
+  return (
+    <div className="ml-auto text-[10px] font-mono text-muted-foreground hidden sm:block" suppressHydrationWarning>
+      {now}
+    </div>
   );
 }

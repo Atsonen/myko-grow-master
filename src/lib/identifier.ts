@@ -6,6 +6,8 @@ export interface IdentifierParts {
   eventTime: string;
   strainCode: string;
   unitCode: string;
+  strainDescription?: string;
+  unitDescription?: string;
 }
 
 export function buildIdentifier(parts: Partial<IdentifierParts>): string {
@@ -14,7 +16,9 @@ export function buildIdentifier(parts: Partial<IdentifierParts>): string {
   const time = parts.eventTime ? formatEventTime(parts.eventTime) : "________";
   const s = parts.strainCode ?? "___";
   const u = parts.unitCode ?? "___";
-  return `=${f}/+${t}/&${time}/#${s}/@${u}`;
+  const sDesc = parts.strainDescription ? `(${parts.strainDescription})` : "";
+  const uDesc = parts.unitDescription ? `(${parts.unitDescription})` : "";
+  return `=${f}/+${t}/&${time}/#${s}${sDesc}/@${u}${uDesc}`;
 }
 
 export function formatEventTime(iso: string): string {
@@ -39,15 +43,19 @@ export function identifierForEvent(event: MEvent, unit?: Unit, strain?: Strain):
     eventTime: event.eventTime,
     strainCode: strain?.code ?? unit?.strainCode,
     unitCode: event.unitCode,
+    strainDescription: strain?.description,
+    unitDescription: unit?.description,
   });
 }
 
-export function identifierForUnit(unit: Unit, functionCode: FunctionCode = "COL"): string {
+export function identifierForUnit(unit: Unit, functionCode: FunctionCode = "COL", strain?: Strain): string {
   return buildIdentifier({
     functionCode,
     type: unit.type,
     eventTime: unit.batchTime,
     strainCode: unit.strainCode,
     unitCode: unit.code,
+    strainDescription: strain?.description,
+    unitDescription: unit.description,
   });
 }

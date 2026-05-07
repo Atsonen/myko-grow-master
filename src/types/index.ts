@@ -13,6 +13,7 @@ export interface Strain {
   code: string;
   name: string;
   species: string;
+  description?: string;
   notes?: string;
 }
 
@@ -23,6 +24,7 @@ export interface Unit {
   status: UnitStatus;
   batchTime: string; // ISO
   parentUnitCode?: string;
+  description?: string;
   notes?: string;
 }
 
@@ -32,6 +34,7 @@ export interface MEvent {
   unitCode: string;
   eventTime: string; // ISO
   title: string;
+  description?: string;
   note?: string;
   temperatureC?: number;
   humidityRh?: number;
@@ -46,5 +49,6 @@ export interface Transfer {
   transferTime: string; // ISO
   method: string;
   amount: string;
+  description?: string;
   note?: string;
 }

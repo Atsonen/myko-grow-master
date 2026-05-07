@@ -50,6 +50,12 @@ export const dataActions = {
     setState({ events: [...state.events, e], units });
     return e;
   },
+  updateEvent(id: string, patch: Partial<Omit<MEvent, "id">>) {
+    setState({ events: state.events.map((e) => (e.id === id ? { ...e, ...patch } : e)) });
+  },
+  deleteEvent(id: string) {
+    setState({ events: state.events.filter((e) => e.id !== id) });
+  },
   addTransfer(input: Omit<Transfer, "id"> & { targetUnit?: Partial<Unit> }): Transfer {
     const t: Transfer = {
       id: newId("trf"),
@@ -85,6 +91,28 @@ export const dataActions = {
       note: `${input.method} — ${input.amount}${input.note ? ` — ${input.note}` : ""}`,
     });
     return t;
+  },
+  updateTransfer(id: string, patch: Partial<Omit<Transfer, "id">>) {
+    setState({ transfers: state.transfers.map((t) => (t.id === id ? { ...t, ...patch } : t)) });
+  },
+  deleteTransfer(id: string) {
+    setState({ transfers: state.transfers.filter((t) => t.id !== id) });
+  },
+  updateUnit(code: string, patch: Partial<Omit<Unit, "code">>) {
+    setState({ units: state.units.map((u) => (u.code === code ? { ...u, ...patch } : u)) });
+  },
+  deleteUnit(code: string) {
+    setState({ units: state.units.filter((u) => u.code !== code) });
+  },
+  addStrain(strain: Strain) {
+    if (state.strains.some((s) => s.code === strain.code)) return;
+    setState({ strains: [...state.strains, strain] });
+  },
+  updateStrain(code: string, patch: Partial<Omit<Strain, "code">>) {
+    setState({ strains: state.strains.map((s) => (s.code === code ? { ...s, ...patch } : s)) });
+  },
+  deleteStrain(code: string) {
+    setState({ strains: state.strains.filter((s) => s.code !== code) });
   },
   updateUnitStatus(unitCode: string, status: UnitStatus) {
     setState({
