@@ -87,6 +87,12 @@ export const dataActions = {
   updateEvent(id: string, patch: Partial<Omit<MEvent, "id">>) {
     setState({ events: state.events.map((e) => (e.id === id ? { ...e, ...patch } : e)) });
   },
+  archiveEvent(id: string) {
+    setState({ events: state.events.map((e) => (e.id === id ? { ...e, archived: true } : e)) });
+  },
+  restoreEvent(id: string) {
+    setState({ events: state.events.map((e) => (e.id === id ? { ...e, archived: false } : e)) });
+  },
   deleteEvent(id: string) {
     setState({ events: state.events.filter((e) => e.id !== id) });
   },
@@ -119,7 +125,6 @@ export const dataActions = {
       units = [...units, newUnit];
     }
     setState({ transfers: [...state.transfers, t], units });
-    // Also log a TRF event on the source
     dataActions.addEvent({
       functionCode: "TRF",
       unitCode: input.sourceUnitCode,
@@ -132,11 +137,23 @@ export const dataActions = {
   updateTransfer(id: string, patch: Partial<Omit<Transfer, "id">>) {
     setState({ transfers: state.transfers.map((t) => (t.id === id ? { ...t, ...patch } : t)) });
   },
+  archiveTransfer(id: string) {
+    setState({ transfers: state.transfers.map((t) => (t.id === id ? { ...t, archived: true } : t)) });
+  },
+  restoreTransfer(id: string) {
+    setState({ transfers: state.transfers.map((t) => (t.id === id ? { ...t, archived: false } : t)) });
+  },
   deleteTransfer(id: string) {
     setState({ transfers: state.transfers.filter((t) => t.id !== id) });
   },
   updateUnit(code: string, patch: Partial<Omit<Unit, "code">>) {
     setState({ units: state.units.map((u) => (u.code === code ? { ...u, ...patch } : u)) });
+  },
+  archiveUnit(code: string) {
+    setState({ units: state.units.map((u) => (u.code === code ? { ...u, status: "ARCHIVED" } : u)) });
+  },
+  restoreUnit(code: string, status: UnitStatus = "ACTIVE") {
+    setState({ units: state.units.map((u) => (u.code === code ? { ...u, status } : u)) });
   },
   deleteUnit(code: string) {
     setState({ units: state.units.filter((u) => u.code !== code) });
@@ -147,6 +164,12 @@ export const dataActions = {
   },
   updateStrain(code: string, patch: Partial<Omit<Strain, "code">>) {
     setState({ strains: state.strains.map((s) => (s.code === code ? { ...s, ...patch } : s)) });
+  },
+  archiveStrain(code: string) {
+    setState({ strains: state.strains.map((s) => (s.code === code ? { ...s, archived: true } : s)) });
+  },
+  restoreStrain(code: string) {
+    setState({ strains: state.strains.map((s) => (s.code === code ? { ...s, archived: false } : s)) });
   },
   deleteStrain(code: string) {
     setState({ strains: state.strains.filter((s) => s.code !== code) });
