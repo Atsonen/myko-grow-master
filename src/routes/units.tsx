@@ -8,8 +8,8 @@ import { StatusBadge } from "@/components/common/StatusBadge";
 import { TypeBadge } from "@/components/common/TypeBadge";
 import { FunctionBadge } from "@/components/common/FunctionBadge";
 import { formatDateTime, relativeTime } from "@/lib/format";
-import type { ContainerType, UnitStatus } from "@/types";
-import { Archive, ArchiveRestore, Pencil } from "lucide-react";
+import type { ContainerType, Unit, UnitStatus } from "@/types";
+import { Archive, ArchiveRestore, ArrowDownUp, Pencil } from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/units")({
@@ -22,6 +22,9 @@ export const Route = createFileRoute("/units")({
   component: UnitsPage,
 });
 
+type SortKey = "code" | "type" | "substrate" | "strain" | "status" | "batch" | "latest";
+type SortDirection = "asc" | "desc";
+
 function UnitsPage() {
   const { units, events, strains, taxonomy } = useDataStore();
   const TYPES = taxonomy.types as ContainerType[];
@@ -33,6 +36,8 @@ function UnitsPage() {
   const [strain, setStrain] = useState<string>("");
   const [substrate, setSubstrate] = useState<string>("");
   const [showArchived, setShowArchived] = useState(false);
+  const [sortKey, setSortKey] = useState<SortKey>("batch");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
 
   const visibleEvents = useMemo(() => events.filter((e) => showArchived || !e.archived), [events, showArchived]);
   const visibleUnits = useMemo(() => units.filter((u) => showArchived || u.status !== "ARCHIVED"), [units, showArchived]);
@@ -54,6 +59,19 @@ function UnitsPage() {
     if (q && !`${u.code} ${u.notes ?? ""} ${u.description ?? ""} ${u.substrate ?? ""} ${u.strainCode}`.toLowerCase().includes(q.toLowerCase())) return false;
     return true;
   });
+
+  const sorted = useMemo(() => {
+    return [...filtered].sort((a, b) => compareUnits(a, b, sortKey, sortDirection, lastEventByUnit));
+  }, [filtered, sortKey, sortDirection, lastEventByUnit]);
+
+  const setSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      setSortDirection(key === "batch" || key === "latest" ? "desc" : "asc");
+    }
+  };
 
   const archiveUnit = (code: string) => {
     if (!confirm(`Archive ${code}? Use this when the physical container no longer exists. It will be hidden from normal views.`)) return;
@@ -105,7 +123,7 @@ function UnitsPage() {
           Show archived
         </label>
         <div className="ml-auto text-[10px] font-mono text-muted-foreground">
-          {filtered.length} / {visibleUnits.length}{!showArchived ? ` (${units.length - visibleUnits.length} archived hidden)` : ""}
+          {sorted.length} / {visibleUnits.length}{!showArchived ? ` (${units.length - visibleUnits.length} archived hidden)` : ""}
         </div>
       </div>
 
@@ -114,18 +132,18 @@ function UnitsPage() {
           <table className="w-full text-xs">
             <thead className="bg-secondary/50 text-muted-foreground uppercase font-mono text-[10px]">
               <tr>
-                <th className="text-left p-2">Unit</th>
-                <th className="text-left p-2">Type</th>
-                <th className="text-left p-2">Substrate</th>
-                <th className="text-left p-2">Strain</th>
-                <th className="text-left p-2">Status</th>
-                <th className="text-left p-2">Batch</th>
-                <th className="text-left p-2">Latest event</th>
+                <SortableHeader label="Unit" sortKey="code" activeKey={sortKey} direction={sortDirection} onSort={setSort} />
+                <SortableHeader label="Type" sortKey="type" activeKey={sortKey} direction={sortDirection} onSort={setSort} />
+                <SortableHeader label="Substrate" sortKey="substrate" activeKey={sortKey} direction={sortDirection} onSort={setSort} />
+                <SortableHeader label="Strain" sortKey="strain" activeKey={sortKey} direction={sortDirection} onSort={setSort} />
+                <SortableHeader label="Status" sortKey="status" activeKey={sortKey} direction={sortDirection} onSort={setSort} />
+                <SortableHeader label="Batch" sortKey="batch" activeKey={sortKey} direction={sortDirection} onSort={setSort} />
+                <SortableHeader label="Latest event" sortKey="latest" activeKey={sortKey} direction={sortDirection} onSort={setSort} />
                 <th className="text-left p-2">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {filtered.map((u) => {
+              {sorted.map((u) => {
                 const last = lastEventByUnit.get(u.code);
                 return (
                   <tr key={u.code} className={`border-t border-border hover:bg-secondary/40 ${u.status === "ARCHIVED" ? "opacity-60" : ""}`}>
@@ -173,7 +191,7 @@ function UnitsPage() {
                   </tr>
                 );
               })}
-              {filtered.length === 0 && (
+              {sorted.length === 0 && (
                 <tr>
                   <td colSpan={8} className="p-6 text-center text-muted-foreground italic">No units match filters.</td>
                 </tr>
@@ -184,6 +202,64 @@ function UnitsPage() {
       </Card>
     </div>
   );
+}
+
+function SortableHeader({
+  label,
+  sortKey,
+  activeKey,
+  direction,
+  onSort,
+}: {
+  label: string;
+  sortKey: SortKey;
+  activeKey: SortKey;
+  direction: SortDirection;
+  onSort: (key: SortKey) => void;
+}) {
+  const active = sortKey === activeKey;
+  return (
+    <th className="text-left p-2">
+      <button
+        type="button"
+        onClick={() => onSort(sortKey)}
+        className={`inline-flex items-center gap-1 hover:text-foreground ${active ? "text-foreground" : "text-muted-foreground"}`}
+        title={`Sort by ${label}`}
+      >
+        {label}
+        {active ? <span>{direction === "asc" ? "↑" : "↓"}</span> : <ArrowDownUp className="h-3 w-3 opacity-50" />}
+      </button>
+    </th>
+  );
+}
+
+function compareUnits(
+  a: Unit,
+  b: Unit,
+  key: SortKey,
+  direction: SortDirection,
+  lastEventByUnit: Map<string, { eventTime: string }>,
+) {
+  const multiplier = direction === "asc" ? 1 : -1;
+  const getValue = (u: Unit) => {
+    switch (key) {
+      case "code": return u.code;
+      case "type": return u.type;
+      case "substrate": return u.substrate ?? "";
+      case "strain": return u.strainCode;
+      case "status": return u.status;
+      case "batch": return new Date(u.batchTime).getTime() || 0;
+      case "latest": return new Date(lastEventByUnit.get(u.code)?.eventTime ?? u.batchTime).getTime() || 0;
+      default: return u.code;
+    }
+  };
+
+  const av = getValue(a);
+  const bv = getValue(b);
+  if (typeof av === "number" && typeof bv === "number") return (av - bv) * multiplier;
+  const primary = String(av).localeCompare(String(bv), "fi", { numeric: true, sensitivity: "base" }) * multiplier;
+  if (primary !== 0) return primary;
+  return a.code.localeCompare(b.code, "fi", { numeric: true, sensitivity: "base" });
 }
 
 function Pill({
