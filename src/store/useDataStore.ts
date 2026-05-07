@@ -159,20 +159,43 @@ export const dataActions = {
     setState({ units: state.units.filter((u) => u.code !== code) });
   },
   addStrain(strain: Strain) {
-    if (state.strains.some((s) => s.code === strain.code)) return;
-    setState({ strains: [...state.strains, strain] });
+    const normalized = { ...strain, code: normalizeStrainCode(strain.code) };
+    if (!normalized.code) return;
+    if (state.strains.some((s) => normalizeStrainCode(s.code) === normalized.code)) return;
+    setState({ strains: [...state.strains, normalized] });
   },
   updateStrain(code: string, patch: Partial<Omit<Strain, "code">>) {
-    setState({ strains: state.strains.map((s) => (s.code === code ? { ...s, ...patch } : s)) });
+    const normalizedCode = normalizeStrainCode(code);
+    setState({ strains: state.strains.map((s) => (normalizeStrainCode(s.code) === normalizedCode ? { ...s, ...patch } : s)) });
+  },
+  renameStrain(oldCode: string, newCode: string, patch: Partial<Omit<Strain, "code">> = {}) {
+    const oldNormalized = normalizeStrainCode(oldCode);
+    const newNormalized = normalizeStrainCode(newCode);
+    if (!oldNormalized || !newNormalized) throw new Error("Strain code is required.");
+    if (oldNormalized !== newNormalized && state.strains.some((s) => normalizeStrainCode(s.code) === newNormalized)) {
+      throw new Error(`Strain code #${newNormalized} already exists.`);
+    }
+
+    setState({
+      strains: state.strains.map((s) =>
+        normalizeStrainCode(s.code) === oldNormalized ? { ...s, ...patch, code: newNormalized } : s,
+      ),
+      units: state.units.map((u) =>
+        normalizeStrainCode(u.strainCode) === oldNormalized ? { ...u, strainCode: newNormalized } : u,
+      ),
+    });
   },
   archiveStrain(code: string) {
-    setState({ strains: state.strains.map((s) => (s.code === code ? { ...s, archived: true } : s)) });
+    const normalizedCode = normalizeStrainCode(code);
+    setState({ strains: state.strains.map((s) => (normalizeStrainCode(s.code) === normalizedCode ? { ...s, archived: true } : s)) });
   },
   restoreStrain(code: string) {
-    setState({ strains: state.strains.map((s) => (s.code === code ? { ...s, archived: false } : s)) });
+    const normalizedCode = normalizeStrainCode(code);
+    setState({ strains: state.strains.map((s) => (normalizeStrainCode(s.code) === normalizedCode ? { ...s, archived: false } : s)) });
   },
   deleteStrain(code: string) {
-    setState({ strains: state.strains.filter((s) => s.code !== code) });
+    const normalizedCode = normalizeStrainCode(code);
+    setState({ strains: state.strains.filter((s) => normalizeStrainCode(s.code) !== normalizedCode) });
   },
   updateUnitStatus(unitCode: string, status: UnitStatus) {
     setState({
@@ -277,8 +300,12 @@ function normalizeState(input: Partial<State> | Partial<PersistedMykoState> | nu
   const fallback = initialState();
   const imported = input ?? {};
 
-  const strains = Array.isArray(imported.strains) ? imported.strains : fallback.strains;
-  const units = Array.isArray(imported.units) ? imported.units : fallback.units;
+  const strains = Array.isArray(imported.strains)
+    ? imported.strains.map((s) => ({ ...s, code: normalizeStrainCode(s.code) }))
+    : fallback.strains;
+  const units = Array.isArray(imported.units)
+    ? imported.units.map((u) => ({ ...u, strainCode: normalizeStrainCode(u.strainCode) }))
+    : fallback.units;
   const events = Array.isArray(imported.events) ? imported.events : fallback.events;
   const transfers = Array.isArray(imported.transfers) ? imported.transfers : fallback.transfers;
 
@@ -315,6 +342,10 @@ function cloneTaxonomy(value: Taxonomy): Taxonomy {
 
 function uniqueUpper(values: string[]) {
   return Array.from(new Set(values.map((v) => String(v).trim().toUpperCase()).filter(Boolean)));
+}
+
+function normalizeStrainCode(value: string | undefined) {
+  return String(value ?? "").replace(/^#+/, "").trim().toUpperCase();
 }
 
 function safeLocalStorage(): Storage | null {
