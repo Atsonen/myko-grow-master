@@ -14,6 +14,22 @@ export interface Taxonomy {
   qcTags: string[];
 }
 
+interface State {
+  strains: Strain[];
+  units: Unit[];
+  events: MEvent[];
+  transfers: Transfer[];
+  taxonomy: Taxonomy;
+}
+
+export interface PersistedMykoState extends State {
+  schemaVersion: number;
+  savedAt: string;
+}
+
+const STORAGE_KEY = "myko-valvomo-state-v1";
+const SCHEMA_VERSION = 1;
+
 const defaultTaxonomy: Taxonomy = {
   functions: ["COL", "FRU", "OBS", "QC", "TRF", "HAR", "PREP"],
   types: ["BOX", "JAR", "PD", "LC", "BAG", "OTHER"],
@@ -28,21 +44,15 @@ const defaultTaxonomy: Taxonomy = {
   ],
 };
 
-interface State {
-  strains: Strain[];
-  units: Unit[];
-  events: MEvent[];
-  transfers: Transfer[];
-  taxonomy: Taxonomy;
-}
-
-let state: State = {
+const initialState = (): State => ({
   strains: [...initialStrains],
   units: [...initialUnits],
   events: [...initialEvents],
   transfers: [...initialTransfers],
-  taxonomy: { ...defaultTaxonomy, functions: [...defaultTaxonomy.functions], types: [...defaultTaxonomy.types], statuses: [...defaultTaxonomy.statuses], qcTags: [...defaultTaxonomy.qcTags] },
-};
+  taxonomy: cloneTaxonomy(defaultTaxonomy),
+});
+
+let state: State = loadState();
 
 const listeners = new Set<() => void>();
 const subscribe = (l: () => void) => {
@@ -52,12 +62,13 @@ const subscribe = (l: () => void) => {
 const emit = () => listeners.forEach((l) => l());
 const getSnapshot = () => state;
 
-function setState(next: Partial<State>) {
-  state = { ...state, ...next };
+function setState(next: Partial<State>, options: { persist?: boolean } = {}) {
+  state = normalizeState({ ...state, ...next });
+  if (options.persist !== false) persistState(state);
   emit();
 }
 
-let counter = 1000;
+let counter = getInitialCounter(state);
 const newId = (prefix: string) => `${prefix}-${++counter}`;
 
 export function useDataStore() {
@@ -87,6 +98,7 @@ export const dataActions = {
       transferTime: input.transferTime,
       method: input.method,
       amount: input.amount,
+      description: input.description,
       note: input.note,
     };
     let units = state.units;
@@ -100,6 +112,7 @@ export const dataActions = {
         status: "ACTIVE",
         batchTime: input.transferTime,
         parentUnitCode: input.sourceUnitCode,
+        description: input.targetUnit.description,
         notes: input.targetUnit.notes,
       };
       units = [...units, newUnit];
@@ -177,4 +190,123 @@ export const dataActions = {
     if (inUse) throw new Error(`Tag "${value}" is in use and cannot be removed.`);
     setState({ taxonomy: { ...state.taxonomy, [category]: state.taxonomy[category].filter((x) => x !== value) } });
   },
+  exportState(): PersistedMykoState {
+    return toPersistedState(state);
+  },
+  importState(input: unknown) {
+    const imported = normalizeState(input as Partial<State>);
+    state = imported;
+    counter = getInitialCounter(state);
+    persistState(state);
+    emit();
+  },
+  resetToMockData() {
+    state = initialState();
+    counter = getInitialCounter(state);
+    persistState(state);
+    emit();
+  },
+  clearLocalStorage() {
+    safeLocalStorage()?.removeItem(STORAGE_KEY);
+  },
 };
+
+function loadState(): State {
+  const storage = safeLocalStorage();
+  if (!storage) return initialState();
+
+  const raw = storage.getItem(STORAGE_KEY);
+  if (!raw) return initialState();
+
+  try {
+    return normalizeState(JSON.parse(raw));
+  } catch (error) {
+    console.warn("Failed to load Myko Valvomo state from localStorage", error);
+    return initialState();
+  }
+}
+
+function persistState(value: State) {
+  const storage = safeLocalStorage();
+  if (!storage) return;
+
+  try {
+    storage.setItem(STORAGE_KEY, JSON.stringify(toPersistedState(value)));
+  } catch (error) {
+    console.warn("Failed to persist Myko Valvomo state to localStorage", error);
+  }
+}
+
+function toPersistedState(value: State): PersistedMykoState {
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    savedAt: new Date().toISOString(),
+    strains: value.strains,
+    units: value.units,
+    events: value.events,
+    transfers: value.transfers,
+    taxonomy: value.taxonomy,
+  };
+}
+
+function normalizeState(input: Partial<State> | Partial<PersistedMykoState> | null | undefined): State {
+  const fallback = initialState();
+  const imported = input ?? {};
+
+  const strains = Array.isArray(imported.strains) ? imported.strains : fallback.strains;
+  const units = Array.isArray(imported.units) ? imported.units : fallback.units;
+  const events = Array.isArray(imported.events) ? imported.events : fallback.events;
+  const transfers = Array.isArray(imported.transfers) ? imported.transfers : fallback.transfers;
+
+  return {
+    strains,
+    units,
+    events,
+    transfers,
+    taxonomy: normalizeTaxonomy(imported.taxonomy),
+  };
+}
+
+function normalizeTaxonomy(input?: Partial<Taxonomy>): Taxonomy {
+  const merged: Taxonomy = cloneTaxonomy(defaultTaxonomy);
+  if (!input) return merged;
+
+  for (const key of Object.keys(merged) as (keyof Taxonomy)[]) {
+    const values = input[key];
+    if (Array.isArray(values)) {
+      merged[key] = uniqueUpper([...merged[key], ...values]);
+    }
+  }
+  return merged;
+}
+
+function cloneTaxonomy(value: Taxonomy): Taxonomy {
+  return {
+    functions: [...value.functions],
+    types: [...value.types],
+    statuses: [...value.statuses],
+    qcTags: [...value.qcTags],
+  };
+}
+
+function uniqueUpper(values: string[]) {
+  return Array.from(new Set(values.map((v) => String(v).trim().toUpperCase()).filter(Boolean)));
+}
+
+function safeLocalStorage(): Storage | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+function getInitialCounter(value: State) {
+  const ids = [...value.events.map((e) => e.id), ...value.transfers.map((t) => t.id)];
+  const max = ids.reduce((acc, id) => {
+    const match = String(id).match(/-(\d+)$/);
+    return match ? Math.max(acc, Number(match[1])) : acc;
+  }, 1000);
+  return max;
+}
