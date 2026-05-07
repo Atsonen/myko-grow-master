@@ -112,6 +112,7 @@ export const dataActions = {
         status: "ACTIVE",
         batchTime: input.transferTime,
         parentUnitCode: input.sourceUnitCode,
+        substrate: input.targetUnit.substrate,
         description: input.targetUnit.description,
         notes: input.targetUnit.notes,
       };
