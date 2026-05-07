@@ -11,7 +11,7 @@ import { EventCard } from "@/components/events/EventCard";
 import { formatDateTime, relativeTime } from "@/lib/format";
 import { identifierForUnit } from "@/lib/identifier";
 import type { UnitStatus } from "@/types";
-import { ArrowLeftRight, FlaskConical, History, ShieldAlert } from "lucide-react";
+import { ArrowLeftRight, FlaskConical, History, ShieldAlert, Pencil } from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/units/$unitCode")({
@@ -86,8 +86,15 @@ function UnitDetailPage() {
                 <div className="text-xs text-muted-foreground">
                   #{unit.strainCode}{strain ? ` · ${strain.name} / ${strain.species}` : ""}
                 </div>
+                {unit.description && <div className="text-xs italic">{unit.description}</div>}
+                {unit.notes && <div className="text-xs text-muted-foreground">{unit.notes}</div>}
               </div>
               <div className="flex flex-wrap gap-2">
+                <Button size="sm" variant="outline" asChild>
+                  <Link to="/units/$unitCode/edit" params={{ unitCode: unit.code }}>
+                    <Pencil className="h-3 w-3 mr-1" /> Edit
+                  </Link>
+                </Button>
                 <Button size="sm" asChild>
                   <Link to="/events/new" search={{ unitCode: unit.code, fn: "OBS" }}>Add observation</Link>
                 </Button>
