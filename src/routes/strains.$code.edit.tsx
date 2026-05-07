@@ -16,9 +16,10 @@ export const Route = createFileRoute("/strains/$code/edit")({
 function EditStrain() {
   const params = Route.useParams();
   const originalCode = normalizeCode(params.code);
-  const { strains } = useDataStore();
+  const store = useDataStore();
   const navigate = useNavigate();
-  const strain = strains.find((s) => normalizeCode(s.code) === originalCode);
+  const strain = store.strains.find((s) => normalizeCode(s.code) === originalCode);
+
   const [newCode, setNewCode] = useState(strain?.code ?? originalCode);
   const [name, setName] = useState(strain?.name ?? "");
   const [species, setSpecies] = useState(strain?.species ?? "");
@@ -33,6 +34,8 @@ function EditStrain() {
       </div>
     );
   }
+
+  const affectedUnits = store.units.filter((u) => normalizeCode(u.strainCode) === normalizeCode(strain.code)).length;
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -53,14 +56,14 @@ function EditStrain() {
     }
   };
 
-  const affectedUnits = useDataStore().units.filter((u) => normalizeCode(u.strainCode) === normalizeCode(strain.code)).length;
-
   return (
     <div className="p-4 max-w-2xl">
       <h1 className="text-lg font-mono mb-3">Edit #{strain.code}</h1>
       <Card className="p-4 bg-card border-border">
         <form onSubmit={submit} className="space-y-3">
-          <Field label="Code"><Input value={newCode} onChange={(e) => setNewCode(normalizeCode(e.target.value))} className="font-mono" placeholder="GT" /></Field>
+          <Field label="Code">
+            <Input value={newCode} onChange={(e) => setNewCode(normalizeCode(e.target.value))} className="font-mono" placeholder="GT" />
+          </Field>
           <Field label="Name"><Input value={name} onChange={(e) => setName(e.target.value)} /></Field>
           <Field label="Species"><Input value={species} onChange={(e) => setSpecies(e.target.value)} /></Field>
           <Field label="Description"><Textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} /></Field>
