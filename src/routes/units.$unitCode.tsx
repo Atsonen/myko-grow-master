@@ -5,7 +5,6 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { IdentifierTag } from "@/components/common/IdentifierTag";
 import { StatusBadge } from "@/components/common/StatusBadge";
-import { FunctionBadge } from "@/components/common/FunctionBadge";
 import { TypeBadge } from "@/components/common/TypeBadge";
 import { EventCard } from "@/components/events/EventCard";
 import { formatDateTime, relativeTime } from "@/lib/format";
@@ -80,6 +79,7 @@ function UnitDetailPage() {
                 <div className="flex flex-wrap items-center gap-2">
                   <h1 className="text-xl font-mono tracking-tight">{unit.code}</h1>
                   <TypeBadge type={unit.type} />
+                  {unit.substrate && <span className="rounded border border-border bg-muted px-2 py-0.5 text-[10px] font-mono uppercase text-muted-foreground">SUB:{unit.substrate}</span>}
                   <StatusBadge status={unit.status} />
                 </div>
                 <IdentifierTag value={identifierForUnit(unit)} className="text-xs" />
@@ -107,8 +107,9 @@ function UnitDetailPage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4 text-xs">
-              <Info label="Type" value={unit.type} />
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mt-4 text-xs">
+              <Info label="Container type" value={unit.type} />
+              <Info label="Substrate" value={unit.substrate ?? "—"} />
               <Info label="Strain" value={`#${unit.strainCode}`} />
               <Info label="Batch time" value={formatDateTime(unit.batchTime)} />
               <Info label="Parent" value={unit.parentUnitCode ?? "—"} />
@@ -179,7 +180,7 @@ function UnitDetailPage() {
               <h2 className="text-sm font-mono uppercase tracking-wider text-muted-foreground">Interpretation</h2>
             </div>
             <p className="text-xs text-muted-foreground leading-relaxed">
-              Unit code identifies the physical item. Event time identifies one observation or action. Transfers are stored separately as source → target relations so lineage does not depend on free-text guessing.
+              +TYPE identifies the container or carrier. Substrate/material is stored separately, so JAR and FCR do not overlap: JAR is the vessel, FCR is the material.
             </p>
           </Card>
         </div>
