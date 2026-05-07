@@ -1,5 +1,5 @@
 import { Link, useRouterState } from "@tanstack/react-router";
-import { LayoutDashboard, Boxes, Activity, GitBranch, ShieldAlert, PlusCircle, ArrowLeftRight, Network, FlaskConical, Tag } from "lucide-react";
+import { LayoutDashboard, Boxes, Activity, GitBranch, ShieldAlert, PlusCircle, ArrowLeftRight, Network, FlaskConical, Tag, Database } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -21,6 +21,7 @@ const main = [
   { title: "Lineage graph", url: "/lineage/graph", icon: Network },
   { title: "QC / Contamination", url: "/qc", icon: ShieldAlert },
   { title: "Taxonomy / Tags", url: "/taxonomy", icon: Tag },
+  { title: "Data", url: "/data", icon: Database },
 ];
 
 const actions = [
