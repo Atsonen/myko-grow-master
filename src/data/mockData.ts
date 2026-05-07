@@ -5,6 +5,7 @@ export const strains: Strain[] = [
     code: "OST",
     name: "Pearl Oyster",
     species: "Pleurotus ostreatus",
+    description: "Pearl oyster, beginner-friendly",
     notes: "Reliable beginner strain. Wide temp tolerance.",
   },
 ];
