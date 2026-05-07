@@ -65,15 +65,15 @@ function LineageGraphPage() {
                 onClick={() => navigate({ to: "/units/$unitCode", params: { unitCode: n.unit.code } })}
               >
                 <rect width={NODE_W} height={NODE_H} rx={6} ry={6}
-                  fill="hsl(var(--card))"
+                  fill="var(--card)"
                   stroke={statusStroke(n.unit.status)}
                   strokeWidth={1.5}
                 />
                 <rect width={4} height={NODE_H} rx={2} ry={2} fill={statusStroke(n.unit.status)} />
-                <text x={12} y={20} fontFamily="monospace" fontSize={11} fill="hsl(var(--foreground))">{n.unit.code}</text>
-                <text x={12} y={36} fontFamily="monospace" fontSize={9} fill="hsl(var(--muted-foreground))">{n.unit.type} · {n.unit.status}</text>
+                <text x={12} y={20} fontFamily="monospace" fontSize={11} fill="var(--foreground)">{n.unit.code}</text>
+                <text x={12} y={36} fontFamily="monospace" fontSize={9} fill="var(--muted-foreground)">{n.unit.type} · {n.unit.status}</text>
                 {n.unit.description && (
-                  <text x={12} y={50} fontFamily="monospace" fontSize={9} fill="hsl(var(--muted-foreground))">
+                  <text x={12} y={50} fontFamily="monospace" fontSize={9} fill="var(--muted-foreground)">
                     {truncate(n.unit.description, 22)}
                   </text>
                 )}
