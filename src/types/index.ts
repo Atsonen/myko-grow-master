@@ -15,6 +15,7 @@ export interface Strain {
   species: string;
   description?: string;
   notes?: string;
+  archived?: boolean;
 }
 
 export interface Unit {
@@ -41,6 +42,7 @@ export interface MEvent {
   humidityRh?: number;
   qcTags?: QCTag[];
   statusChange?: UnitStatus;
+  archived?: boolean;
 }
 
 export interface Transfer {
@@ -52,4 +54,5 @@ export interface Transfer {
   amount: string;
   description?: string;
   note?: string;
+  archived?: boolean;
 }
