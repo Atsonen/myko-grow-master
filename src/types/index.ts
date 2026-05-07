@@ -26,6 +26,7 @@ export interface Unit {
   batchTime: string; // ISO
   parentUnitCode?: string;
   substrate?: string; // Material/substrate, e.g. BR, FCR, OAT, WBR, popcorn. Not part of +TYPE.
+  currentLocation?: string; // Current physical location, e.g. INCUBATOR-1, SHELF-A2, FRUITING-TENT.
   description?: string;
   notes?: string;
 }
@@ -54,5 +55,35 @@ export interface Transfer {
   amount: string;
   description?: string;
   note?: string;
+  archived?: boolean;
+}
+
+export interface UnitLocationRecord {
+  id: string;
+  unitCode: string;
+  location: string;
+  movedAt: string; // ISO
+  note?: string;
+  archived?: boolean;
+}
+
+export interface EnvironmentReading {
+  id: string;
+  timestamp: string; // ISO
+  location: string;
+  source: string; // Sensor or MQTT topic/source name.
+  temperatureC?: number;
+  humidityRh?: number;
+  co2Ppm?: number;
+  note?: string;
+  archived?: boolean;
+}
+
+export interface EnvironmentSource {
+  id: string;
+  name: string;
+  location: string;
+  mqttTopic?: string;
+  description?: string;
   archived?: boolean;
 }
