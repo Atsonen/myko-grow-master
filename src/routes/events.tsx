@@ -21,8 +21,11 @@ function EventsPage() {
   const { events, units, strains } = useDataStore();
   const [q, setQ] = useState("");
   const [active, setActive] = useState<Set<FunctionCode>>(new Set());
+  const [showArchived, setShowArchived] = useState(false);
 
-  const sorted = [...events].sort((a, b) => b.eventTime.localeCompare(a.eventTime));
+  const sorted = [...events]
+    .filter((e) => showArchived || !e.archived)
+    .sort((a, b) => b.eventTime.localeCompare(a.eventTime));
   const filtered = sorted.filter((e) => {
     if (active.size > 0 && !active.has(e.functionCode)) return false;
     if (q) {
@@ -41,6 +44,8 @@ function EventsPage() {
       return n;
     });
   };
+
+  const hiddenCount = events.filter((e) => e.archived).length;
 
   return (
     <div className="p-4 space-y-4">
@@ -66,7 +71,13 @@ function EventsPage() {
             </button>
           ))}
         </div>
-        <div className="ml-auto text-[10px] font-mono text-muted-foreground">{filtered.length} events</div>
+        <label className="flex items-center gap-1 text-[10px] font-mono uppercase text-muted-foreground">
+          <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} />
+          Show archived
+        </label>
+        <div className="ml-auto text-[10px] font-mono text-muted-foreground">
+          {filtered.length} events{!showArchived ? ` (${hiddenCount} archived hidden)` : ""}
+        </div>
       </div>
 
       <div className="space-y-2">
