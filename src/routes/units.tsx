@@ -19,11 +19,10 @@ export const Route = createFileRoute("/units")({
   component: UnitsPage,
 });
 
-const TYPES: ContainerType[] = ["BOX", "JAR", "PD", "LC", "BAG", "OTHER"];
-const STATUSES: UnitStatus[] = ["ACTIVE", "CONTAMINATED", "DISCARDED", "HARVESTED", "ARCHIVED"];
-
 function UnitsPage() {
-  const { units, events, strains } = useDataStore();
+  const { units, events, strains, taxonomy } = useDataStore();
+  const TYPES = taxonomy.types as ContainerType[];
+  const STATUSES = taxonomy.statuses as UnitStatus[];
   const [q, setQ] = useState("");
   const [type, setType] = useState<"" | ContainerType>("");
   const [status, setStatus] = useState<"" | UnitStatus>("");
