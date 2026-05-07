@@ -187,18 +187,18 @@ function bezier(x1: number, y1: number, x2: number, y2: number) {
 
 function statusStroke(status: string) {
   switch (status) {
-    case "CONTAMINATED": return "hsl(var(--status-contaminated, 0 70% 55%))";
-    case "HARVESTED": return "hsl(var(--status-harvested, 140 50% 45%))";
+    case "CONTAMINATED": return "var(--status-contaminated)";
+    case "HARVESTED": return "var(--status-harvested)";
     case "DISCARDED":
-    case "ARCHIVED": return "hsl(var(--muted-foreground))";
-    default: return "hsl(var(--primary))";
+    case "ARCHIVED": return "var(--muted-foreground)";
+    default: return "var(--primary)";
   }
 }
 
 function edgeColor(status: string) {
-  if (status === "CONTAMINATED") return "hsl(var(--status-contaminated, 0 70% 55%))";
-  if (status === "HARVESTED") return "hsl(var(--status-harvested, 140 50% 45%))";
-  return "hsl(var(--muted-foreground))";
+  if (status === "CONTAMINATED") return "var(--status-contaminated)";
+  if (status === "HARVESTED") return "var(--status-harvested)";
+  return "var(--muted-foreground)";
 }
 
 function truncate(s: string, n: number) {
