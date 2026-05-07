@@ -1,13 +1,16 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import { useDataStore } from "@/store/useDataStore";
+import { useDataStore, dataActions } from "@/store/useDataStore";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { StatusBadge } from "@/components/common/StatusBadge";
 import { TypeBadge } from "@/components/common/TypeBadge";
 import { FunctionBadge } from "@/components/common/FunctionBadge";
 import { formatDateTime, relativeTime } from "@/lib/format";
 import type { ContainerType, UnitStatus } from "@/types";
+import { Archive, ArchiveRestore, Pencil } from "lucide-react";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/units")({
   head: () => ({
@@ -52,6 +55,33 @@ function UnitsPage() {
     return true;
   });
 
+  const archiveUnit = (code: string) => {
+    if (!confirm(`Archive ${code}? Use this when the physical container no longer exists. It will be hidden from normal views.`)) return;
+    dataActions.archiveUnit(code);
+    dataActions.addEvent({
+      functionCode: "OBS",
+      unitCode: code,
+      eventTime: new Date().toISOString(),
+      title: "Physical unit archived",
+      note: "Physical container no longer exists. Unit hidden from normal views.",
+      statusChange: "ARCHIVED",
+    });
+    toast.success(`${code} archived`);
+  };
+
+  const restoreUnit = (code: string) => {
+    dataActions.restoreUnit(code, "ACTIVE");
+    dataActions.addEvent({
+      functionCode: "OBS",
+      unitCode: code,
+      eventTime: new Date().toISOString(),
+      title: "Physical unit restored",
+      note: "Unit restored to ACTIVE status.",
+      statusChange: "ACTIVE",
+    });
+    toast.success(`${code} restored`);
+  };
+
   return (
     <div className="p-4 space-y-4">
       <div className="flex flex-wrap items-center gap-2">
@@ -91,13 +121,14 @@ function UnitsPage() {
                 <th className="text-left p-2">Status</th>
                 <th className="text-left p-2">Batch</th>
                 <th className="text-left p-2">Latest event</th>
+                <th className="text-left p-2">Actions</th>
               </tr>
             </thead>
             <tbody>
               {filtered.map((u) => {
                 const last = lastEventByUnit.get(u.code);
                 return (
-                  <tr key={u.code} className="border-t border-border hover:bg-secondary/40">
+                  <tr key={u.code} className={`border-t border-border hover:bg-secondary/40 ${u.status === "ARCHIVED" ? "opacity-60" : ""}`}>
                     <td className="p-2">
                       <Link
                         to="/units/$unitCode"
@@ -123,12 +154,28 @@ function UnitsPage() {
                         <span className="text-muted-foreground italic">—</span>
                       )}
                     </td>
+                    <td className="p-2">
+                      <div className="flex items-center gap-2">
+                        {u.status === "ARCHIVED" ? (
+                          <Button size="sm" variant="secondary" onClick={() => restoreUnit(u.code)} title="Restore unit to active">
+                            <ArchiveRestore className="h-3 w-3" />
+                          </Button>
+                        ) : (
+                          <Button size="sm" variant="ghost" onClick={() => archiveUnit(u.code)} title="Archive physical unit">
+                            <Archive className="h-3 w-3" />
+                          </Button>
+                        )}
+                        <Button size="sm" variant="ghost" asChild title="Edit unit">
+                          <Link to="/units/$unitCode/edit" params={{ unitCode: u.code }}><Pencil className="h-3 w-3" /></Link>
+                        </Button>
+                      </div>
+                    </td>
                   </tr>
                 );
               })}
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="p-6 text-center text-muted-foreground italic">No units match filters.</td>
+                  <td colSpan={8} className="p-6 text-center text-muted-foreground italic">No units match filters.</td>
                 </tr>
               )}
             </tbody>
