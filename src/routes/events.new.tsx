@@ -12,9 +12,6 @@ import { buildIdentifier } from "@/lib/identifier";
 import type { FunctionCode, UnitStatus } from "@/types";
 import { toast } from "sonner";
 
-const FUNCTIONS: FunctionCode[] = ["COL", "FRU", "OBS", "QC", "TRF", "HAR", "PREP"];
-const STATUSES: ("" | UnitStatus)[] = ["", "ACTIVE", "CONTAMINATED", "DISCARDED", "HARVESTED", "ARCHIVED"];
-
 const searchSchema = z.object({
   unitCode: z.string().optional(),
   fn: z.enum(["COL", "FRU", "OBS", "QC", "TRF", "HAR", "PREP"]).optional(),
@@ -29,7 +26,9 @@ export const Route = createFileRoute("/events/new")({
 function AddEventPage() {
   const search = Route.useSearch();
   const navigate = useNavigate();
-  const { units } = useDataStore();
+  const { units, taxonomy } = useDataStore();
+  const FUNCTIONS = taxonomy.functions as FunctionCode[];
+  const STATUSES: ("" | UnitStatus)[] = ["", ...(taxonomy.statuses as UnitStatus[])];
 
   const [functionCode, setFunctionCode] = useState<FunctionCode>(search.fn ?? "OBS");
   const [unitCode, setUnitCode] = useState<string>(search.unitCode ?? units[0]?.code ?? "");
