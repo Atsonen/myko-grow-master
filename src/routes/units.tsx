@@ -29,17 +29,21 @@ function UnitsPage() {
   const [status, setStatus] = useState<"" | UnitStatus>("");
   const [strain, setStrain] = useState<string>("");
   const [substrate, setSubstrate] = useState<string>("");
+  const [showArchived, setShowArchived] = useState(false);
+
+  const visibleEvents = useMemo(() => events.filter((e) => showArchived || !e.archived), [events, showArchived]);
+  const visibleUnits = useMemo(() => units.filter((u) => showArchived || u.status !== "ARCHIVED"), [units, showArchived]);
 
   const lastEventByUnit = useMemo(() => {
     const map = new Map<string, (typeof events)[number]>();
-    for (const e of events) {
+    for (const e of visibleEvents) {
       const prev = map.get(e.unitCode);
       if (!prev || e.eventTime > prev.eventTime) map.set(e.unitCode, e);
     }
     return map;
-  }, [events]);
+  }, [visibleEvents]);
 
-  const filtered = units.filter((u) => {
+  const filtered = visibleUnits.filter((u) => {
     if (type && u.type !== type) return false;
     if (status && u.status !== status) return false;
     if (strain && u.strainCode !== strain) return false;
@@ -63,11 +67,15 @@ function UnitsPage() {
         <Pill
           label="Strain"
           value={strain}
-          options={["", ...strains.map((s) => s.code)]}
+          options={["", ...strains.filter((s) => showArchived || !s.archived).map((s) => s.code)]}
           onChange={(v) => setStrain(v)}
         />
+        <label className="flex items-center gap-1 text-[10px] font-mono uppercase text-muted-foreground">
+          <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} />
+          Show archived
+        </label>
         <div className="ml-auto text-[10px] font-mono text-muted-foreground">
-          {filtered.length} / {units.length}
+          {filtered.length} / {visibleUnits.length}{!showArchived ? ` (${units.length - visibleUnits.length} archived hidden)` : ""}
         </div>
       </div>
 
