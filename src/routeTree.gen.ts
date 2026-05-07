@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as UnitsRouteImport } from './routes/units'
 import { Route as TransfersRouteImport } from './routes/transfers'
+import { Route as StrainsRouteImport } from './routes/strains'
 import { Route as QcRouteImport } from './routes/qc'
 import { Route as LineageRouteImport } from './routes/lineage'
 import { Route as EventsRouteImport } from './routes/events'
@@ -27,6 +28,11 @@ const UnitsRoute = UnitsRouteImport.update({
 const TransfersRoute = TransfersRouteImport.update({
   id: '/transfers',
   path: '/transfers',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const StrainsRoute = StrainsRouteImport.update({
+  id: '/strains',
+  path: '/strains',
   getParentRoute: () => rootRouteImport,
 } as any)
 const QcRoute = QcRouteImport.update({
@@ -70,6 +76,7 @@ export interface FileRoutesByFullPath {
   '/events': typeof EventsRouteWithChildren
   '/lineage': typeof LineageRoute
   '/qc': typeof QcRoute
+  '/strains': typeof StrainsRoute
   '/transfers': typeof TransfersRouteWithChildren
   '/units': typeof UnitsRouteWithChildren
   '/events/new': typeof EventsNewRoute
@@ -81,6 +88,7 @@ export interface FileRoutesByTo {
   '/events': typeof EventsRouteWithChildren
   '/lineage': typeof LineageRoute
   '/qc': typeof QcRoute
+  '/strains': typeof StrainsRoute
   '/transfers': typeof TransfersRouteWithChildren
   '/units': typeof UnitsRouteWithChildren
   '/events/new': typeof EventsNewRoute
@@ -93,6 +101,7 @@ export interface FileRoutesById {
   '/events': typeof EventsRouteWithChildren
   '/lineage': typeof LineageRoute
   '/qc': typeof QcRoute
+  '/strains': typeof StrainsRoute
   '/transfers': typeof TransfersRouteWithChildren
   '/units': typeof UnitsRouteWithChildren
   '/events/new': typeof EventsNewRoute
@@ -106,6 +115,7 @@ export interface FileRouteTypes {
     | '/events'
     | '/lineage'
     | '/qc'
+    | '/strains'
     | '/transfers'
     | '/units'
     | '/events/new'
@@ -117,6 +127,7 @@ export interface FileRouteTypes {
     | '/events'
     | '/lineage'
     | '/qc'
+    | '/strains'
     | '/transfers'
     | '/units'
     | '/events/new'
@@ -128,6 +139,7 @@ export interface FileRouteTypes {
     | '/events'
     | '/lineage'
     | '/qc'
+    | '/strains'
     | '/transfers'
     | '/units'
     | '/events/new'
@@ -140,6 +152,7 @@ export interface RootRouteChildren {
   EventsRoute: typeof EventsRouteWithChildren
   LineageRoute: typeof LineageRoute
   QcRoute: typeof QcRoute
+  StrainsRoute: typeof StrainsRoute
   TransfersRoute: typeof TransfersRouteWithChildren
   UnitsRoute: typeof UnitsRouteWithChildren
 }
@@ -158,6 +171,13 @@ declare module '@tanstack/react-router' {
       path: '/transfers'
       fullPath: '/transfers'
       preLoaderRoute: typeof TransfersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/strains': {
+      id: '/strains'
+      path: '/strains'
+      fullPath: '/strains'
+      preLoaderRoute: typeof StrainsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/qc': {
@@ -250,9 +270,20 @@ const rootRouteChildren: RootRouteChildren = {
   EventsRoute: EventsRouteWithChildren,
   LineageRoute: LineageRoute,
   QcRoute: QcRoute,
+  StrainsRoute: StrainsRoute,
   TransfersRoute: TransfersRouteWithChildren,
   UnitsRoute: UnitsRouteWithChildren,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}
