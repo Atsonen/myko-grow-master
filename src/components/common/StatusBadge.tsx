@@ -1,7 +1,6 @@
 import { cn } from "@/lib/utils";
-import type { UnitStatus } from "@/types";
 
-const styles: Record<UnitStatus, string> = {
+const styles: Record<string, string> = {
   ACTIVE: "bg-status-active/15 text-status-active border-status-active/40",
   CONTAMINATED: "bg-status-contaminated/15 text-status-contaminated border-status-contaminated/40",
   DISCARDED: "bg-status-archived/15 text-status-archived border-status-archived/40",
@@ -9,12 +8,14 @@ const styles: Record<UnitStatus, string> = {
   ARCHIVED: "bg-status-archived/15 text-status-archived border-status-archived/40",
 };
 
-export function StatusBadge({ status, className }: { status: UnitStatus; className?: string }) {
+const fallbackStyle = "bg-muted text-muted-foreground border-border";
+
+export function StatusBadge({ status, className }: { status: string; className?: string }) {
   return (
     <span
       className={cn(
         "inline-flex items-center px-2 py-0.5 rounded border text-[10px] font-mono uppercase tracking-wider",
-        styles[status],
+        styles[status] ?? fallbackStyle,
         className,
       )}
     >
