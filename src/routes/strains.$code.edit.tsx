@@ -15,10 +15,11 @@ export const Route = createFileRoute("/strains/$code/edit")({
 
 function EditStrain() {
   const params = Route.useParams();
-  const code = normalizeCode(params.code);
+  const originalCode = normalizeCode(params.code);
   const { strains } = useDataStore();
   const navigate = useNavigate();
-  const strain = strains.find((s) => normalizeCode(s.code) === code);
+  const strain = strains.find((s) => normalizeCode(s.code) === originalCode);
+  const [newCode, setNewCode] = useState(strain?.code ?? originalCode);
   const [name, setName] = useState(strain?.name ?? "");
   const [species, setSpecies] = useState(strain?.species ?? "");
   const [description, setDescription] = useState(strain?.description ?? "");
@@ -27,7 +28,7 @@ function EditStrain() {
   if (!strain) {
     return (
       <div className="p-4 text-sm space-y-3">
-        <div>Strain not found: <span className="font-mono">#{code}</span></div>
+        <div>Strain not found: <span className="font-mono">#{originalCode}</span></div>
         <Button variant="secondary" onClick={() => navigate({ to: "/strains" })}>Back to strains</Button>
       </div>
     );
@@ -35,20 +36,38 @@ function EditStrain() {
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    dataActions.updateStrain(strain.code, { name, species, description: description || undefined, notes: notes || undefined });
-    toast.success("Strain updated");
-    navigate({ to: "/strains" });
+    const normalizedNewCode = normalizeCode(newCode);
+    if (!normalizedNewCode) return toast.error("Strain code is required");
+
+    try {
+      dataActions.renameStrain(strain.code, normalizedNewCode, {
+        name,
+        species,
+        description: description || undefined,
+        notes: notes || undefined,
+      });
+      toast.success(strain.code === normalizedNewCode ? "Strain updated" : `Strain renamed to #${normalizedNewCode}`);
+      navigate({ to: "/strains" });
+    } catch (error) {
+      toast.error((error as Error).message);
+    }
   };
+
+  const affectedUnits = useDataStore().units.filter((u) => normalizeCode(u.strainCode) === normalizeCode(strain.code)).length;
 
   return (
     <div className="p-4 max-w-2xl">
       <h1 className="text-lg font-mono mb-3">Edit #{strain.code}</h1>
       <Card className="p-4 bg-card border-border">
         <form onSubmit={submit} className="space-y-3">
+          <Field label="Code"><Input value={newCode} onChange={(e) => setNewCode(normalizeCode(e.target.value))} className="font-mono" placeholder="GT" /></Field>
           <Field label="Name"><Input value={name} onChange={(e) => setName(e.target.value)} /></Field>
           <Field label="Species"><Input value={species} onChange={(e) => setSpecies(e.target.value)} /></Field>
           <Field label="Description"><Textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} /></Field>
           <Field label="Notes"><Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} /></Field>
+          <div className="text-xs text-muted-foreground border border-border rounded p-3 bg-secondary/20">
+            Renaming the code updates all units that currently use <span className="font-mono">#{strain.code}</span>. Affected units: <span className="font-mono">{affectedUnits}</span>.
+          </div>
           <div className="flex justify-end gap-2">
             <Button type="button" variant="ghost" onClick={() => navigate({ to: "/strains" })}>Cancel</Button>
             <Button type="submit">Save</Button>
