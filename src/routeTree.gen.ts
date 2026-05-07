@@ -20,6 +20,7 @@ import { Route as UnitsUnitCodeRouteImport } from './routes/units.$unitCode'
 import { Route as TransfersNewRouteImport } from './routes/transfers.new'
 import { Route as EventsNewRouteImport } from './routes/events.new'
 import { Route as UnitsUnitCodeEditRouteImport } from './routes/units.$unitCode.edit'
+import { Route as TransfersTransferIdEditRouteImport } from './routes/transfers.$transferId.edit'
 import { Route as StrainsCodeEditRouteImport } from './routes/strains.$code.edit'
 import { Route as EventsEventIdEditRouteImport } from './routes/events.$eventId.edit'
 
@@ -78,6 +79,11 @@ const UnitsUnitCodeEditRoute = UnitsUnitCodeEditRouteImport.update({
   path: '/edit',
   getParentRoute: () => UnitsUnitCodeRoute,
 } as any)
+const TransfersTransferIdEditRoute = TransfersTransferIdEditRouteImport.update({
+  id: '/$transferId/edit',
+  path: '/$transferId/edit',
+  getParentRoute: () => TransfersRoute,
+} as any)
 const StrainsCodeEditRoute = StrainsCodeEditRouteImport.update({
   id: '/$code/edit',
   path: '/$code/edit',
@@ -102,6 +108,7 @@ export interface FileRoutesByFullPath {
   '/units/$unitCode': typeof UnitsUnitCodeRouteWithChildren
   '/events/$eventId/edit': typeof EventsEventIdEditRoute
   '/strains/$code/edit': typeof StrainsCodeEditRoute
+  '/transfers/$transferId/edit': typeof TransfersTransferIdEditRoute
   '/units/$unitCode/edit': typeof UnitsUnitCodeEditRoute
 }
 export interface FileRoutesByTo {
@@ -117,6 +124,7 @@ export interface FileRoutesByTo {
   '/units/$unitCode': typeof UnitsUnitCodeRouteWithChildren
   '/events/$eventId/edit': typeof EventsEventIdEditRoute
   '/strains/$code/edit': typeof StrainsCodeEditRoute
+  '/transfers/$transferId/edit': typeof TransfersTransferIdEditRoute
   '/units/$unitCode/edit': typeof UnitsUnitCodeEditRoute
 }
 export interface FileRoutesById {
@@ -133,6 +141,7 @@ export interface FileRoutesById {
   '/units/$unitCode': typeof UnitsUnitCodeRouteWithChildren
   '/events/$eventId/edit': typeof EventsEventIdEditRoute
   '/strains/$code/edit': typeof StrainsCodeEditRoute
+  '/transfers/$transferId/edit': typeof TransfersTransferIdEditRoute
   '/units/$unitCode/edit': typeof UnitsUnitCodeEditRoute
 }
 export interface FileRouteTypes {
@@ -150,6 +159,7 @@ export interface FileRouteTypes {
     | '/units/$unitCode'
     | '/events/$eventId/edit'
     | '/strains/$code/edit'
+    | '/transfers/$transferId/edit'
     | '/units/$unitCode/edit'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -165,6 +175,7 @@ export interface FileRouteTypes {
     | '/units/$unitCode'
     | '/events/$eventId/edit'
     | '/strains/$code/edit'
+    | '/transfers/$transferId/edit'
     | '/units/$unitCode/edit'
   id:
     | '__root__'
@@ -180,6 +191,7 @@ export interface FileRouteTypes {
     | '/units/$unitCode'
     | '/events/$eventId/edit'
     | '/strains/$code/edit'
+    | '/transfers/$transferId/edit'
     | '/units/$unitCode/edit'
   fileRoutesById: FileRoutesById
 }
@@ -272,6 +284,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof UnitsUnitCodeEditRouteImport
       parentRoute: typeof UnitsUnitCodeRoute
     }
+    '/transfers/$transferId/edit': {
+      id: '/transfers/$transferId/edit'
+      path: '/$transferId/edit'
+      fullPath: '/transfers/$transferId/edit'
+      preLoaderRoute: typeof TransfersTransferIdEditRouteImport
+      parentRoute: typeof TransfersRoute
+    }
     '/strains/$code/edit': {
       id: '/strains/$code/edit'
       path: '/$code/edit'
@@ -315,10 +334,12 @@ const StrainsRouteWithChildren =
 
 interface TransfersRouteChildren {
   TransfersNewRoute: typeof TransfersNewRoute
+  TransfersTransferIdEditRoute: typeof TransfersTransferIdEditRoute
 }
 
 const TransfersRouteChildren: TransfersRouteChildren = {
   TransfersNewRoute: TransfersNewRoute,
+  TransfersTransferIdEditRoute: TransfersTransferIdEditRoute,
 }
 
 const TransfersRouteWithChildren = TransfersRoute._addFileChildren(
