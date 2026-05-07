@@ -207,10 +207,10 @@ function truncate(s: string, n: number) {
 
 function Legend() {
   const items = [
-    { label: "Active", color: "hsl(var(--primary))" },
-    { label: "Contaminated", color: "hsl(var(--status-contaminated, 0 70% 55%))" },
-    { label: "Harvested", color: "hsl(var(--status-harvested, 140 50% 45%))" },
-    { label: "Archived/Discarded", color: "hsl(var(--muted-foreground))" },
+    { label: "Active", color: "var(--primary)" },
+    { label: "Contaminated", color: "var(--status-contaminated)" },
+    { label: "Harvested", color: "var(--status-harvested)" },
+    { label: "Archived/Discarded", color: "var(--muted-foreground)" },
   ];
   return (
     <div className="flex flex-wrap gap-3 text-[10px] font-mono uppercase text-muted-foreground">
