@@ -27,6 +27,7 @@ function EditUnit() {
   const [status, setStatus] = useState<UnitStatus>(unit?.status ?? "ACTIVE");
   const [batchTime, setBatchTime] = useState(unit ? toLocal(unit.batchTime) : toLocal(new Date().toISOString()));
   const [parentUnitCode, setParentUnitCode] = useState(unit?.parentUnitCode ?? "");
+  const [substrate, setSubstrate] = useState(unit?.substrate ?? "");
   const [description, setDescription] = useState(unit?.description ?? "");
   const [notes, setNotes] = useState(unit?.notes ?? "");
 
@@ -38,6 +39,7 @@ function EditUnit() {
       type, strainCode, status,
       batchTime: new Date(batchTime).toISOString(),
       parentUnitCode: parentUnitCode || undefined,
+      substrate: substrate.trim() || undefined,
       description: description || undefined,
       notes: notes || undefined,
     });
@@ -57,7 +59,7 @@ function EditUnit() {
       <Card className="p-4 bg-card border-border">
         <form onSubmit={submit} className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Type">
+            <Field label="Container type (+TYPE)">
               <select value={type} onChange={(e) => setType(e.target.value as ContainerType)} className={selectCls}>
                 {TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
               </select>
@@ -78,6 +80,9 @@ function EditUnit() {
               <Input type="datetime-local" value={batchTime} onChange={(e) => setBatchTime(e.target.value)} className="font-mono text-xs" />
             </Field>
           </div>
+          <Field label="Substrate / material">
+            <Input value={substrate} onChange={(e) => setSubstrate(e.target.value.toUpperCase())} placeholder="e.g. BR, FCR, OAT, POPCORN, WBR" className="font-mono" />
+          </Field>
           <Field label="Parent unit (optional)">
             <select value={parentUnitCode} onChange={(e) => setParentUnitCode(e.target.value)} className={selectCls}>
               <option value="">— none —</option>
