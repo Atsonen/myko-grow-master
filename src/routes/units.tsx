@@ -23,10 +23,12 @@ function UnitsPage() {
   const { units, events, strains, taxonomy } = useDataStore();
   const TYPES = taxonomy.types as ContainerType[];
   const STATUSES = taxonomy.statuses as UnitStatus[];
+  const SUBSTRATES = Array.from(new Set(units.map((u) => u.substrate).filter(Boolean) as string[])).sort();
   const [q, setQ] = useState("");
   const [type, setType] = useState<"" | ContainerType>("");
   const [status, setStatus] = useState<"" | UnitStatus>("");
   const [strain, setStrain] = useState<string>("");
+  const [substrate, setSubstrate] = useState<string>("");
 
   const lastEventByUnit = useMemo(() => {
     const map = new Map<string, (typeof events)[number]>();
@@ -41,7 +43,8 @@ function UnitsPage() {
     if (type && u.type !== type) return false;
     if (status && u.status !== status) return false;
     if (strain && u.strainCode !== strain) return false;
-    if (q && !`${u.code} ${u.notes ?? ""} ${u.strainCode}`.toLowerCase().includes(q.toLowerCase())) return false;
+    if (substrate && u.substrate !== substrate) return false;
+    if (q && !`${u.code} ${u.notes ?? ""} ${u.description ?? ""} ${u.substrate ?? ""} ${u.strainCode}`.toLowerCase().includes(q.toLowerCase())) return false;
     return true;
   });
 
@@ -49,12 +52,13 @@ function UnitsPage() {
     <div className="p-4 space-y-4">
       <div className="flex flex-wrap items-center gap-2">
         <Input
-          placeholder="Search unit code, notes…"
+          placeholder="Search unit code, notes, substrate…"
           value={q}
           onChange={(e) => setQ(e.target.value)}
           className="max-w-xs h-8 font-mono text-xs"
         />
         <Pill label="Type" value={type} options={["", ...TYPES]} onChange={(v) => setType(v as ContainerType | "")} />
+        <Pill label="Substrate" value={substrate} options={["", ...SUBSTRATES]} onChange={setSubstrate} />
         <Pill label="Status" value={status} options={["", ...STATUSES]} onChange={(v) => setStatus(v as UnitStatus | "")} />
         <Pill
           label="Strain"
@@ -74,6 +78,7 @@ function UnitsPage() {
               <tr>
                 <th className="text-left p-2">Unit</th>
                 <th className="text-left p-2">Type</th>
+                <th className="text-left p-2">Substrate</th>
                 <th className="text-left p-2">Strain</th>
                 <th className="text-left p-2">Status</th>
                 <th className="text-left p-2">Batch</th>
@@ -95,6 +100,7 @@ function UnitsPage() {
                       </Link>
                     </td>
                     <td className="p-2"><TypeBadge type={u.type} /></td>
+                    <td className="p-2 font-mono text-muted-foreground">{u.substrate ? <span className="rounded border border-border bg-muted px-2 py-0.5">{u.substrate}</span> : "—"}</td>
                     <td className="p-2 font-mono">#{u.strainCode}</td>
                     <td className="p-2"><StatusBadge status={u.status} /></td>
                     <td className="p-2 text-muted-foreground">{formatDateTime(u.batchTime)}</td>
@@ -114,7 +120,7 @@ function UnitsPage() {
               })}
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="p-6 text-center text-muted-foreground italic">No units match filters.</td>
+                  <td colSpan={7} className="p-6 text-center text-muted-foreground italic">No units match filters.</td>
                 </tr>
               )}
             </tbody>
