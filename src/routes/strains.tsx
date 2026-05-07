@@ -1,4 +1,4 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useState } from "react";
 import { useDataStore, dataActions } from "@/store/useDataStore";
 import { Card } from "@/components/ui/card";
@@ -11,10 +11,22 @@ import { Archive, ArchiveRestore, FlaskConical, Pencil, Trash2 } from "lucide-re
 
 export const Route = createFileRoute("/strains")({
   head: () => ({ meta: [{ title: "Strains — Myko Valvomo" }] }),
-  component: StrainsPage,
+  component: StrainsLayout,
 });
 
-function StrainsPage() {
+function StrainsLayout() {
+  const path = useRouterState({ select: (s) => s.location.pathname });
+  const isChild = path !== "/strains";
+
+  return (
+    <div className="p-4 space-y-4 max-w-4xl">
+      {!isChild && <StrainsIndex />}
+      <Outlet />
+    </div>
+  );
+}
+
+function StrainsIndex() {
   const { strains, units } = useDataStore();
   const navigate = useNavigate();
   const [code, setCode] = useState("");
@@ -28,9 +40,10 @@ function StrainsPage() {
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!code || !name) return toast.error("Code and name required");
-    if (strains.some((s) => s.code === code.toUpperCase())) return toast.error("Code already exists");
-    dataActions.addStrain({ code: code.toUpperCase(), name, species, description: description || undefined });
+    const normalizedCode = code.trim().toUpperCase();
+    if (!normalizedCode || !name) return toast.error("Code and name required");
+    if (strains.some((s) => s.code === normalizedCode)) return toast.error("Code already exists");
+    dataActions.addStrain({ code: normalizedCode, name, species, description: description || undefined });
     toast.success("Strain added");
     setCode(""); setName(""); setSpecies(""); setDescription("");
   };
@@ -52,7 +65,7 @@ function StrainsPage() {
   };
 
   return (
-    <div className="p-4 space-y-4 max-w-4xl">
+    <>
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-lg font-mono flex items-center gap-2"><FlaskConical className="h-4 w-4" /> Strains</h1>
         <label className="flex items-center gap-1 text-[10px] font-mono uppercase text-muted-foreground">
@@ -100,7 +113,7 @@ function StrainsPage() {
       </Card>
 
       <div><Link to="/lineage/graph" className="text-xs text-primary hover:underline">→ View lineage graph</Link></div>
-    </div>
+    </>
   );
 }
 
