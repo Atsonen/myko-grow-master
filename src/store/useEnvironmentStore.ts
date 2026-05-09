@@ -15,18 +15,36 @@ export interface PersistedEnvironmentState extends EnvironmentState {
 const STORAGE_KEY = "myko-valvomo-environment-state-v1";
 const SCHEMA_VERSION = 1;
 
+const defaultSources: EnvironmentSource[] = [
+  {
+    id: "src-sensorblock-1",
+    name: "SensorBlock 1",
+    location: "SENSORBLOCK-1",
+    mqttTopic: "Sensors/SensorBlock_1",
+    channelMap: [
+      {
+        payloadKey: "DStemp1",
+        alias: "T1",
+        location: "TERRARIO-1",
+        metric: "temperatureC",
+        description: "Terrario 1 temperature sensor.",
+      },
+      {
+        payloadKey: "DStemp2",
+        alias: "F1",
+        location: "KYLMASAILYTYSTILA-1",
+        metric: "temperatureC",
+        description: "Kylmäsäilytystila 1 temperature sensor.",
+      },
+    ],
+    description: "Internal MQTT JSON payload from Sensors/SensorBlock_1. DStemp1=T1/Terrario 1, DStemp2=F1/Kylmäsäilytystila 1.",
+  },
+];
+
 const initialState = (): EnvironmentState => ({
   locationRecords: [],
   readings: [],
-  sources: [
-    {
-      id: "src-default-temp",
-      name: "Default grow room sensor",
-      location: "GROW-ROOM",
-      mqttTopic: "myko/growroom/temperature",
-      description: "Placeholder for the internal MQTT temperature sensor.",
-    },
-  ],
+  sources: defaultSources,
 });
 
 let state: EnvironmentState = loadState();
@@ -62,6 +80,32 @@ export const environmentActions = {
     const reading: EnvironmentReading = { ...input, id: newId("env") };
     setState({ readings: [...state.readings, reading] });
     return reading;
+  },
+  addReadingsFromSensorBlock1(payload: Record<string, unknown>, timestamp = new Date().toISOString()) {
+    const source = state.sources.find((s) => s.id === "src-sensorblock-1");
+    if (!source?.channelMap) return [];
+
+    const readings = source.channelMap
+      .map((channel) => {
+        const raw = payload[channel.payloadKey];
+        const value = typeof raw === "number" ? raw : Number(raw);
+        if (!Number.isFinite(value)) return null;
+        const reading: EnvironmentReading = {
+          id: newId("env"),
+          timestamp,
+          location: channel.location,
+          source: `${source.name}/${channel.alias}/${channel.payloadKey}`,
+          note: source.mqttTopic,
+        };
+        if (channel.metric === "temperatureC") reading.temperatureC = value;
+        if (channel.metric === "humidityRh") reading.humidityRh = value;
+        if (channel.metric === "co2Ppm") reading.co2Ppm = value;
+        return reading;
+      })
+      .filter(Boolean) as EnvironmentReading[];
+
+    if (readings.length) setState({ readings: [...state.readings, ...readings] });
+    return readings;
   },
   archiveReading(id: string) {
     setState({ readings: state.readings.map((r) => (r.id === id ? { ...r, archived: true } : r)) });
@@ -138,11 +182,24 @@ function toPersistedState(value: EnvironmentState): PersistedEnvironmentState {
 
 function normalizeState(input: Partial<EnvironmentState> | Partial<PersistedEnvironmentState> | null | undefined): EnvironmentState {
   const fallback = initialState();
+  const inputSources = Array.isArray(input?.sources) ? input.sources : [];
+  const mergedSources = mergeDefaultSources(inputSources);
+
   return {
     locationRecords: Array.isArray(input?.locationRecords) ? input.locationRecords : fallback.locationRecords,
     readings: Array.isArray(input?.readings) ? input.readings : fallback.readings,
-    sources: Array.isArray(input?.sources) ? input.sources : fallback.sources,
+    sources: mergedSources,
   };
+}
+
+function mergeDefaultSources(inputSources: EnvironmentSource[]) {
+  const byId = new Map<string, EnvironmentSource>();
+  for (const source of defaultSources) byId.set(source.id, source);
+  for (const source of inputSources) {
+    const defaultSource = byId.get(source.id);
+    byId.set(source.id, defaultSource ? { ...defaultSource, ...source, channelMap: source.channelMap ?? defaultSource.channelMap } : source);
+  }
+  return Array.from(byId.values());
 }
 
 function safeLocalStorage(): Storage | null {
