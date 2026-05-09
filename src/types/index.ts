@@ -79,11 +79,20 @@ export interface EnvironmentReading {
   archived?: boolean;
 }
 
+export interface EnvironmentChannelMap {
+  payloadKey: string; // e.g. DStemp1
+  alias: string; // e.g. T1
+  location: string; // e.g. TERRARIO-1
+  metric: "temperatureC" | "humidityRh" | "co2Ppm";
+  description?: string;
+}
+
 export interface EnvironmentSource {
   id: string;
   name: string;
   location: string;
   mqttTopic?: string;
+  channelMap?: EnvironmentChannelMap[];
   description?: string;
   archived?: boolean;
 }
