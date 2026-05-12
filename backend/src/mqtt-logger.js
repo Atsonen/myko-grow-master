@@ -8,8 +8,11 @@ const MQTT_URL = process.env.MQTT_URL || "mqtt://192.168.1.51:1883";
 const MQTT_TOPIC = process.env.MQTT_TOPIC || "Sensors/SensorBlock_1";
 const MQTT_CLIENT_ID = process.env.MQTT_CLIENT_ID || "myko-valvomo-logger";
 const SOURCE_ID = "src-sensorblock-1";
+const LOG_INTERVAL_SECONDS = Number(process.env.ENV_LOG_INTERVAL_SECONDS || 60);
+const LOG_INTERVAL_MS = Math.max(1, LOG_INTERVAL_SECONDS) * 1000;
 
 let channelCache = [];
+const lastSavedAtByChannel = new Map();
 
 const client = mqtt.connect(MQTT_URL, {
   clientId: MQTT_CLIENT_ID,
@@ -19,6 +22,7 @@ const client = mqtt.connect(MQTT_URL, {
 
 client.on("connect", async () => {
   console.log(`[mqtt] connected ${MQTT_URL}`);
+  console.log(`[mqtt] log interval ${LOG_INTERVAL_SECONDS}s/channel`);
   channelCache = await loadChannels();
   console.log(`[mqtt] loaded ${channelCache.length} channel mapping(s)`);
   client.subscribe(MQTT_TOPIC, { qos: 0 }, (error) => {
@@ -72,6 +76,10 @@ async function insertSensorBlockReadings(topic, payload, timestamp, channels) {
   const timestampSql = toMariaDbDateTime(timestamp);
 
   for (const channel of channels) {
+    const channelId = `${topic}/${channel.payloadKey}/${channel.metric}`;
+    const lastSavedAt = lastSavedAtByChannel.get(channelId) ?? 0;
+    if (timestamp.getTime() - lastSavedAt < LOG_INTERVAL_MS) continue;
+
     const raw = payload[channel.payloadKey];
     const value = typeof raw === "number" ? raw : Number(raw);
     if (!Number.isFinite(value)) continue;
@@ -91,9 +99,10 @@ async function insertSensorBlockReadings(topic, payload, timestamp, channels) {
         channel.metric === "humidityRh" ? value : null,
         channel.metric === "co2Ppm" ? value : null,
         JSON.stringify(payload),
-        null,
+        `interval=${LOG_INTERVAL_SECONDS}s`,
       ],
     );
+    lastSavedAtByChannel.set(channelId, timestamp.getTime());
     inserted += 1;
   }
 
