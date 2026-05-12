@@ -24,20 +24,20 @@ const defaultSources: EnvironmentSource[] = [
     channelMap: [
       {
         payloadKey: "DStemp1",
+        alias: "F1",
+        location: "KYLMASAILYTYSTILA-1",
+        metric: "temperatureC",
+        description: "Cold storage 1 temperature sensor.",
+      },
+      {
+        payloadKey: "DStemp2",
         alias: "T1",
         location: "TERRARIO-1",
         metric: "temperatureC",
         description: "Terrario 1 temperature sensor.",
       },
-      {
-        payloadKey: "DStemp2",
-        alias: "F1",
-        location: "KYLMASAILYTYSTILA-1",
-        metric: "temperatureC",
-        description: "Kylmäsäilytystila 1 temperature sensor.",
-      },
     ],
-    description: "Internal MQTT JSON payload from Sensors/SensorBlock_1. DStemp1=T1/Terrario 1, DStemp2=F1/Kylmäsäilytystila 1.",
+    description: "Internal MQTT JSON payload from Sensors/SensorBlock_1. DStemp1=F1/cold storage 1, DStemp2=T1/Terrario 1.",
   },
 ];
 
