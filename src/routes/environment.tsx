@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useDataStore, dataActions } from "@/store/useDataStore";
 import { environmentActions, useEnvironmentStore } from "@/store/useEnvironmentStore";
 import { Card } from "@/components/ui/card";
@@ -7,8 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { formatDateTime, relativeTime } from "@/lib/format";
-import { Activity, MapPin, Thermometer, Wifi } from "lucide-react";
+import { relativeTime } from "@/lib/format";
+import { Activity, Database, MapPin, RefreshCw, Thermometer, Wifi } from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/environment")({
@@ -16,23 +16,64 @@ export const Route = createFileRoute("/environment")({
   component: EnvironmentPage,
 });
 
+type ApiEnvironmentReading = {
+  id: number;
+  timestamp: string;
+  location: string;
+  source: string;
+  mqttTopic?: string;
+  payloadKey?: string;
+  alias?: string;
+  temperatureC?: number;
+  humidityRh?: number;
+  co2Ppm?: number;
+  note?: string;
+  archived?: boolean;
+};
+
 function EnvironmentPage() {
   const { units } = useDataStore();
   const { locationRecords, readings, sources } = useEnvironmentStore();
   const [showArchived, setShowArchived] = useState(false);
+  const [apiReadings, setApiReadings] = useState<ApiEnvironmentReading[]>([]);
+  const [apiStatus, setApiStatus] = useState<"idle" | "loading" | "ok" | "error">("idle");
+  const [apiError, setApiError] = useState<string>("");
+
+  const loadApiReadings = async () => {
+    setApiStatus("loading");
+    setApiError("");
+    try {
+      const response = await fetch("/api/environment/latest", { headers: { Accept: "application/json" } });
+      if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+      const data = (await response.json()) as ApiEnvironmentReading[];
+      setApiReadings(data);
+      setApiStatus("ok");
+    } catch (error) {
+      setApiStatus("error");
+      setApiError((error as Error).message);
+    }
+  };
+
+  useEffect(() => {
+    void loadApiReadings();
+    const timer = window.setInterval(() => void loadApiReadings(), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const visibleUnits = units.filter((u) => showArchived || u.status !== "ARCHIVED");
   const visibleLocationRecords = locationRecords.filter((r) => showArchived || !r.archived);
-  const visibleReadings = readings.filter((r) => showArchived || !r.archived).sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+  const visibleLocalReadings = readings.filter((r) => showArchived || !r.archived).sort((a, b) => b.timestamp.localeCompare(a.timestamp));
 
-  const latestByLocation = useMemo(() => {
+  const latestLocalByLocation = useMemo(() => {
     const map = new Map<string, typeof readings[number]>();
-    for (const r of visibleReadings) {
+    for (const r of visibleLocalReadings) {
       const prev = map.get(r.location);
       if (!prev || r.timestamp > prev.timestamp) map.set(r.location, r);
     }
     return map;
-  }, [visibleReadings]);
+  }, [visibleLocalReadings]);
+
+  const latestReadings = apiReadings.length > 0 ? apiReadings : Array.from(latestLocalByLocation.values());
 
   const currentLocationByUnit = useMemo(() => {
     const map = new Map<string, typeof locationRecords[number]>();
@@ -50,6 +91,12 @@ function EnvironmentPage() {
         <label className="flex items-center gap-1 text-[10px] font-mono uppercase text-muted-foreground">
           <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} /> Show archived
         </label>
+        <Button size="sm" variant="secondary" onClick={() => void loadApiReadings()}>
+          <RefreshCw className="h-3 w-3 mr-1" /> Refresh
+        </Button>
+        <div className="ml-auto text-[10px] font-mono text-muted-foreground">
+          API: {apiStatus === "ok" ? "connected" : apiStatus}{apiError ? ` · ${apiError}` : ""}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-[1fr_420px] gap-4 items-start">
@@ -70,16 +117,20 @@ function EnvironmentPage() {
           </Card>
 
           <Card className="p-4 bg-card border-border">
-            <div className="flex items-center gap-2 mb-3"><Activity className="h-4 w-4 text-muted-foreground" /><h2 className="text-sm font-mono uppercase text-muted-foreground">Latest readings by location</h2></div>
+            <div className="flex items-center gap-2 mb-3"><Database className="h-4 w-4 text-muted-foreground" /><h2 className="text-sm font-mono uppercase text-muted-foreground">Latest DB readings by location</h2></div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-              {Array.from(latestByLocation.entries()).map(([location, r]) => (
-                <div key={location} className="border border-border rounded p-3 bg-secondary/20">
-                  <div className="font-mono text-sm">{location}</div>
+              {latestReadings.map((r) => (
+                <div key={`${r.location}-${r.timestamp}-${r.source}`} className="border border-border rounded p-3 bg-secondary/20">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="font-mono text-sm">{r.location}</div>
+                    {"alias" in r && r.alias && <span className="rounded border border-border bg-muted px-2 py-0.5 text-[10px] font-mono text-muted-foreground">{r.alias}</span>}
+                  </div>
                   <div className="mt-1 text-2xl font-mono">{r.temperatureC ?? "—"} °C</div>
                   <div className="text-xs text-muted-foreground">{r.humidityRh !== undefined ? `${r.humidityRh}%RH · ` : ""}{r.source} · {relativeTime(r.timestamp)}</div>
+                  {"payloadKey" in r && r.payloadKey && <div className="text-[10px] font-mono text-muted-foreground mt-1">{r.payloadKey} · {r.mqttTopic}</div>}
                 </div>
               ))}
-              {latestByLocation.size === 0 && <div className="text-xs text-muted-foreground italic">No readings yet.</div>}
+              {latestReadings.length === 0 && <div className="text-xs text-muted-foreground italic">No readings yet.</div>}
             </div>
           </Card>
 
@@ -90,6 +141,7 @@ function EnvironmentPage() {
                 <div key={s.id} className="border border-border rounded p-2 text-xs bg-secondary/20">
                   <div className="font-mono">{s.name} → {s.location}</div>
                   <div className="text-muted-foreground font-mono">{s.mqttTopic ?? "no topic"}</div>
+                  {s.channelMap && <div className="mt-1 flex flex-wrap gap-1">{s.channelMap.map((c) => <span key={`${c.payloadKey}-${c.alias}`} className="rounded border border-border px-2 py-0.5 font-mono text-[10px] text-muted-foreground">{c.payloadKey} → {c.alias} → {c.location}</span>)}</div>}
                   {s.description && <div className="text-muted-foreground mt-1">{s.description}</div>}
                 </div>
               ))}
@@ -99,10 +151,10 @@ function EnvironmentPage() {
 
         <div className="space-y-4">
           <MoveUnitForm units={visibleUnits.map((u) => u.code)} />
-          <ManualReadingForm locations={Array.from(new Set([...visibleLocationRecords.map((r) => r.location), ...sources.map((s) => s.location), "GROW-ROOM"]))} />
+          <ManualReadingForm locations={Array.from(new Set([...visibleLocationRecords.map((r) => r.location), ...sources.map((s) => s.location), ...apiReadings.map((r) => r.location), "GROW-ROOM"]))} />
           <Card className="p-4 bg-secondary/20 border-border text-xs text-muted-foreground leading-relaxed">
-            <div className="font-mono uppercase text-foreground mb-1">MQTT note</div>
-            Browser UI cannot normally subscribe to MQTT TCP port 1883 directly. Next step is a small Lubuntu Node service that subscribes to the broker and writes readings to MariaDB/API, or enabling MQTT over WebSockets in Mosquitto.
+            <div className="font-mono uppercase text-foreground mb-1">MQTT / DB status</div>
+            Sensor data is now read from the Lubuntu backend API. The MQTT logger writes SensorBlock values into MariaDB, and this page polls latest readings once per minute.
           </Card>
         </div>
       </div>
@@ -138,11 +190,11 @@ function ManualReadingForm({ locations }: { locations: string[] }) {
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     environmentActions.addReading({ location: location.trim().toUpperCase(), source: "manual", timestamp: new Date(timestamp).toISOString(), temperatureC: temperatureC ? Number(temperatureC) : undefined, humidityRh: humidityRh ? Number(humidityRh) : undefined });
-    toast.success("Reading recorded");
+    toast.success("Reading recorded locally");
     setTemperatureC(""); setHumidityRh("");
   };
 
-  return <Card className="p-4 bg-card border-border"><h2 className="text-sm font-mono uppercase text-muted-foreground mb-3">Manual reading</h2><form onSubmit={submit} className="space-y-3"><Field label="Location"><Input value={location} onChange={(e) => setLocation(e.target.value.toUpperCase())} className="font-mono" /></Field><div className="grid grid-cols-2 gap-2"><Field label="Temperature °C"><Input value={temperatureC} onChange={(e) => setTemperatureC(e.target.value)} inputMode="decimal" /></Field><Field label="Humidity %RH"><Input value={humidityRh} onChange={(e) => setHumidityRh(e.target.value)} inputMode="decimal" /></Field></div><Field label="Timestamp"><Input type="datetime-local" value={timestamp} onChange={(e) => setTimestamp(e.target.value)} className="font-mono text-xs" /></Field><Button type="submit">Save reading</Button></form></Card>;
+  return <Card className="p-4 bg-card border-border"><h2 className="text-sm font-mono uppercase text-muted-foreground mb-3">Manual reading (local fallback)</h2><form onSubmit={submit} className="space-y-3"><Field label="Location"><Input value={location} onChange={(e) => setLocation(e.target.value.toUpperCase())} className="font-mono" /></Field><div className="grid grid-cols-2 gap-2"><Field label="Temperature °C"><Input value={temperatureC} onChange={(e) => setTemperatureC(e.target.value)} inputMode="decimal" /></Field><Field label="Humidity %RH"><Input value={humidityRh} onChange={(e) => setHumidityRh(e.target.value)} inputMode="decimal" /></Field></div><Field label="Timestamp"><Input type="datetime-local" value={timestamp} onChange={(e) => setTimestamp(e.target.value)} className="font-mono text-xs" /></Field><Button type="submit">Save local reading</Button></form></Card>;
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) { return <div className="space-y-1"><Label className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">{label}</Label>{children}</div>; }
