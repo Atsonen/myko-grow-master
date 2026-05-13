@@ -23,6 +23,22 @@ export async function query(sql, params = []) {
   }
 }
 
+export async function transaction(work) {
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    await conn.beginTransaction();
+    const result = await work(conn);
+    await conn.commit();
+    return result;
+  } catch (error) {
+    if (conn) await conn.rollback();
+    throw error;
+  } finally {
+    if (conn) conn.release();
+  }
+}
+
 export async function closeDb() {
   await pool.end();
 }
