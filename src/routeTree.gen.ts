@@ -16,6 +16,8 @@ import { Route as StrainsRouteImport } from './routes/strains'
 import { Route as QcRouteImport } from './routes/qc'
 import { Route as LineageRouteImport } from './routes/lineage'
 import { Route as EventsRouteImport } from './routes/events'
+import { Route as EnvironmentRouteImport } from './routes/environment'
+import { Route as DataRouteImport } from './routes/data'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as UnitsUnitCodeRouteImport } from './routes/units.$unitCode'
 import { Route as TransfersNewRouteImport } from './routes/transfers.new'
@@ -59,6 +61,16 @@ const LineageRoute = LineageRouteImport.update({
 const EventsRoute = EventsRouteImport.update({
   id: '/events',
   path: '/events',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const EnvironmentRoute = EnvironmentRouteImport.update({
+  id: '/environment',
+  path: '/environment',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DataRoute = DataRouteImport.update({
+  id: '/data',
+  path: '/data',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -109,6 +121,8 @@ const EventsEventIdEditRoute = EventsEventIdEditRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/data': typeof DataRoute
+  '/environment': typeof EnvironmentRoute
   '/events': typeof EventsRouteWithChildren
   '/lineage': typeof LineageRouteWithChildren
   '/qc': typeof QcRoute
@@ -127,6 +141,8 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/data': typeof DataRoute
+  '/environment': typeof EnvironmentRoute
   '/events': typeof EventsRouteWithChildren
   '/lineage': typeof LineageRouteWithChildren
   '/qc': typeof QcRoute
@@ -146,6 +162,8 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/data': typeof DataRoute
+  '/environment': typeof EnvironmentRoute
   '/events': typeof EventsRouteWithChildren
   '/lineage': typeof LineageRouteWithChildren
   '/qc': typeof QcRoute
@@ -166,6 +184,8 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/data'
+    | '/environment'
     | '/events'
     | '/lineage'
     | '/qc'
@@ -184,6 +204,8 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/data'
+    | '/environment'
     | '/events'
     | '/lineage'
     | '/qc'
@@ -202,6 +224,8 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/data'
+    | '/environment'
     | '/events'
     | '/lineage'
     | '/qc'
@@ -221,6 +245,8 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  DataRoute: typeof DataRoute
+  EnvironmentRoute: typeof EnvironmentRoute
   EventsRoute: typeof EventsRouteWithChildren
   LineageRoute: typeof LineageRouteWithChildren
   QcRoute: typeof QcRoute
@@ -279,6 +305,20 @@ declare module '@tanstack/react-router' {
       path: '/events'
       fullPath: '/events'
       preLoaderRoute: typeof EventsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/environment': {
+      id: '/environment'
+      path: '/environment'
+      fullPath: '/environment'
+      preLoaderRoute: typeof EnvironmentRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/data': {
+      id: '/data'
+      path: '/data'
+      fullPath: '/data'
+      preLoaderRoute: typeof DataRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -420,6 +460,8 @@ const UnitsRouteWithChildren = UnitsRoute._addFileChildren(UnitsRouteChildren)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  DataRoute: DataRoute,
+  EnvironmentRoute: EnvironmentRoute,
   EventsRoute: EventsRouteWithChildren,
   LineageRoute: LineageRouteWithChildren,
   QcRoute: QcRoute,
@@ -431,3 +473,13 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}
