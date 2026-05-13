@@ -7,6 +7,7 @@ import { TypeBadge } from "@/components/common/TypeBadge";
 import { relativeTime } from "@/lib/format";
 import type { ContainerType } from "@/types";
 import { AlertTriangle, Box, Activity, Clock, ArrowLeftRight } from "lucide-react";
+import { LatestTemperaturesCard } from "@/components/dashboard/LatestTemperaturesCard";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -69,6 +70,8 @@ function Dashboard() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+        <LatestTemperaturesCard />
+
         <Card className="bg-card border-border">
           <CardHeader className="py-3">
             <CardTitle className="text-sm font-mono uppercase tracking-wider text-muted-foreground">
