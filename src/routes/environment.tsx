@@ -10,26 +10,12 @@ import { Label } from "@/components/ui/label";
 import { relativeTime } from "@/lib/format";
 import { Activity, Database, MapPin, RefreshCw, Thermometer, Wifi } from "lucide-react";
 import { toast } from "sonner";
+import type { ApiEnvironmentReading } from "@/types/environment";
 
 export const Route = createFileRoute("/environment")({
   head: () => ({ meta: [{ title: "Environment — Myko Valvomo" }] }),
   component: EnvironmentPage,
 });
-
-type ApiEnvironmentReading = {
-  id: number;
-  timestamp: string;
-  location: string;
-  source: string;
-  mqttTopic?: string;
-  payloadKey?: string;
-  alias?: string;
-  temperatureC?: number;
-  humidityRh?: number;
-  co2Ppm?: number;
-  note?: string;
-  archived?: boolean;
-};
 
 function EnvironmentPage() {
   const { units } = useDataStore();
