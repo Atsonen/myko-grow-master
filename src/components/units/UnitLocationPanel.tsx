@@ -26,6 +26,7 @@ import { formatDateTime, relativeTime } from "@/lib/format";
 import type { Unit, UnitLocationRecord } from "@/types";
 
 import { KNOWN_LOCATIONS } from "@/lib/locations";
+import { getTaxonomy } from "@/lib/apiClient";
 const selectCls =
   "w-full h-9 rounded-md border border-input bg-background px-2 text-sm font-mono";
 
@@ -54,13 +55,12 @@ export function UnitLocationPanel({
 
   const load = useCallback(async () => {
     try {
-      const [records, environment] = await Promise.all([
-        getUnitLocations(),
+      const [environment, taxonomy] = await Promise.all([
         getUnitEnvironment(unit.code),
+        getTaxonomy().catch(() => null),
       ]);
-      const locs = new Set<string>(KNOWN_LOCATIONS);
-      records.forEach((r: UnitLocationRecord) => locs.add(r.location));
-      setAllLocations(Array.from(locs).sort());
+      // Only predefined locations (taxonomy_terms 'locations'); the backend rejects others.
+      setAllLocations(taxonomy?.locations?.length ? taxonomy.locations : KNOWN_LOCATIONS);
       setEnv(environment);
       setEnvError("");
     } catch (error) {
@@ -88,7 +88,7 @@ export function UnitLocationPanel({
   };
 
   const confirmMove = async () => {
-    const location = (target === "__CUSTOM__" ? custom : target).trim().toUpperCase();
+    const location = target;
     if (!location) return toast.error("Pick a target location");
     if (location === current) return toast.error(`${unit.code} is already in ${location}`);
     if (!confirm(`Move ${unit.code} from ${current ?? "unknown"} to ${location}?`)) return;
@@ -167,17 +167,8 @@ export function UnitLocationPanel({
                     {l === current ? " (current)" : ""}
                   </option>
                 ))}
-                <option value="__CUSTOM__">Other…</option>
               </select>
             </label>
-            {target === "__CUSTOM__" && (
-              <Input
-                value={custom}
-                onChange={(e) => setCustom(e.target.value.toUpperCase())}
-                placeholder="SHELF-A2"
-                className="font-mono"
-              />
-            )}
             <label className="block text-[10px] font-mono uppercase text-muted-foreground">
               Moved at
               <Input type="datetime-local" value={movedAt} onChange={(e) => setMovedAt(e.target.value)} className="font-mono text-xs" />

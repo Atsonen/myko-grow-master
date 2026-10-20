@@ -254,6 +254,9 @@ const dataloggerVariables = [
 const seedStatements = [
   // Event function INOC (inoculation) added 2026-10-20
   { sql: "INSERT IGNORE INTO taxonomy_terms (category, value) VALUES ('functions', 'INOC')", params: [] },
+  // Predefined locations and substrates (dropdowns; backend rejects unknown codes) – 2026-10-20
+  { sql: "INSERT IGNORE INTO taxonomy_terms (category, value) VALUES ('locations','KYLMASAILYTYSTILA-1'),('locations','TERRARIO-1'),('locations','TERRARIO-2'),('locations','GARDEN')", params: [] },
+  { sql: "INSERT IGNORE INTO taxonomy_terms (category, value) VALUES ('substrates','BR'),('substrates','BULK'),('substrates','FCR'),('substrates','GRAIN'),('substrates','OAT'),('substrates','RICE')", params: [] },
   {
     sql: `INSERT INTO environment_sources (id, name, location, mqtt_topic, description)
           VALUES (?, ?, ?, ?, ?)

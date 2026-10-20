@@ -123,6 +123,7 @@ app.post(
     const result = await withConnection(async (conn) => {
       await conn.beginTransaction();
       try {
+        await assertLookup(conn, "locations", location, "location");
         const units = await conn.query("SELECT code FROM units WHERE code = ? FOR UPDATE", [unitCode]);
         if (units.length === 0) {
           await conn.rollback();
@@ -1347,7 +1348,7 @@ function mapTransfer(row) {
 }
 
 function mapTaxonomy(rows) {
-  const taxonomy = { functions: [], types: [], statuses: [], qcTags: [] };
+  const taxonomy = { functions: [], types: [], statuses: [], qcTags: [], locations: [], substrates: [] };
   for (const row of rows) {
     if (Array.isArray(taxonomy[row.category])) taxonomy[row.category].push(row.value);
   }
@@ -1557,7 +1558,17 @@ function normalizeUnitBody(input) {
   };
 }
 
+// Predefined lookups (taxonomy_terms): reject unknown location / substrate codes.
+export async function assertLookup(conn, category, value, label) {
+  if (value === null || value === undefined || value === "") return;
+  const rows = await conn.query("SELECT value FROM taxonomy_terms WHERE category = ?", [category]);
+  if (rows.length && !rows.some((r) => r.value === value))
+    throw new Error(`Unknown ${label} ${value}; allowed: ${rows.map((r) => r.value).join(", ")}`);
+}
+
 async function assertUnitReferences(conn, code, unit) {
+  await assertLookup(conn, "substrates", unit.substrate, "substrate");
+  await assertLookup(conn, "locations", unit.currentLocation, "location");
   if (unit.strainCode) {
     const strainRows = await conn.query("SELECT code FROM strains WHERE code = ?", [unit.strainCode]);
     if (strainRows.length === 0) throw new Error(`Unknown strain #${unit.strainCode}`);

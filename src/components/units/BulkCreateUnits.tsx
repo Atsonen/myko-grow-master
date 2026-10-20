@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { KNOWN_LOCATIONS } from "@/lib/locations";
+import { useLookups } from "@/lib/lookups";
 import { bulkCreateUnits, type OriginInput } from "@/lib/traceApi";
 import { OriginEditor, cleanOrigins } from "./OriginEditor";
 import type { Strain, Unit } from "@/types";
@@ -22,6 +22,7 @@ export function BulkCreateUnits({ units, strains, onDone }: { units: Unit[]; str
   const [notes, setNotes] = useState("");
   const [origins, setOrigins] = useState<OriginInput[]>([]);
   const [busy, setBusy] = useState(false);
+  const { locations, substrates } = useLookups();
 
   const b = base.trim().toUpperCase();
   const m = /^(\d{6})-([A-Z]+)$/.exec(b);
@@ -59,12 +60,15 @@ export function BulkCreateUnits({ units, strains, onDone }: { units: Unit[]; str
             </select></label>
           <label className="space-y-1"><div className="text-[10px] uppercase text-muted-foreground">Location</div>
             <select aria-label="Location" className={sel} value={location} onChange={(e) => setLocation(e.target.value)}>
-              <option value="">not set</option>{KNOWN_LOCATIONS.map((l) => <option key={l} value={l}>{l}</option>)}
+              <option value="">not set</option>{locations.map((l) => <option key={l} value={l}>{l}</option>)}
             </select></label>
           <label className="space-y-1"><div className="text-[10px] uppercase text-muted-foreground">Batch time (default 12:00 of code date)</div>
             <Input aria-label="Batch time" type="datetime-local" className="h-8 w-48 font-mono" value={batchTime} onChange={(e) => setBatchTime(e.target.value)} /></label>
           <label className="space-y-1"><div className="text-[10px] uppercase text-muted-foreground">Substrate</div>
-            <Input aria-label="Substrate" className="h-8 w-28 font-mono" placeholder={m && SUB_TOKENS[m[2]] ? SUB_TOKENS[m[2]] : "optional"} value={substrate} onChange={(e) => setSubstrate(e.target.value.toUpperCase())} /></label>
+            <select aria-label="Substrate" className={sel} value={substrate} onChange={(e) => setSubstrate(e.target.value)}>
+              <option value="">{m && SUB_TOKENS[m[2]] ? `from code (${SUB_TOKENS[m[2]]})` : "— none —"}</option>
+              {substrates.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select></label>
         </div>
         <div><div className="text-[10px] uppercase text-muted-foreground mb-1">Origin (applies to all)</div>
           <OriginEditor value={origins} onChange={setOrigins} unitCodes={units.map((u) => u.code)} /></div>

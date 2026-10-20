@@ -3,6 +3,13 @@
 // Every write runs in a transaction with @myko_actor/@myko_op set; DB triggers write audit_log.
 import { query, withConnection } from "./db.js";
 
+async function assertLookup(conn, category, value, label) {
+  if (value === null || value === undefined || value === "") return;
+  const rows = await conn.query("SELECT value FROM taxonomy_terms WHERE category = ?", [category]);
+  if (rows.length && !rows.some((r) => r.value === value))
+    throw new Error(`Unknown ${label} ${value}; allowed: ${rows.map((r) => r.value).join(", ")}`);
+}
+
 export const ORIGIN_TYPES = ["UNIT", "SPORES", "PURCHASED", "STRAIN_LIBRARY", "OTHER", "UNKNOWN"];
 const JAR_SUBSTRATE = { FCR: "FCR", OAT: "OAT", BR: "BR", GS: "GRAIN", RIS: "RICE" };
 const TYPES = ["BOX", "JAR", "PD", "LC", "BAG", "OTHER"];
@@ -297,6 +304,8 @@ export function registerTraceRoutes(app, { mapUnit, mapEvent, mapTransfer, mapUn
     const op = newOp("bulkcreate"); const actor = actorOf(b); const dryRun = isDry(req);
     const created = await tx(actor, op, async (conn) => {
       if (strain && !(await conn.query("SELECT 1 FROM strains WHERE code = ?", [strain])).length) throw new Error(`Unknown strain #${strain}`);
+      await assertLookup(conn, "substrates", substrate, "substrate");
+      await assertLookup(conn, "locations", location, "location");
       const rows = await conn.query("SELECT code FROM units WHERE code LIKE ? FOR UPDATE", [`${prefix}%`]);
       let max = 0; for (const r of rows) { const n = new RegExp(`^${prefix}(\\d+)$`).exec(r.code); if (n) max = Math.max(max, +n[1]); }
       const codes = [];
@@ -358,6 +367,7 @@ export function registerTraceRoutes(app, { mapUnit, mapEvent, mapTransfer, mapUn
       const exists = (await conn.query("SELECT 1 FROM units WHERE code = ?", [target])).length > 0;
       if (!exists) {
         if (!b.targetUnit) throw new Error(`Target unit ${target} does not exist`);
+        await assertLookup(conn, "substrates", str(b.targetUnit.substrate), "substrate");
         await conn.query("INSERT INTO units (code, type, strain_code, status, batch_time, substrate, notes) VALUES (?, ?, ?, 'ACTIVE', ?, ?, ?)",
           [target, String(b.targetUnit.type || "OTHER").toUpperCase(), str(b.targetUnit.strainCode), dt(at), str(b.targetUnit.substrate), str(b.targetUnit.notes) ?? `Created from transfer ${source} → ${target}`]);
       }
@@ -377,6 +387,7 @@ export function registerTraceRoutes(app, { mapUnit, mapEvent, mapTransfer, mapUn
     if (Number.isNaN(at.getTime())) throw new Error("movedAt is invalid");
     const actor = actorOf(req.body); const dryRun = isDry(req); const op = newOp("bulkmove");
     const r = await tx(actor, op, async (conn) => {
+      await assertLookup(conn, "locations", location, "location");
       const codes = await resolveSelection(conn, req.body); const before = await snapshot(conn, codes); let n = 0;
       for (const c of codes) if (await addMove(conn, c, location, at, str(req.body?.note) ?? `Bulk location ${op} (${actor})`)) n++;
       return { codes, moved: n, units: diff(before, await snapshot(conn, codes), codes) };

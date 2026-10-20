@@ -22,6 +22,7 @@ import { Archive, ArrowDownUp, Pencil } from "lucide-react";
 import type { Taxonomy } from "@/store/useDataStore";
 import { BulkActions } from "@/components/units/BulkActions";
 import { BulkCreateUnits } from "@/components/units/BulkCreateUnits";
+import { useLookups } from "@/lib/lookups";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/units")({
@@ -68,6 +69,7 @@ function UnitsIndex() {
   const [substrate, setSubstrate] = useState<string>("");
   const [showArchived, setShowArchived] = useState(false);
   const [showHidden, setShowHidden] = useState(false);
+  const lookups = useLookups();
   const [showBulkCreate, setShowBulkCreate] = useState(false);
   const [sortKey, setSortKey] = useState<SortKey>("batch");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
@@ -410,18 +412,16 @@ function UnitsIndex() {
               </Field>
             </div>
             <Field label="Substrate / material">
-              <Input
-                value={newUnitSubstrate}
-                onChange={(e) => setNewUnitSubstrate(e.target.value.toUpperCase())}
-                className="font-mono"
-              />
+              <select aria-label="New unit substrate" value={newUnitSubstrate} onChange={(e) => setNewUnitSubstrate(e.target.value)} className={selectCls}>
+                <option value="">— none —</option>
+                {lookups.substrates.map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
             </Field>
             <Field label="Current location">
-              <Input
-                value={newUnitLocation}
-                onChange={(e) => setNewUnitLocation(e.target.value.toUpperCase())}
-                className="font-mono"
-              />
+              <select aria-label="New unit location" value={newUnitLocation} onChange={(e) => setNewUnitLocation(e.target.value)} className={selectCls}>
+                <option value="">— not set —</option>
+                {lookups.locations.map((l) => <option key={l} value={l}>{l}</option>)}
+              </select>
             </Field>
             <Field label="Description">
               <Textarea

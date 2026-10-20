@@ -166,7 +166,7 @@ export async function getTransfers() {
 }
 
 export async function getTaxonomy() {
-  return requestJson<Taxonomy>("/api/taxonomy");
+  return requestJson<Taxonomy & { locations?: string[]; substrates?: string[] }>("/api/taxonomy");
 }
 
 export async function getDbState() {

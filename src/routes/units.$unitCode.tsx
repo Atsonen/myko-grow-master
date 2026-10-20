@@ -1,4 +1,4 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   archiveUnits,
@@ -40,8 +40,14 @@ export const Route = createFileRoute("/units/$unitCode")({
       },
     ],
   }),
-  component: UnitDetailPage,
+  component: UnitDetailLayout,
 });
+
+// /units/:code/edit is a child route; render it instead of the detail page.
+function UnitDetailLayout() {
+  const path = useRouterState({ select: (st) => st.location.pathname });
+  return /\/edit\/?$/.test(path) ? <Outlet /> : <UnitDetailPage />;
+}
 
 function UnitDetailPage() {
   const { unitCode } = Route.useParams();

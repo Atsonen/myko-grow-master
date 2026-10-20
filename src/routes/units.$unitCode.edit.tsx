@@ -8,6 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import type { ContainerType, Strain, Unit, UnitStatus } from "@/types";
 import type { Taxonomy } from "@/store/useDataStore";
+import { useLookups } from "@/lib/lookups";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/units/$unitCode/edit")({
@@ -82,6 +83,7 @@ function EditUnit() {
     };
   }, [unitCode]);
 
+  const lookups = useLookups();
   const TYPES = taxonomy.types as ContainerType[];
   const STATUSES = taxonomy.statuses as UnitStatus[];
 
@@ -186,20 +188,16 @@ function EditUnit() {
             </Field>
           </div>
           <Field label="Substrate / material">
-            <Input
-              value={substrate}
-              onChange={(e) => setSubstrate(e.target.value.toUpperCase())}
-              placeholder="e.g. BR, FCR, OAT, POPCORN, WBR"
-              className="font-mono"
-            />
+            <select aria-label="Substrate" value={substrate} onChange={(e) => setSubstrate(e.target.value)} className={selectCls}>
+              <option value="">— none —</option>
+              {withCurrent(lookups.substrates, substrate).map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
           </Field>
           <Field label="Current location">
-            <Input
-              value={currentLocation}
-              onChange={(e) => setCurrentLocation(e.target.value.toUpperCase())}
-              placeholder="e.g. INCUBATOR-1"
-              className="font-mono"
-            />
+            <select aria-label="Current location" value={currentLocation} onChange={(e) => setCurrentLocation(e.target.value)} className={selectCls}>
+              <option value="">— not set —</option>
+              {withCurrent(lookups.locations, currentLocation).map((l) => <option key={l} value={l}>{l}</option>)}
+            </select>
           </Field>
           <Field label="Parent unit (optional)">
             <select
@@ -259,4 +257,9 @@ function toLocal(iso: string) {
   const d = new Date(iso);
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// keep a legacy value selectable so an edit does not silently clear it
+function withCurrent(list: string[], current: string) {
+  return current && !list.includes(current) ? [...list, current] : list;
 }
