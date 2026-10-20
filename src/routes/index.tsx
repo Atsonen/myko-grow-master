@@ -209,7 +209,7 @@ export function ClassicDashboard() {
                 className="flex items-center justify-between text-xs p-2 rounded hover:bg-secondary border border-transparent hover:border-border"
               >
                 <span className="font-mono">{u.code}</span>
-                <span className="text-muted-foreground">#{u.strainCode}</span>
+                <span className="text-muted-foreground">{u.strainCode ? `#${u.strainCode}` : "—"}</span>
                 <StatusBadge status={u.status} />
               </Link>
             ))}

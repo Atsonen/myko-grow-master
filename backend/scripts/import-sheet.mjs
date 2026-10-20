@@ -21,7 +21,7 @@ const CARRY_LOCS = args.includes("--carry-old-locations");
 const EXPECT_FIELDS = Number(opt("--expect-fields") || 0);
 if (!FILE) { console.error("usage: --file <csv> [--apply] [--report out.json] [--expect-fields N]"); process.exit(2); }
 
-const LOCATION_ALIASES = { T1: "TERRARIO-1", F1: "KYLMASAILYTYSTILA-1" }; // from environment_channel_map
+const LOCATION_ALIASES = { T1: "TERRARIO-1", F1: "KYLMASAILYTYSTILA-1", T2: "TERRARIO-2", G1: "GARDEN" }; // T1/F1 have sensors; T2/G1 none
 const anomalies = [];
 const flag = (kind, detail) => anomalies.push({ kind, ...detail });
 
@@ -275,7 +275,7 @@ for (const u of [...units.values()]) {
 // strain inheritance through parents; default GT
 const strainOf = (u, seen = new Set()) => u.strain || (u.parent && !seen.has(u.parent) && units.get(u.parent) ? strainOf(units.get(u.parent), seen.add(u.code)) : null);
 let defaulted = 0;
-for (const u of units.values()) { u.strainResolved = strainOf(u) || (defaulted++, "GT"); }
+for (const u of units.values()) { u.strainResolved = strainOf(u) || (defaulted++, null); } // no default strain
 const rawLocs = new Set(); for (const u of units.values()) for (const m of u.moves) if (!LOCATION_ALIASES[m.raw]) rawLocs.add(m.raw);
 if (rawLocs.size) flag("unmapped_location_codes", { codes: [...rawLocs] });
 
@@ -294,9 +294,10 @@ const oldDeleted = oldUnits.filter((o) => !match.has(o.code)).map((o) => ({ code
 const carry = { status_candidates: [], status_applied: 0, location_rows_candidates: 0, location_rows_applied: 0 };
 for (const o of oldUnits) {
   const u = units.get(match.get(o.code)); if (!u) continue;
-  if (["ARCHIVED", "HARVESTED"].includes(o.status)) {
+  // any non-ACTIVE old status survives when the sheet would leave the unit ACTIVE
+  if (o.status && o.status !== "ACTIVE") {
     carry.status_candidates.push({ old: o.code, new: u.code, old_status: o.status, sheet_status: u.status });
-    if (CARRY_STATUS && u.status === "ACTIVE") { u.status = o.status; carry.status_applied++; }
+    if (CARRY_STATUS && u.status === "ACTIVE") { u.status = o.status; u.statusCarriedFrom = o.code; carry.status_applied++; }
   }
 }
 for (const l of oldLocs) {
@@ -304,6 +305,9 @@ for (const l of oldLocs) {
   carry.location_rows_candidates++;
   if (CARRY_LOCS) { u.moves.push({ location: l.location, raw: l.location, time: new Date(l.moved_at), line: `old DB (${l.note || "unit_locations"})` }); carry.location_rows_applied++; }
 }
+const oldNonActive = new Map(oldUnits.filter((o) => o.status !== "ACTIVE" && match.has(o.code)).map((o) => [match.get(o.code), o.code]));
+carry.old_non_active_now_active = [...oldNonActive].filter(([nc]) => units.get(nc)?.status === "ACTIVE").map(([nc, oc]) => `${oc}->${nc}`);
+if (CARRY_STATUS && carry.old_non_active_now_active.length) { console.error("BUG: old non-active unit would become ACTIVE", carry.old_non_active_now_active); process.exit(1); }
 if (CARRY_LOCS) for (const u of units.values()) { u.moves.sort((a, b) => a.time - b.time); if (u.moves.length) u.location = u.moves[u.moves.length - 1].location; }
 if (!APPLY) await pool.end();
 
@@ -318,10 +322,10 @@ const summary = {
   by_status: Object.fromEntries([...units.values()].reduce((m, u) => m.set(u.status, (m.get(u.status) || 0) + 1), new Map())),
   by_strain: Object.fromEntries([...units.values()].reduce((m, u) => m.set(u.strainResolved, (m.get(u.strainResolved) || 0) + 1), new Map())),
   by_function: Object.fromEntries(events.reduce((m, e) => m.set(e.fn, (m.get(e.fn) || 0) + 1), new Map())),
-  strain_defaulted_to_GT: defaulted, general_column_entries_skipped: general.length,
+  strain_null: defaulted, general_column_entries_skipped: general.length,
   placeholder_units: [...units.values()].filter((u) => u.placeholder).length,
   old_units: oldUnits.length, old_units_matched: match.size, old_units_deleted: oldDeleted.length,
-  carry: { ...carry, status_candidates: carry.status_candidates.length, enabled: { status: CARRY_STATUS, locations: CARRY_LOCS } },
+  carry: { ...carry, status_candidates: carry.status_candidates.length, old_non_active_now_active: carry.old_non_active_now_active.length, enabled: { status: CARRY_STATUS, locations: CARRY_LOCS } },
 };
 const sample = [...units.values()].slice(0, 5).map((u) => ({ label: u.label, code: u.code, type: u.type, substrate: u.substrate, strain: u.strainResolved,
   parent: u.parent, status: u.status, location: u.location, events: u.events.slice(0, 3).map((e) => ({ fn: e.fn, time: e.time.toISOString(), title: e.title })) }));
@@ -338,7 +342,7 @@ const count = async (t) => Number((await conn.query(`SELECT COUNT(*) n FROM \`${
 try {
   const before = {}; for (const t of SENSOR) before[t] = await count(t);
   await conn.beginTransaction();
-  for (const s of new Set([...units.values()].map((u) => u.strainResolved)))
+  for (const s of new Set([...units.values()].map((u) => u.strainResolved).filter(Boolean)))
     await conn.query("INSERT IGNORE INTO strains (code, name, species) VALUES (?, ?, ?)", [s, s, "Psilocybe cubensis"]);
   await conn.query("DELETE FROM transfers"); await conn.query("DELETE FROM events"); await conn.query("DELETE FROM unit_locations");
   await conn.query("UPDATE units SET parent_unit_code = NULL"); await conn.query("DELETE FROM units");

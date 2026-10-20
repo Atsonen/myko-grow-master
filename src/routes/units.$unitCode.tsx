@@ -205,7 +205,7 @@ function UnitDetailPage() {
                 </div>
                 <IdentifierTag value={identifierForUnit(unit)} className="text-xs" />
                 <div className="text-xs text-muted-foreground">
-                  #{unit.strainCode}
+                  {unit.strainCode ? `#${unit.strainCode}` : "—"}
                   {strain ? ` · ${strain.name} / ${strain.species}` : ""}
                 </div>
                 {unit.description && <div className="text-xs italic">{unit.description}</div>}
@@ -243,7 +243,7 @@ function UnitDetailPage() {
             <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mt-4 text-xs">
               <Info label="Container type" value={unit.type} />
               <Info label="Substrate" value={unit.substrate ?? "—"} />
-              <Info label="Strain" value={`#${unit.strainCode}`} />
+              <Info label="Strain" value={unit.strainCode ? `#${unit.strainCode}` : "—"} />
               <Info label="Batch time" value={formatDateTime(unit.batchTime)} />
               <Info label="Parent" value={unit.parentUnitCode ?? "—"} />
             </div>

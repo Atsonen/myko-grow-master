@@ -75,7 +75,7 @@ function AddTransferPage() {
           ? {
               code: targetUnitCode,
               type: newTargetType,
-              strainCode: source.strainCode,
+              strainCode: source.strainCode ?? undefined,
               notes: `Created from transfer ${source.code} → ${targetUnitCode}`,
             }
           : undefined,
@@ -94,7 +94,7 @@ function AddTransferPage() {
             <select value={sourceUnitCode} onChange={(e) => setSourceUnitCode(e.target.value)} className={selectCls}>
               <option value="">— select —</option>
               {units.map((u) => (
-                <option key={u.code} value={u.code}>{u.code} ({u.type} #{u.strainCode})</option>
+                <option key={u.code} value={u.code}>{u.code} ({u.type} {u.strainCode ? `#${u.strainCode}` : "—"})</option>
               ))}
             </select>
           </Field>
@@ -111,7 +111,7 @@ function AddTransferPage() {
               <select value={existingTarget} onChange={(e) => setExistingTarget(e.target.value)} className={selectCls}>
                 <option value="">— select —</option>
                 {units.map((u) => (
-                  <option key={u.code} value={u.code}>{u.code} ({u.type} #{u.strainCode})</option>
+                  <option key={u.code} value={u.code}>{u.code} ({u.type} {u.strainCode ? `#${u.strainCode}` : "—"})</option>
                 ))}
               </select>
             </Field>

@@ -47,7 +47,7 @@ function AddEventPage() {
         functionCode,
         type: unit?.type,
         eventTime: new Date(eventTime).toISOString(),
-        strainCode: unit?.strainCode,
+        strainCode: unit?.strainCode ?? undefined,
         unitCode: unit?.code,
       }),
     [functionCode, unit, eventTime],
@@ -85,7 +85,7 @@ function AddEventPage() {
             <select value={unitCode} onChange={(e) => setUnitCode(e.target.value)} className={selectCls}>
               <option value="">— select —</option>
               {units.map((u) => (
-                <option key={u.code} value={u.code}>{u.code} ({u.type} #{u.strainCode})</option>
+                <option key={u.code} value={u.code}>{u.code} ({u.type} {u.strainCode ? `#${u.strainCode}` : "—"})</option>
               ))}
             </select>
           </Field>

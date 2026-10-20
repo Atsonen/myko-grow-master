@@ -1286,7 +1286,7 @@ function mapUnit(row) {
   return stripUndefined({
     code: row.code,
     type: row.type,
-    strainCode: row.strain_code,
+    strainCode: row.strain_code ?? null,
     status: row.status,
     batchTime: new Date(row.batch_time).toISOString(),
     parentUnitCode: row.parent_unit_code,
@@ -1352,10 +1352,7 @@ function normalizeImportState(input) {
     const normalized = {
       code: requiredString(unit.code, "unit.code"),
       type: requiredString(unit.type, "unit.type").toUpperCase(),
-      strainCode: requiredString(unit.strainCode, "unit.strainCode")
-        .replace(/^#+/, "")
-        .trim()
-        .toUpperCase(),
+      strainCode: optionalStrainCode(unit.strainCode),
       status: requiredString(unit.status, "unit.status").toUpperCase(),
       batchTime: requiredDateString(unit.batchTime, "unit.batchTime"),
       parentUnitCode: optionalString(unit.parentUnitCode),
@@ -1364,7 +1361,7 @@ function normalizeImportState(input) {
       description: optionalString(unit.description),
       notes: optionalString(unit.notes),
     };
-    if (!strainCodes.has(normalized.strainCode))
+    if (normalized.strainCode && !strainCodes.has(normalized.strainCode))
       throw new Error(`Unit ${normalized.code} references missing strain ${normalized.strainCode}`);
     return normalized;
   });
@@ -1520,11 +1517,18 @@ function normalizeStrainCode(value) {
   return requiredString(value, "strain.code").replace(/^#+/, "").trim().toUpperCase();
 }
 
+// Units may have no strain (null); empty strings / "#" mean "no strain".
+function optionalStrainCode(value) {
+  if (value === null || value === undefined) return null;
+  const code = String(value).replace(/^#+/, "").trim().toUpperCase();
+  return code || null;
+}
+
 function normalizeUnitBody(input) {
   if (!input || typeof input !== "object") throw new Error("JSON object is required");
   return {
     type: requiredString(input.type, "unit.type").toUpperCase(),
-    strainCode: normalizeStrainCode(input.strainCode),
+    strainCode: optionalStrainCode(input.strainCode),
     status: requiredString(input.status, "unit.status").toUpperCase(),
     batchTime: requiredDateString(input.batchTime, "unit.batchTime"),
     parentUnitCode: optionalString(input.parentUnitCode),
@@ -1536,8 +1540,10 @@ function normalizeUnitBody(input) {
 }
 
 async function assertUnitReferences(conn, code, unit) {
-  const strainRows = await conn.query("SELECT code FROM strains WHERE code = ?", [unit.strainCode]);
-  if (strainRows.length === 0) throw new Error(`Unknown strain #${unit.strainCode}`);
+  if (unit.strainCode) {
+    const strainRows = await conn.query("SELECT code FROM strains WHERE code = ?", [unit.strainCode]);
+    if (strainRows.length === 0) throw new Error(`Unknown strain #${unit.strainCode}`);
+  }
 
   if (unit.parentUnitCode) {
     if (unit.parentUnitCode === code) throw new Error("Unit cannot be its own parent");

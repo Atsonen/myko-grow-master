@@ -73,7 +73,7 @@ const statements = [
   `CREATE TABLE IF NOT EXISTS units (
     code VARCHAR(120) PRIMARY KEY,
     type VARCHAR(40) NOT NULL,
-    strain_code VARCHAR(80) NOT NULL,
+    strain_code VARCHAR(80) NULL,
     status VARCHAR(40) NOT NULL,
     batch_time DATETIME(3) NOT NULL,
     parent_unit_code VARCHAR(120),
@@ -202,6 +202,7 @@ const statements = [
 ];
 
 const alterStatements = [
+  "ALTER TABLE units MODIFY strain_code VARCHAR(80) NULL",
   "ALTER TABLE trend_presets ADD COLUMN IF NOT EXISTS view_key VARCHAR(40) NOT NULL DEFAULT 'myko' AFTER id",
   "ALTER TABLE datalogger_variables ADD COLUMN IF NOT EXISTS prefix VARCHAR(80) NOT NULL DEFAULT 'Sensor' AFTER variable_key",
   "ALTER TABLE datalogger_variables ADD COLUMN IF NOT EXISTS visible TINYINT(1) NOT NULL DEFAULT 1 AFTER scale",

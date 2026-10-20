@@ -58,7 +58,7 @@ function EditUnit() {
           setStrains(loadedStrains);
           setTaxonomy(loadedTaxonomy);
           setType(found.type);
-          setStrainCode(found.strainCode);
+          setStrainCode(found.strainCode ?? "");
           setStatus(found.status);
           setBatchTime(toLocal(found.batchTime));
           setParentUnitCode(found.parentUnitCode ?? "");
@@ -153,6 +153,7 @@ function EditUnit() {
                 onChange={(e) => setStrainCode(e.target.value)}
                 className={selectCls}
               >
+                <option value="">— no strain —</option>
                 {strains.map((s) => (
                   <option key={s.code} value={s.code}>
                     #{s.code} - {s.name}

@@ -63,7 +63,7 @@ function EditStrain() {
     };
   }, [originalCode]);
 
-  const affectedUnits = units.filter((u) => normalizeCode(u.strainCode) === originalCode).length;
+  const affectedUnits = units.filter((u) => normalizeCode(u.strainCode ?? "") === originalCode).length;
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();

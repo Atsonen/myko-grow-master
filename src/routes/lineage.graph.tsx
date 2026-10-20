@@ -83,7 +83,7 @@ function LineageGraphPage() {
           {hover && (
             <div className="absolute top-2 right-2 bg-popover border border-border rounded p-2 text-xs font-mono shadow-lg max-w-xs">
               <div className="font-bold">{hover.code}</div>
-              <div className="text-muted-foreground">{hover.type} · {hover.status} · #{hover.strainCode}</div>
+              <div className="text-muted-foreground">{hover.type} · {hover.status} · {hover.strainCode ? `#${hover.strainCode}` : "—"}</div>
               {hover.description && <div className="mt-1">{hover.description}</div>}
               {hover.notes && <div className="mt-1 text-muted-foreground">{hover.notes}</div>}
             </div>

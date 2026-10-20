@@ -344,7 +344,7 @@ function uniqueUpper(values: string[]) {
   return Array.from(new Set(values.map((v) => String(v).trim().toUpperCase()).filter(Boolean)));
 }
 
-function normalizeStrainCode(value: string | undefined) {
+function normalizeStrainCode(value: string | null | undefined) {
   return String(value ?? "").replace(/^#+/, "").trim().toUpperCase();
 }
 

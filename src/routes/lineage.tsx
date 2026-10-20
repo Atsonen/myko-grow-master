@@ -114,7 +114,7 @@ function LineageNode({
           </Link>
           <TypeBadge type={unit.type} />
           <StatusBadge status={unit.status} />
-          <span className="text-[10px] text-muted-foreground">#{unit.strainCode}</span>
+          <span className="text-[10px] text-muted-foreground">{unit.strainCode ? `#${unit.strainCode}` : "—"}</span>
         </div>
         <div className="mt-1">
           <IdentifierTag value={identifierForUnit(unit)} className="text-[10px]" />
@@ -130,6 +130,6 @@ function LineageNode({
 
 function matches(unit: Unit, q: string) {
   if (!q) return true;
-  const text = `${unit.code} ${unit.type} ${unit.strainCode} ${unit.status} ${unit.notes ?? ""}`.toLowerCase();
+  const text = `${unit.code} ${unit.type} ${unit.strainCode ?? ""} ${unit.status} ${unit.notes ?? ""}`.toLowerCase();
   return text.includes(q.toLowerCase());
 }

@@ -156,7 +156,7 @@ function UnitsIndex() {
     if (substrate && u.substrate !== substrate) return false;
     if (
       q &&
-      !`${u.code} ${u.notes ?? ""} ${u.description ?? ""} ${u.substrate ?? ""} ${u.strainCode}`
+      !`${u.code} ${u.notes ?? ""} ${u.description ?? ""} ${u.substrate ?? ""} ${u.strainCode ?? ""}`
         .toLowerCase()
         .includes(q.toLowerCase())
     )
@@ -559,7 +559,7 @@ function UnitsIndex() {
                         "—"
                       )}
                     </td>
-                    <td className="p-2 font-mono">#{u.strainCode}</td>
+                    <td className="p-2 font-mono">{u.strainCode ? `#${u.strainCode}` : "—"}</td>
                     <td className="p-2">
                       <StatusBadge status={u.status} />
                     </td>
@@ -683,7 +683,7 @@ function compareUnits(
       case "substrate":
         return u.substrate ?? "";
       case "strain":
-        return u.strainCode;
+        return u.strainCode ?? "";
       case "status":
         return u.status;
       case "batch":

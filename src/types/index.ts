@@ -21,7 +21,7 @@ export interface Strain {
 export interface Unit {
   code: string;
   type: ContainerType;
-  strainCode: string;
+  strainCode: string | null; // null = no strain recorded
   status: UnitStatus;
   batchTime: string; // ISO
   parentUnitCode?: string;
