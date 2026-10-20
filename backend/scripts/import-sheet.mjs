@@ -339,8 +339,15 @@ if (!APPLY) process.exit(0);
 const conn = await pool.getConnection();
 const SENSOR = ["environment_readings", "datalogger_values", "datalogger_samples", "datalogger_variables", "environment_channel_map", "environment_sources", "trend_presets", "dashboard_layouts"];
 const count = async (t) => Number((await conn.query(`SELECT COUNT(*) n FROM \`${t}\``))[0].n);
+// live tables keep receiving MQTT rows, so compare only rows that existed when we started (id <= max id)
+const LIVE = new Set(["environment_readings", "datalogger_values", "datalogger_samples"]);
+const maxIds = {};
+const sensorSnapshot = async () => { const o = {}; for (const t of SENSOR) {
+  if (LIVE.has(t)) { if (!(t in maxIds)) maxIds[t] = Number((await conn.query(`SELECT COALESCE(MAX(id),0) m FROM \`${t}\``))[0].m);
+    o[t] = Number((await conn.query(`SELECT COUNT(*) n FROM \`${t}\` WHERE id <= ?`, [maxIds[t]]))[0].n); }
+  else o[t] = await count(t); } return o; };
 try {
-  const before = {}; for (const t of SENSOR) before[t] = await count(t);
+  const before = await sensorSnapshot();
   await conn.beginTransaction();
   for (const s of new Set([...units.values()].map((u) => u.strainResolved).filter(Boolean)))
     await conn.query("INSERT IGNORE INTO strains (code, name, species) VALUES (?, ?, ?)", [s, s, "Psilocybe cubensis"]);
@@ -358,7 +365,8 @@ try {
       [t.id, t.source, t.target, t.time, "Sheet import: inoculation", t.amount, t.note]);
   for (const u of units.values()) for (const m of u.moves)
     await conn.query("INSERT INTO unit_locations (unit_code,location,moved_at,note) VALUES (?,?,?,?)", [u.code, m.location, m.time, `Sheet line ${m.line} (${m.raw})`]);
-  for (const t of SENSOR) if ((await count(t)) !== before[t]) throw new Error(`sensor table ${t} changed`);
+  const after = await sensorSnapshot();
+  for (const t of SENSOR) if (after[t] !== before[t]) throw new Error(`sensor table ${t} changed: ${before[t]} -> ${after[t]}`);
   await conn.commit();
   console.log("APPLIED", { units: await count("units"), events: await count("events"), transfers: await count("transfers"), unit_locations: await count("unit_locations"), sensor_counts: before });
 } catch (err) { await conn.rollback(); console.error("ROLLED BACK:", err.message); process.exitCode = 1; }
