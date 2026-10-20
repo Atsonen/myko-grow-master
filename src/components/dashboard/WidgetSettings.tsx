@@ -7,7 +7,7 @@ import { useDashboardData } from "./DashboardData";
 import { STATUSES, WIDGET_META, type DashboardWidget, type WidgetConfigMap } from "./types";
 
 const selectCls = "w-full h-9 rounded-md border border-input bg-background px-2 text-sm font-mono";
-const FUNCTION_CODES = ["COL", "FRU", "HAR", "OBS", "PREP", "QC", "TRF"];
+const FUNCTION_CODES = ["COL", "FRU", "HAR", "INOC", "OBS", "PREP", "QC", "TRF"];
 const RANGES = [
   { h: 6, label: "6 h" },
   { h: 24, label: "24 h" },

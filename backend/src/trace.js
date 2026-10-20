@@ -319,6 +319,8 @@ export function registerTraceRoutes(app, { mapUnit, mapEvent, mapTransfer, mapUn
   app.post(["/api/events/bulk", "/api/events"], asyncRoute(async (req, res) => {
     const b = req.body ?? {};
     const functionCode = String(b.functionCode || "").toUpperCase(); if (!functionCode) throw new Error("functionCode is required");
+    const allowed = (await query("SELECT value FROM taxonomy_terms WHERE category = 'functions'")).map((r) => r.value);
+    if (allowed.length && !allowed.includes(functionCode)) throw new Error(`functionCode must be one of ${allowed.join(", ")}`);
     const title = str(b.title); if (!title) throw new Error("title is required");
     const eventTime = b.eventTime ? new Date(b.eventTime) : new Date(); if (Number.isNaN(eventTime.getTime())) throw new Error("eventTime is invalid");
     const statusChange = str(b.statusChange)?.toUpperCase() ?? null;
@@ -362,7 +364,7 @@ export function registerTraceRoutes(app, { mapUnit, mapEvent, mapTransfer, mapUn
       await conn.query("INSERT INTO transfers (id, source_unit_code, target_unit_code, transfer_time, method, amount, note) VALUES (?, ?, ?, ?, ?, ?, ?)",
         [`trf-${op}`, source, target, dt(at), str(b.method) || "Transfer", str(b.amount) || "", str(b.note)]);
       await writeOrigins(conn, target, [{ type: "UNIT", parent: source, note: `Transfer ${op}` }], { replace: false });
-      await insertEvents(conn, { unitCodes: [target], functionCode: "TRF", eventTime: at, title: `Inoculated from ${source}`, note: [b.method, b.amount, b.note].filter(Boolean).join(" — ") || null, op });
+      await insertEvents(conn, { unitCodes: [target], functionCode: "INOC", eventTime: at, title: `Inoculated from ${source}`, note: [b.method, b.amount, b.note].filter(Boolean).join(" — ") || null, op });
     });
     res.status(201).json({ ok: true, operationId: op, transferId: `trf-${op}` });
   }));

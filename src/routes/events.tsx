@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Outlet, useRouterState } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { getDbState } from "@/lib/apiClient";
 import { Input } from "@/components/ui/input";
@@ -13,10 +13,16 @@ export const Route = createFileRoute("/events")({
       { name: "description", content: "Global chronological event log across all units." },
     ],
   }),
-  component: EventsPage,
+  component: EventsLayout,
 });
 
-const FUNCTIONS: FunctionCode[] = ["COL", "FRU", "OBS", "QC", "TRF", "HAR", "PREP"];
+const FUNCTIONS: FunctionCode[] = ["COL", "FRU", "OBS", "QC", "TRF", "HAR", "PREP", "INOC"];
+
+// /events/new and /events/:id/edit are child routes; render them instead of the list.
+function EventsLayout() {
+  const path = useRouterState({ select: (st) => st.location.pathname });
+  return path.replace(/\/$/, "") !== "/events" ? <Outlet /> : <EventsPage />;
+}
 
 function EventsPage() {
   const [events, setEvents] = useState<MEvent[]>([]);

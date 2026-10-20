@@ -1,4 +1,4 @@
-export type FunctionCode = "COL" | "FRU" | "OBS" | "QC" | "TRF" | "HAR" | "PREP";
+export type FunctionCode = "COL" | "FRU" | "OBS" | "QC" | "TRF" | "HAR" | "PREP" | "INOC";
 export type ContainerType = "BOX" | "JAR" | "PD" | "LC" | "BAG" | "OTHER";
 export type UnitStatus = "ACTIVE" | "CONTAMINATED" | "DISCARDED" | "HARVESTED" | "ARCHIVED";
 export type QCTag =

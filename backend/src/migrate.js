@@ -252,6 +252,8 @@ const dataloggerVariables = [
 ];
 
 const seedStatements = [
+  // Event function INOC (inoculation) added 2026-10-20
+  { sql: "INSERT IGNORE INTO taxonomy_terms (category, value) VALUES ('functions', 'INOC')", params: [] },
   {
     sql: `INSERT INTO environment_sources (id, name, location, mqtt_topic, description)
           VALUES (?, ?, ?, ?, ?)

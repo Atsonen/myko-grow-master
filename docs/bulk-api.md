@@ -56,15 +56,28 @@ curl -s -X POST http://127.0.0.1/api/units/bulk-hide -H 'Content-Type: applicati
 ```
 
 ### Bulk event — `POST /api/events/bulk`
-Body: selection + `functionCode` (`PREP`,`TRF`,`COL`,`OBS`,`QC`,`FRU`,`HAR`) + `title` + `eventTime?` + `note?` +
+Body: selection + `functionCode` + `title` + `eventTime?` + `note?` +
 `statusChange?` (`CONTAMINATED`,`DISCARDED`,`HARVESTED`,`ARCHIVED`,`ACTIVE`) + `temperatureC?` + `humidityRh?`.
 Each unit gets its own event row; all share one `operation_id`.
+
+| functionCode | meaning |
+|---|---|
+| `PREP` | preparation: sterilization / pasteurization / boiling of substrate |
+| `INOC` | **inoculation (Inokulaatio)** – spores/LC/grain introduced into the unit |
+| `COL` | colonization progress (mycelium growth, % colonized) |
+| `FRU` | fruiting: moved to fruiting conditions, pins/primordia |
+| `HAR` | harvest (flush, weight) |
+| `OBS` | general observation |
+| `QC` | quality control / contamination check (often with `statusChange`) |
+| `TRF` | transfer / move of material between units (spawn-to-bulk, LC to LC) |
+
+Unknown codes are rejected (the list comes from `taxonomy_terms` category `functions`).
 Inoculation: add `sourceUnitCode` (+ `method?`, `amount?`) → each unit also gets a transfer and the source as a parent origin.
 ```bash
 curl -s -X POST http://127.0.0.1/api/events/bulk -H 'Content-Type: application/json' \
   -d '{"filter":{"codePrefix":"261013-JAR"},"functionCode":"PREP","title":"Sterilized 90 min","source":"chat","dryRun":true}'
 curl -s -X POST http://127.0.0.1/api/events/bulk -H 'Content-Type: application/json' \
-  -d '{"unitCodes":["261013-JAR-1","261013-JAR-2"],"functionCode":"TRF","title":"INO 1 ml","sourceUnitCode":"260418-LC-1","amount":"1 ml","source":"chat"}'
+  -d '{"unitCodes":["261013-JAR-1","261013-JAR-2"],"functionCode":"INOC","title":"INO 1 ml","sourceUnitCode":"260418-LC-1","amount":"1 ml","source":"chat"}'
 ```
 
 ### Bulk create — `POST /api/units/bulk`

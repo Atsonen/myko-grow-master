@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { z } from "zod";
 import { useDbUnits } from "@/lib/useDbUnits";
 import { recordEvents } from "@/lib/traceApi";
+import { functionOptionLabel } from "@/lib/eventFunctions";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -15,7 +16,7 @@ import { toast } from "sonner";
 
 const searchSchema = z.object({
   unitCode: z.string().optional(),
-  fn: z.enum(["COL", "FRU", "OBS", "QC", "TRF", "HAR", "PREP"]).optional(),
+  fn: z.enum(["COL", "FRU", "OBS", "QC", "TRF", "HAR", "PREP", "INOC"]).optional(),
 });
 
 export const Route = createFileRoute("/events/new")({
@@ -84,7 +85,7 @@ function AddEventPage() {
         <form className="space-y-3" onSubmit={submit}>
           <Field label="Function">
             <select value={functionCode} onChange={(e) => setFunctionCode(e.target.value as FunctionCode)} className={selectCls}>
-              {FUNCTIONS.map((f) => <option key={f} value={f}>{f}</option>)}
+              {FUNCTIONS.map((f) => <option key={f} value={f}>{functionOptionLabel(f)}</option>)}
             </select>
           </Field>
           <Field label="Unit">

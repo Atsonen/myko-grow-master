@@ -31,7 +31,7 @@ const STORAGE_KEY = "myko-valvomo-state-v1";
 const SCHEMA_VERSION = 1;
 
 const defaultTaxonomy: Taxonomy = {
-  functions: ["COL", "FRU", "OBS", "QC", "TRF", "HAR", "PREP"],
+  functions: ["COL", "FRU", "OBS", "QC", "TRF", "HAR", "PREP", "INOC"],
   types: ["BOX", "JAR", "PD", "LC", "BAG", "OTHER"],
   statuses: ["ACTIVE", "CONTAMINATED", "DISCARDED", "HARVESTED", "ARCHIVED"],
   qcTags: [

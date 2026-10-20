@@ -7,6 +7,7 @@ const styles: Record<string, string> = {
   QC: "bg-status-warning/15 text-status-warning border-status-warning/40",
   TRF: "bg-accent text-accent-foreground border-border",
   HAR: "bg-status-harvested/15 text-status-harvested border-status-harvested/40",
+  INOC: "bg-primary/25 text-primary border-primary/60",
   PREP: "bg-secondary text-secondary-foreground border-border",
 };
 

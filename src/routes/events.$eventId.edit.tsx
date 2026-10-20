@@ -1,4 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { functionOptionLabel } from "@/lib/eventFunctions";
 import { useState } from "react";
 import { useDataStore, dataActions } from "@/store/useDataStore";
 import { Card } from "@/components/ui/card";
@@ -63,7 +64,7 @@ function EditEvent() {
         <form onSubmit={submit} className="space-y-3">
           <Field label="Function">
             <select value={functionCode} onChange={(e) => setFunctionCode(e.target.value as FunctionCode)} className={selectCls}>
-              {FUNCTIONS.map((f) => <option key={f} value={f}>{f}</option>)}
+              {FUNCTIONS.map((f) => <option key={f} value={f}>{functionOptionLabel(f)}</option>)}
             </select>
           </Field>
           <Field label="Unit">

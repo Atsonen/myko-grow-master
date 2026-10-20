@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { KNOWN_LOCATIONS } from "@/lib/locations";
 import { bulkHide, bulkLocation, recordEvents } from "@/lib/traceApi";
+import { functionOptionLabel } from "@/lib/eventFunctions";
 
 const sel = "h-8 rounded-md border border-input bg-background px-2 text-xs font-mono";
 const toLocal = (d: Date) => { const p = (n: number) => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; };
@@ -66,7 +67,7 @@ export function BulkActions({ selected, functions, statuses, unitCodes, onDone }
             return `Recorded ${r.eventIds.length} events (operation ${r.operationId})`;
           }); }}>
           <select aria-label="Event function" className={sel} value={fn} onChange={(e) => setFn(e.target.value)}>
-            {functions.map((f) => <option key={f} value={f}>{f}</option>)}
+            {functions.map((f) => <option key={f} value={f}>{functionOptionLabel(f)}</option>)}
           </select>
           <Input aria-label="Event title" className="h-8 w-56 text-xs" placeholder="title, e.g. Sterilized 90 min" value={title} onChange={(e) => setTitle(e.target.value)} />
           <Input aria-label="Event time" type="datetime-local" className="h-8 w-48 font-mono text-xs" value={eventTime} onChange={(e) => setEventTime(e.target.value)} />
@@ -75,7 +76,7 @@ export function BulkActions({ selected, functions, statuses, unitCodes, onDone }
             <option value="">no status change</option>
             {statuses.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
-          <Input aria-label="Inoculation source" list="bulk-source-codes" className="h-8 w-44 font-mono text-xs" placeholder="source unit (inoculation)" value={source} onChange={(e) => setSource(e.target.value.toUpperCase())} />
+          <Input aria-label="Inoculation source" list="bulk-source-codes" className="h-8 w-44 font-mono text-xs" placeholder="source unit (inoculation)" value={source} onChange={(e) => { setSource(e.target.value.toUpperCase()); if (e.target.value && fn === "PREP") setFn("INOC"); }} />
           <datalist id="bulk-source-codes">{unitCodes.map((c) => <option key={c} value={c} />)}</datalist>
           <Button size="sm" type="submit" disabled={busy}>Record for {n} units</Button>
           <span className="text-[10px] text-muted-foreground">With a source unit, each unit also gets a transfer and the source as parent.</span>
