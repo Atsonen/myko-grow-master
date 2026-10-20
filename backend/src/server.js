@@ -2,6 +2,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import express from "express";
 import { query, withConnection } from "./db.js";
+import { normalizeOrigins, registerTraceRoutes, writeOrigins } from "./trace.js";
 
 dotenv.config();
 
@@ -11,6 +12,9 @@ const CORS_ORIGIN = process.env.CORS_ORIGIN || "http://localhost:5199";
 
 app.use(cors({ origin: CORS_ORIGIN }));
 app.use(express.json({ limit: "50mb" }));
+
+// Traceability routes are registered first so they take precedence (GET /api/units is enriched there).
+registerTraceRoutes(app, { mapUnit, mapEvent, mapTransfer, mapUnitLocation, asyncRoute });
 
 app.get(["/health", "/api/health"], async (_req, res) => {
   try {
@@ -835,6 +839,14 @@ app.post(
           ],
         );
 
+        {
+          const origins = normalizeOrigins(req.body?.origins);
+          if (!origins.length && body.parentUnitCode) origins.push({ type: "UNIT", parent: body.parentUnitCode, note: "Set at creation" });
+          if (origins.length) await writeOrigins(conn, code, origins, { replace: false });
+          if (body.currentLocation)
+            await conn.query("INSERT INTO unit_locations (unit_code, location, moved_at, note) VALUES (?, ?, ?, ?)",
+              [code, body.currentLocation, toMariaDbDateTime(new Date(body.batchTime)), "Set at creation"]);
+        }
         const [created] = await conn.query("SELECT * FROM units WHERE code = ?", [code]);
         await conn.commit();
         return mapUnit(created);
@@ -898,6 +910,11 @@ app.put(
           ],
         );
 
+        // Legacy single-parent field: make sure it is also an origin (origins are the source of truth).
+        if (body.parentUnitCode) {
+          const has = await conn.query("SELECT 1 FROM unit_origins WHERE unit_code = ? AND origin_type = 'UNIT' AND parent_unit_code = ?", [code, body.parentUnitCode]);
+          if (!has.length) await writeOrigins(conn, code, [{ type: "UNIT", parent: body.parentUnitCode, note: "Set via unit edit" }], { replace: false });
+        }
         const [updated] = await conn.query("SELECT * FROM units WHERE code = ?", [code]);
         await conn.commit();
         return mapUnit(updated);
@@ -1020,6 +1037,7 @@ app.post(
         if (replace) {
           await conn.query("DELETE FROM taxonomy_terms");
           await conn.query("DELETE FROM transfers");
+          await conn.query("DELETE FROM unit_origins");
           await conn.query("DELETE FROM events");
           await conn.query("DELETE FROM units");
           await conn.query("DELETE FROM strains");

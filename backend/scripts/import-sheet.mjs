@@ -351,12 +351,13 @@ try {
   await conn.beginTransaction();
   for (const s of new Set([...units.values()].map((u) => u.strainResolved).filter(Boolean)))
     await conn.query("INSERT IGNORE INTO strains (code, name, species) VALUES (?, ?, ?)", [s, s, "Psilocybe cubensis"]);
-  await conn.query("DELETE FROM transfers"); await conn.query("DELETE FROM events"); await conn.query("DELETE FROM unit_locations");
+  await conn.query("SET @myko_actor = 'sheet-import'"); await conn.query("DELETE FROM transfers"); await conn.query("DELETE FROM unit_origins"); await conn.query("DELETE FROM events"); await conn.query("DELETE FROM unit_locations");
   await conn.query("UPDATE units SET parent_unit_code = NULL"); await conn.query("DELETE FROM units");
   for (const u of units.values())
     await conn.query("INSERT INTO units (code,type,strain_code,status,batch_time,parent_unit_code,substrate,current_location,description,notes) VALUES (?,?,?,?,?,NULL,?,?,?,?)",
       [u.code, u.type, u.strainResolved, u.status, noonHelsinkiUtc(u.batch), u.substrate, u.location, `Imported from sheet column ${u.column}`, `Original unit label: ${u.label}`]);
   for (const u of units.values()) if (u.parent) await conn.query("UPDATE units SET parent_unit_code=? WHERE code=?", [u.parent, u.code]);
+  for (const t of transfers) await conn.query("INSERT IGNORE INTO unit_origins (unit_code, origin_type, parent_unit_code, note) VALUES (?, 'UNIT', ?, ?)", [t.target, t.source, `Sheet import ${t.id}`]);
   for (const e of events)
     await conn.query("INSERT INTO events (id,function_code,unit_code,event_time,title,description,note,status_change) VALUES (?,?,?,?,?,?,?,?)",
       [e.id, e.fn, e.unit, e.time, e.title, e.description, e.note, e.status]);

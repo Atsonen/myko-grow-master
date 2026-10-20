@@ -1,7 +1,8 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { z } from "zod";
-import { useDataStore, dataActions } from "@/store/useDataStore";
+import { useDbUnits } from "@/lib/useDbUnits";
+import { recordEvents } from "@/lib/traceApi";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -26,12 +27,13 @@ export const Route = createFileRoute("/events/new")({
 function AddEventPage() {
   const search = Route.useSearch();
   const navigate = useNavigate();
-  const { units, taxonomy } = useDataStore();
+  const { units, taxonomy } = useDbUnits();
   const FUNCTIONS = taxonomy.functions as FunctionCode[];
   const STATUSES: ("" | UnitStatus)[] = ["", ...(taxonomy.statuses as UnitStatus[])];
 
   const [functionCode, setFunctionCode] = useState<FunctionCode>(search.fn ?? "OBS");
-  const [unitCode, setUnitCode] = useState<string>(search.unitCode ?? units[0]?.code ?? "");
+  const [unitCode, setUnitCode] = useState<string>(search.unitCode ?? "");
+  useEffect(() => { if (!unitCode && units[0]) setUnitCode(units[0].code); }, [units]);
   const [eventTime, setEventTime] = useState(toLocalInput(new Date()));
   const [title, setTitle] = useState("");
   const [note, setNote] = useState("");
@@ -53,20 +55,24 @@ function AddEventPage() {
     [functionCode, unit, eventTime],
   );
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!unit) return toast.error("Select a unit");
     if (!title) return toast.error("Title required");
-    dataActions.addEvent({
-      functionCode,
-      unitCode: unit.code,
-      eventTime: new Date(eventTime).toISOString(),
-      title,
-      note: note || undefined,
-      temperatureC: temperatureC ? parseFloat(temperatureC) : undefined,
-      humidityRh: humidityRh ? parseFloat(humidityRh) : undefined,
-      statusChange: statusChange || undefined,
-    });
+    try {
+      await recordEvents({
+        unitCodes: [unit.code],
+        functionCode,
+        eventTime: new Date(eventTime).toISOString(),
+        title,
+        note: note || undefined,
+        temperatureC: temperatureC ? parseFloat(temperatureC) : undefined,
+        humidityRh: humidityRh ? parseFloat(humidityRh) : undefined,
+        statusChange: statusChange || undefined,
+      });
+    } catch (err) {
+      return toast.error((err as Error).message);
+    }
     toast.success("Event recorded");
     navigate({ to: "/units/$unitCode", params: { unitCode: unit.code } });
   };

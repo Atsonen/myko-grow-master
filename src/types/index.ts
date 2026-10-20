@@ -21,7 +21,13 @@ export interface Strain {
 export interface Unit {
   code: string;
   type: ContainerType;
-  strainCode: string | null; // null = no strain recorded
+  strainCode: string | null; // null = no strain recorded (own value)
+  effectiveStrainCode?: string | null; // computed: own strain or nearest ancestor's
+  strainInheritedFrom?: string;
+  hidden?: boolean;
+  hiddenAt?: string;
+  origins?: { id: number; type: string; parentUnitCode?: string; note?: string; createdAt: string }[];
+  parentUnitCodes?: string[];
   status: UnitStatus;
   batchTime: string; // ISO
   parentUnitCode?: string;

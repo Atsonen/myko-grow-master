@@ -15,6 +15,7 @@ import { StatusBadge } from "@/components/common/StatusBadge";
 import { TypeBadge } from "@/components/common/TypeBadge";
 import { EventCard } from "@/components/events/EventCard";
 import { UnitLocationPanel } from "@/components/units/UnitLocationPanel";
+import { UnitTracePanel } from "@/components/units/UnitTracePanel";
 import { formatDateTime, relativeTime } from "@/lib/format";
 import { identifierForUnit } from "@/lib/identifier";
 import type { MEvent, Strain, Transfer, Unit, UnitStatus } from "@/types";
@@ -243,7 +244,7 @@ function UnitDetailPage() {
             <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mt-4 text-xs">
               <Info label="Container type" value={unit.type} />
               <Info label="Substrate" value={unit.substrate ?? "—"} />
-              <Info label="Strain" value={unit.strainCode ? `#${unit.strainCode}` : "—"} />
+              <Info label="Strain" value={unit.effectiveStrainCode ? `#${unit.effectiveStrainCode}${unit.strainInheritedFrom ? ` (from ${unit.strainInheritedFrom})` : ""}` : "—"} />
               <Info label="Batch time" value={formatDateTime(unit.batchTime)} />
               <Info label="Parent" value={unit.parentUnitCode ?? "—"} />
             </div>
@@ -255,6 +256,7 @@ function UnitDetailPage() {
           </Card>
 
           <UnitLocationPanel unit={unit} onMoved={() => loadData()} />
+          <UnitTracePanel key={unit.code} unitCode={unit.code} onChanged={() => loadData()} />
 
           <Card className="p-4 bg-card border-border">
             <div className="flex items-center gap-2 mb-3">

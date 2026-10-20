@@ -165,3 +165,13 @@
 .react-grid-item > .react-resizable-handle::after {
   border-color: var(--color-muted-foreground, #999);
 }
+
+/* Resize handles: right edge, bottom edge, bottom-right corner; visible and above widget content in edit mode. */
+.myko-grid-editing .react-grid-item > .react-resizable-handle { z-index: 20; opacity: 0.9; }
+.myko-grid-editing .react-grid-item > .react-resizable-handle-e { top: 0 !important; right: 0 !important; width: 10px !important; height: 100% !important; margin-top: 0 !important; transform: none !important; cursor: ew-resize; background: none; }
+.myko-grid-editing .react-grid-item > .react-resizable-handle-s { left: 0 !important; bottom: 0 !important; height: 10px !important; width: 100% !important; margin-left: 0 !important; transform: none !important; cursor: ns-resize; background: none; }
+.myko-grid-editing .react-grid-item > .react-resizable-handle-e::after,
+.myko-grid-editing .react-grid-item > .react-resizable-handle-s::after { content: ""; position: absolute; border: 0; background: var(--color-primary, #888); opacity: 0.5; border-radius: 2px; }
+.myko-grid-editing .react-grid-item > .react-resizable-handle-e::after { right: 3px; top: 50%; width: 3px; height: 28px; transform: translateY(-50%); }
+.myko-grid-editing .react-grid-item > .react-resizable-handle-s::after { bottom: 3px; left: 50%; height: 3px; width: 28px; transform: translateX(-50%); }
+.myko-grid-editing .react-grid-item > .react-resizable-handle-se { width: 18px; height: 18px; z-index: 21; }

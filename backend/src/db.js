@@ -32,6 +32,8 @@ export async function withConnection(callback) {
   let conn;
   try {
     conn = await pool.getConnection();
+    // Audit triggers read these session variables; reset them for every unit of work.
+    await conn.query("SET @myko_actor = 'api', @myko_op = NULL");
     return await callback(conn);
   } finally {
     if (conn) conn.release();

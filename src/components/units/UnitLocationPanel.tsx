@@ -25,7 +25,7 @@ import {
 import { formatDateTime, relativeTime } from "@/lib/format";
 import type { Unit, UnitLocationRecord } from "@/types";
 
-const KNOWN_LOCATIONS = ["KYLMASAILYTYSTILA-1", "TERRARIO-1", "TERRARIO-2", "GARDEN"];
+import { KNOWN_LOCATIONS } from "@/lib/locations";
 const selectCls =
   "w-full h-9 rounded-md border border-input bg-background px-2 text-sm font-mono";
 

@@ -1,7 +1,8 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { z } from "zod";
-import { useDataStore, dataActions } from "@/store/useDataStore";
+import { useDbUnits } from "@/lib/useDbUnits";
+import { createTransfer } from "@/lib/traceApi";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -27,9 +28,10 @@ export const Route = createFileRoute("/transfers/new")({
 function AddTransferPage() {
   const search = Route.useSearch();
   const navigate = useNavigate();
-  const { units } = useDataStore();
+  const { units } = useDbUnits();
 
-  const [sourceUnitCode, setSourceUnitCode] = useState(search.source ?? units[0]?.code ?? "");
+  const [sourceUnitCode, setSourceUnitCode] = useState(search.source ?? "");
+  useEffect(() => { if (!sourceUnitCode && units[0]) setSourceUnitCode(units[0].code); }, [units]);
   const [targetMode, setTargetMode] = useState<"existing" | "new">("new");
   const [existingTarget, setExistingTarget] = useState("");
   const [newTargetCode, setNewTargetCode] = useState("");
@@ -57,13 +59,13 @@ function AddTransferPage() {
     [targetType, transferTime, strainCode, targetUnitCode],
   );
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!source) return toast.error("Select source unit");
     if (!targetUnitCode) return toast.error("Define target unit");
     if (targetMode === "new" && units.some((u) => u.code === newTargetCode)) return toast.error("Target unit already exists");
 
-    dataActions.addTransfer({
+    try { await createTransfer({
       sourceUnitCode: source.code,
       targetUnitCode,
       transferTime: new Date(transferTime).toISOString(),
@@ -75,11 +77,10 @@ function AddTransferPage() {
           ? {
               code: targetUnitCode,
               type: newTargetType,
-              strainCode: source.strainCode ?? undefined,
               notes: `Created from transfer ${source.code} → ${targetUnitCode}`,
             }
           : undefined,
-    });
+    }); } catch (err) { return toast.error((err as Error).message); }
 
     toast.success("Transfer recorded");
     navigate({ to: "/units/$unitCode", params: { unitCode: targetUnitCode } });

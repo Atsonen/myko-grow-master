@@ -20,6 +20,8 @@ import { formatDateTime, relativeTime } from "@/lib/format";
 import type { ContainerType, MEvent, Strain, Unit, UnitStatus } from "@/types";
 import { Archive, ArrowDownUp, Pencil } from "lucide-react";
 import type { Taxonomy } from "@/store/useDataStore";
+import { BulkActions } from "@/components/units/BulkActions";
+import { BulkCreateUnits } from "@/components/units/BulkCreateUnits";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/units")({
@@ -65,6 +67,8 @@ function UnitsIndex() {
   const [strain, setStrain] = useState<string>("");
   const [substrate, setSubstrate] = useState<string>("");
   const [showArchived, setShowArchived] = useState(false);
+  const [showHidden, setShowHidden] = useState(false);
+  const [showBulkCreate, setShowBulkCreate] = useState(false);
   const [sortKey, setSortKey] = useState<SortKey>("batch");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -136,8 +140,8 @@ function UnitsIndex() {
     [events, showArchived],
   );
   const visibleUnits = useMemo(
-    () => units.filter((u) => showArchived || u.status !== "ARCHIVED"),
-    [units, showArchived],
+    () => units.filter((u) => (showArchived || u.status !== "ARCHIVED") && (showHidden || !u.hidden)),
+    [units, showArchived, showHidden],
   );
 
   const lastEventByUnit = useMemo(() => {
@@ -152,7 +156,7 @@ function UnitsIndex() {
   const filtered = visibleUnits.filter((u) => {
     if (type && u.type !== type) return false;
     if (status && u.status !== status) return false;
-    if (strain && u.strainCode !== strain) return false;
+    if (strain === "__none" ? !!u.effectiveStrainCode : strain && u.effectiveStrainCode !== strain) return false;
     if (substrate && u.substrate !== substrate) return false;
     if (
       q &&
@@ -170,7 +174,7 @@ function UnitsIndex() {
     );
   }, [filtered, sortKey, sortDirection, lastEventByUnit]);
 
-  const selectableCodes = sorted.filter((u) => u.status !== "ARCHIVED").map((u) => u.code);
+  const selectableCodes = sorted.map((u) => u.code);
   const visibleSelectedCount = selectableCodes.filter((code) => selected.has(code)).length;
   const allVisibleSelected =
     selectableCodes.length > 0 && visibleSelectedCount === selectableCodes.length;
@@ -235,7 +239,6 @@ function UnitsIndex() {
     event.preventDefault();
     const code = newUnitCode.trim().toUpperCase();
     if (!code) return toast.error("Unit code is required");
-    if (!newUnitStrainCode) return toast.error("Strain is required");
     if (!newUnitBatchTime) return toast.error("Batch time is required");
 
     setCreatingUnit(true);
@@ -243,7 +246,7 @@ function UnitsIndex() {
       await createUnitInDb({
         code,
         type: newUnitType,
-        strainCode: newUnitStrainCode,
+        strainCode: newUnitStrainCode || null,
         status: newUnitStatus,
         batchTime: new Date(newUnitBatchTime).toISOString(),
         parentUnitCode: newUnitParentCode || undefined,
@@ -294,7 +297,7 @@ function UnitsIndex() {
         <Pill
           label="Strain"
           value={strain}
-          options={["", ...strains.filter((s) => showArchived || !s.archived).map((s) => s.code)]}
+          options={["", "__none", ...strains.filter((s) => showArchived || !s.archived).map((s) => s.code)]}
           onChange={(v) => setStrain(v)}
         />
         <Button size="sm" variant="secondary" onClick={() => setShowNewUnitForm((prev) => !prev)}>
@@ -308,12 +311,22 @@ function UnitsIndex() {
           />
           Show archived
         </label>
+        <label className="flex items-center gap-1 text-[10px] font-mono uppercase text-muted-foreground">
+          <input type="checkbox" checked={showHidden} onChange={(e) => setShowHidden(e.target.checked)} aria-label="Show hidden" />
+          Show hidden
+        </label>
+        <Button size="sm" variant="secondary" onClick={() => setShowBulkCreate((p) => !p)}>
+          {showBulkCreate ? "Close bulk create" : "Create units (bulk)"}
+        </Button>
         <div className="ml-auto text-[10px] font-mono text-muted-foreground">
           {apiStatus === "loading"
             ? "Loading DB..."
             : `${sorted.length} / ${visibleUnits.length}${!showArchived ? ` (${units.length - visibleUnits.length} archived hidden)` : ""}`}
         </div>
       </div>
+      {showBulkCreate ? (
+        <BulkCreateUnits units={units} strains={strains} onDone={async () => { await loadDbState(); }} />
+      ) : null}
       {showNewUnitForm ? (
         <Card className="p-4 bg-card border-border space-y-3">
           <div className="text-sm font-medium">Create new unit</div>
@@ -348,7 +361,7 @@ function UnitsIndex() {
                   onChange={(e) => setNewUnitStrainCode(e.target.value)}
                   className={selectCls}
                 >
-                  <option value="">Select strain</option>
+                  <option value="">inherit from parent / none</option>
                   {availableStrains.map((s) => (
                     <option key={s.code} value={s.code}>
                       #{s.code} - {s.name}
@@ -452,8 +465,14 @@ function UnitsIndex() {
         >
           <Archive className="h-3 w-3 mr-1" /> Archive selected
         </Button>
-        <div className="text-[10px] font-mono text-muted-foreground">{selected.size} selected</div>
       </div>
+      <BulkActions
+        selected={Array.from(selected)}
+        functions={taxonomy.functions}
+        statuses={taxonomy.statuses}
+        unitCodes={units.map((u) => u.code)}
+        onDone={async () => { await loadDbState(); }}
+      />
 
       <Card className="bg-card border-border overflow-hidden">
         <div className="overflow-x-auto">
@@ -527,13 +546,12 @@ function UnitsIndex() {
                 return (
                   <tr
                     key={u.code}
-                    className={`border-t border-border hover:bg-secondary/40 ${u.status === "ARCHIVED" ? "opacity-60" : ""}`}
+                    className={`border-t border-border hover:bg-secondary/40 ${u.status === "ARCHIVED" || u.hidden ? "opacity-60" : ""}`}
                   >
                     <td className="p-2">
                       <input
                         type="checkbox"
                         checked={selected.has(u.code)}
-                        disabled={u.status === "ARCHIVED"}
                         onChange={(e) => toggleSelected(u.code, e.target.checked)}
                         title={`Select ${u.code}`}
                       />
@@ -546,6 +564,8 @@ function UnitsIndex() {
                       >
                         {u.code}
                       </Link>
+                      {u.hidden ? <span className="ml-1 text-[9px] uppercase text-muted-foreground">hidden</span> : null}
+                      {u.currentLocation ? <div className="text-[10px] font-mono text-muted-foreground">@ {u.currentLocation}</div> : null}
                     </td>
                     <td className="p-2">
                       <TypeBadge type={u.type} />
@@ -559,7 +579,7 @@ function UnitsIndex() {
                         "—"
                       )}
                     </td>
-                    <td className="p-2 font-mono">{u.strainCode ? `#${u.strainCode}` : "—"}</td>
+                    <td className="p-2 font-mono" title={u.strainInheritedFrom ? `inherited from ${u.strainInheritedFrom}` : undefined}>{u.effectiveStrainCode ? `#${u.effectiveStrainCode}${u.strainInheritedFrom ? "*" : ""}` : "—"}</td>
                     <td className="p-2">
                       <StatusBadge status={u.status} />
                     </td>
@@ -683,7 +703,7 @@ function compareUnits(
       case "substrate":
         return u.substrate ?? "";
       case "strain":
-        return u.strainCode ?? "";
+        return u.effectiveStrainCode ?? "";
       case "status":
         return u.status;
       case "batch":

@@ -212,6 +212,7 @@ function DashboardInner() {
         containerPadding={[0, 0]}
         isDraggable={editing}
         isResizable={editing}
+        resizeHandles={["e", "s", "se"]}
         draggableHandle=".myko-drag-handle"
         compactType="vertical"
         onLayoutChange={onLayoutChange}
