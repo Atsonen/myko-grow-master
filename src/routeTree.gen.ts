@@ -10,15 +10,20 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as UnitsRouteImport } from './routes/units'
+import { Route as TrendsRouteImport } from './routes/trends'
 import { Route as TransfersRouteImport } from './routes/transfers'
 import { Route as TaxonomyRouteImport } from './routes/taxonomy'
 import { Route as StrainsRouteImport } from './routes/strains'
 import { Route as QcRouteImport } from './routes/qc'
+import { Route as PlantsRouteImport } from './routes/plants'
 import { Route as LineageRouteImport } from './routes/lineage'
 import { Route as EventsRouteImport } from './routes/events'
+import { Route as EnvironmentRouteImport } from './routes/environment'
+import { Route as DataRouteImport } from './routes/data'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as UnitsUnitCodeRouteImport } from './routes/units.$unitCode'
 import { Route as TransfersNewRouteImport } from './routes/transfers.new'
+import { Route as PlantsTrendsRouteImport } from './routes/plants.trends'
 import { Route as LineageGraphRouteImport } from './routes/lineage.graph'
 import { Route as EventsNewRouteImport } from './routes/events.new'
 import { Route as UnitsUnitCodeEditRouteImport } from './routes/units.$unitCode.edit'
@@ -29,6 +34,11 @@ import { Route as EventsEventIdEditRouteImport } from './routes/events.$eventId.
 const UnitsRoute = UnitsRouteImport.update({
   id: '/units',
   path: '/units',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TrendsRoute = TrendsRouteImport.update({
+  id: '/trends',
+  path: '/trends',
   getParentRoute: () => rootRouteImport,
 } as any)
 const TransfersRoute = TransfersRouteImport.update({
@@ -51,6 +61,11 @@ const QcRoute = QcRouteImport.update({
   path: '/qc',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PlantsRoute = PlantsRouteImport.update({
+  id: '/plants',
+  path: '/plants',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LineageRoute = LineageRouteImport.update({
   id: '/lineage',
   path: '/lineage',
@@ -59,6 +74,16 @@ const LineageRoute = LineageRouteImport.update({
 const EventsRoute = EventsRouteImport.update({
   id: '/events',
   path: '/events',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const EnvironmentRoute = EnvironmentRouteImport.update({
+  id: '/environment',
+  path: '/environment',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DataRoute = DataRouteImport.update({
+  id: '/data',
+  path: '/data',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -75,6 +100,11 @@ const TransfersNewRoute = TransfersNewRouteImport.update({
   id: '/new',
   path: '/new',
   getParentRoute: () => TransfersRoute,
+} as any)
+const PlantsTrendsRoute = PlantsTrendsRouteImport.update({
+  id: '/trends',
+  path: '/trends',
+  getParentRoute: () => PlantsRoute,
 } as any)
 const LineageGraphRoute = LineageGraphRouteImport.update({
   id: '/graph',
@@ -109,15 +139,20 @@ const EventsEventIdEditRoute = EventsEventIdEditRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/data': typeof DataRoute
+  '/environment': typeof EnvironmentRoute
   '/events': typeof EventsRouteWithChildren
   '/lineage': typeof LineageRouteWithChildren
+  '/plants': typeof PlantsRouteWithChildren
   '/qc': typeof QcRoute
   '/strains': typeof StrainsRouteWithChildren
   '/taxonomy': typeof TaxonomyRoute
   '/transfers': typeof TransfersRouteWithChildren
+  '/trends': typeof TrendsRoute
   '/units': typeof UnitsRouteWithChildren
   '/events/new': typeof EventsNewRoute
   '/lineage/graph': typeof LineageGraphRoute
+  '/plants/trends': typeof PlantsTrendsRoute
   '/transfers/new': typeof TransfersNewRoute
   '/units/$unitCode': typeof UnitsUnitCodeRouteWithChildren
   '/events/$eventId/edit': typeof EventsEventIdEditRoute
@@ -127,15 +162,20 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/data': typeof DataRoute
+  '/environment': typeof EnvironmentRoute
   '/events': typeof EventsRouteWithChildren
   '/lineage': typeof LineageRouteWithChildren
+  '/plants': typeof PlantsRouteWithChildren
   '/qc': typeof QcRoute
   '/strains': typeof StrainsRouteWithChildren
   '/taxonomy': typeof TaxonomyRoute
   '/transfers': typeof TransfersRouteWithChildren
+  '/trends': typeof TrendsRoute
   '/units': typeof UnitsRouteWithChildren
   '/events/new': typeof EventsNewRoute
   '/lineage/graph': typeof LineageGraphRoute
+  '/plants/trends': typeof PlantsTrendsRoute
   '/transfers/new': typeof TransfersNewRoute
   '/units/$unitCode': typeof UnitsUnitCodeRouteWithChildren
   '/events/$eventId/edit': typeof EventsEventIdEditRoute
@@ -146,15 +186,20 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/data': typeof DataRoute
+  '/environment': typeof EnvironmentRoute
   '/events': typeof EventsRouteWithChildren
   '/lineage': typeof LineageRouteWithChildren
+  '/plants': typeof PlantsRouteWithChildren
   '/qc': typeof QcRoute
   '/strains': typeof StrainsRouteWithChildren
   '/taxonomy': typeof TaxonomyRoute
   '/transfers': typeof TransfersRouteWithChildren
+  '/trends': typeof TrendsRoute
   '/units': typeof UnitsRouteWithChildren
   '/events/new': typeof EventsNewRoute
   '/lineage/graph': typeof LineageGraphRoute
+  '/plants/trends': typeof PlantsTrendsRoute
   '/transfers/new': typeof TransfersNewRoute
   '/units/$unitCode': typeof UnitsUnitCodeRouteWithChildren
   '/events/$eventId/edit': typeof EventsEventIdEditRoute
@@ -166,15 +211,20 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/data'
+    | '/environment'
     | '/events'
     | '/lineage'
+    | '/plants'
     | '/qc'
     | '/strains'
     | '/taxonomy'
     | '/transfers'
+    | '/trends'
     | '/units'
     | '/events/new'
     | '/lineage/graph'
+    | '/plants/trends'
     | '/transfers/new'
     | '/units/$unitCode'
     | '/events/$eventId/edit'
@@ -184,15 +234,20 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/data'
+    | '/environment'
     | '/events'
     | '/lineage'
+    | '/plants'
     | '/qc'
     | '/strains'
     | '/taxonomy'
     | '/transfers'
+    | '/trends'
     | '/units'
     | '/events/new'
     | '/lineage/graph'
+    | '/plants/trends'
     | '/transfers/new'
     | '/units/$unitCode'
     | '/events/$eventId/edit'
@@ -202,15 +257,20 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/data'
+    | '/environment'
     | '/events'
     | '/lineage'
+    | '/plants'
     | '/qc'
     | '/strains'
     | '/taxonomy'
     | '/transfers'
+    | '/trends'
     | '/units'
     | '/events/new'
     | '/lineage/graph'
+    | '/plants/trends'
     | '/transfers/new'
     | '/units/$unitCode'
     | '/events/$eventId/edit'
@@ -221,12 +281,16 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  DataRoute: typeof DataRoute
+  EnvironmentRoute: typeof EnvironmentRoute
   EventsRoute: typeof EventsRouteWithChildren
   LineageRoute: typeof LineageRouteWithChildren
+  PlantsRoute: typeof PlantsRouteWithChildren
   QcRoute: typeof QcRoute
   StrainsRoute: typeof StrainsRouteWithChildren
   TaxonomyRoute: typeof TaxonomyRoute
   TransfersRoute: typeof TransfersRouteWithChildren
+  TrendsRoute: typeof TrendsRoute
   UnitsRoute: typeof UnitsRouteWithChildren
 }
 
@@ -237,6 +301,13 @@ declare module '@tanstack/react-router' {
       path: '/units'
       fullPath: '/units'
       preLoaderRoute: typeof UnitsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/trends': {
+      id: '/trends'
+      path: '/trends'
+      fullPath: '/trends'
+      preLoaderRoute: typeof TrendsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/transfers': {
@@ -267,6 +338,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof QcRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/plants': {
+      id: '/plants'
+      path: '/plants'
+      fullPath: '/plants'
+      preLoaderRoute: typeof PlantsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/lineage': {
       id: '/lineage'
       path: '/lineage'
@@ -279,6 +357,20 @@ declare module '@tanstack/react-router' {
       path: '/events'
       fullPath: '/events'
       preLoaderRoute: typeof EventsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/environment': {
+      id: '/environment'
+      path: '/environment'
+      fullPath: '/environment'
+      preLoaderRoute: typeof EnvironmentRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/data': {
+      id: '/data'
+      path: '/data'
+      fullPath: '/data'
+      preLoaderRoute: typeof DataRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -301,6 +393,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/transfers/new'
       preLoaderRoute: typeof TransfersNewRouteImport
       parentRoute: typeof TransfersRoute
+    }
+    '/plants/trends': {
+      id: '/plants/trends'
+      path: '/trends'
+      fullPath: '/plants/trends'
+      preLoaderRoute: typeof PlantsTrendsRouteImport
+      parentRoute: typeof PlantsRoute
     }
     '/lineage/graph': {
       id: '/lineage/graph'
@@ -371,6 +470,17 @@ const LineageRouteChildren: LineageRouteChildren = {
 const LineageRouteWithChildren =
   LineageRoute._addFileChildren(LineageRouteChildren)
 
+interface PlantsRouteChildren {
+  PlantsTrendsRoute: typeof PlantsTrendsRoute
+}
+
+const PlantsRouteChildren: PlantsRouteChildren = {
+  PlantsTrendsRoute: PlantsTrendsRoute,
+}
+
+const PlantsRouteWithChildren =
+  PlantsRoute._addFileChildren(PlantsRouteChildren)
+
 interface StrainsRouteChildren {
   StrainsCodeEditRoute: typeof StrainsCodeEditRoute
 }
@@ -420,14 +530,28 @@ const UnitsRouteWithChildren = UnitsRoute._addFileChildren(UnitsRouteChildren)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  DataRoute: DataRoute,
+  EnvironmentRoute: EnvironmentRoute,
   EventsRoute: EventsRouteWithChildren,
   LineageRoute: LineageRouteWithChildren,
+  PlantsRoute: PlantsRouteWithChildren,
   QcRoute: QcRoute,
   StrainsRoute: StrainsRouteWithChildren,
   TaxonomyRoute: TaxonomyRoute,
   TransfersRoute: TransfersRouteWithChildren,
+  TrendsRoute: TrendsRoute,
   UnitsRoute: UnitsRouteWithChildren,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}

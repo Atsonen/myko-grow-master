@@ -16,6 +16,12 @@ export default defineConfig({
     server: {
       port: 5199,
       strictPort: true,
+      proxy: {
+        "/api": {
+          target: process.env.VITE_API_TARGET || "http://127.0.0.1:3010",
+          changeOrigin: true,
+        },
+      },
     },
   },
 });

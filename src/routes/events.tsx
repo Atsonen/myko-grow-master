@@ -1,9 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
-import { useDataStore } from "@/store/useDataStore";
+import { useEffect, useState } from "react";
+import { getDbState } from "@/lib/apiClient";
 import { Input } from "@/components/ui/input";
 import { EventCard } from "@/components/events/EventCard";
-import type { FunctionCode } from "@/types";
+import { Card } from "@/components/ui/card";
+import type { FunctionCode, MEvent, Strain, Unit } from "@/types";
 
 export const Route = createFileRoute("/events")({
   head: () => ({
@@ -18,10 +19,39 @@ export const Route = createFileRoute("/events")({
 const FUNCTIONS: FunctionCode[] = ["COL", "FRU", "OBS", "QC", "TRF", "HAR", "PREP"];
 
 function EventsPage() {
-  const { events, units, strains } = useDataStore();
+  const [events, setEvents] = useState<MEvent[]>([]);
+  const [units, setUnits] = useState<Unit[]>([]);
+  const [strains, setStrains] = useState<Strain[]>([]);
+  const [apiStatus, setApiStatus] = useState<"loading" | "ok" | "error">("loading");
+  const [apiError, setApiError] = useState("");
   const [q, setQ] = useState("");
   const [active, setActive] = useState<Set<FunctionCode>>(new Set());
   const [showArchived, setShowArchived] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const data = await getDbState();
+        if (!cancelled) {
+          setEvents(data.events);
+          setUnits(data.units);
+          setStrains(data.strains);
+          setApiStatus("ok");
+          setApiError("");
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setApiStatus("error");
+          setApiError((error as Error).message);
+        }
+      }
+    };
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const sorted = [...events]
     .filter((e) => showArchived || !e.archived)
@@ -49,6 +79,7 @@ function EventsPage() {
 
   return (
     <div className="p-4 space-y-4">
+      {apiStatus === "error" && <DbError message={apiError} />}
       <div className="flex flex-wrap items-center gap-2">
         <Input
           placeholder="Search by unit, strain, function, note…"
@@ -76,7 +107,7 @@ function EventsPage() {
           Show archived
         </label>
         <div className="ml-auto text-[10px] font-mono text-muted-foreground">
-          {filtered.length} events{!showArchived ? ` (${hiddenCount} archived hidden)` : ""}
+          {apiStatus === "loading" ? "Loading DB..." : `${filtered.length} events${!showArchived ? ` (${hiddenCount} archived hidden)` : ""}`}
         </div>
       </div>
 
@@ -84,10 +115,19 @@ function EventsPage() {
         {filtered.map((e) => {
           const u = units.find((x) => x.code === e.unitCode);
           const s = strains.find((x) => x.code === u?.strainCode);
-          return <EventCard key={e.id} event={e} unit={u} strain={s} />;
+          return <EventCard key={e.id} event={e} unit={u} strain={s} readOnly />;
         })}
-        {filtered.length === 0 && <div className="text-xs italic text-muted-foreground">No events match.</div>}
+        {filtered.length === 0 && <div className="text-xs italic text-muted-foreground">{apiStatus === "error" ? "DB/API unavailable." : "No events match."}</div>}
       </div>
     </div>
+  );
+}
+
+function DbError({ message }: { message: string }) {
+  return (
+    <Card className="border-destructive/40 bg-destructive/10 p-3">
+      <div className="text-sm font-medium">DB/API unavailable</div>
+      <div className="text-xs text-muted-foreground mt-1">{message}</div>
+    </Card>
   );
 }

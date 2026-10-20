@@ -8,7 +8,7 @@ import { Link } from "@tanstack/react-router";
 import { Archive, ArchiveRestore, Droplets, Pencil, Thermometer } from "lucide-react";
 import { toast } from "sonner";
 
-export function EventCard({ event, unit, strain, hideUnit }: { event: MEvent; unit?: Unit; strain?: Strain; hideUnit?: boolean }) {
+export function EventCard({ event, unit, strain, hideUnit, readOnly }: { event: MEvent; unit?: Unit; strain?: Strain; hideUnit?: boolean; readOnly?: boolean }) {
   const toggleArchive = () => {
     if (event.archived) {
       dataActions.restoreEvent(event.id);
@@ -42,24 +42,26 @@ export function EventCard({ event, unit, strain, hideUnit }: { event: MEvent; un
       </div>
       <div className="text-sm flex items-center justify-between gap-2">
         <span>{event.title}</span>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={toggleArchive}
-            className="text-muted-foreground hover:text-primary"
-            title={event.archived ? "Restore event" : "Archive event"}
-          >
-            {event.archived ? <ArchiveRestore className="h-3 w-3" /> : <Archive className="h-3 w-3" />}
-          </button>
-          <Link
-            to="/events/$eventId/edit"
-            params={{ eventId: event.id }}
-            className="text-muted-foreground hover:text-primary"
-            title="Edit event"
-          >
-            <Pencil className="h-3 w-3" />
-          </Link>
-        </div>
+        {!readOnly && (
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={toggleArchive}
+              className="text-muted-foreground hover:text-primary"
+              title={event.archived ? "Restore event" : "Archive event"}
+            >
+              {event.archived ? <ArchiveRestore className="h-3 w-3" /> : <Archive className="h-3 w-3" />}
+            </button>
+            <Link
+              to="/events/$eventId/edit"
+              params={{ eventId: event.id }}
+              className="text-muted-foreground hover:text-primary"
+              title="Edit event"
+            >
+              <Pencil className="h-3 w-3" />
+            </Link>
+          </div>
+        )}
       </div>
       {event.description && <div className="text-xs text-muted-foreground italic">{event.description}</div>}
       {event.note && <div className="text-xs text-muted-foreground">{event.note}</div>}

@@ -1,6 +1,13 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useMemo } from "react";
-import { useDataStore, dataActions } from "@/store/useDataStore";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  archiveUnits,
+  getEvents,
+  getStrains,
+  getTransfers,
+  getUnits,
+  updateUnit,
+} from "@/lib/apiClient";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { IdentifierTag } from "@/components/common/IdentifierTag";
@@ -9,15 +16,26 @@ import { TypeBadge } from "@/components/common/TypeBadge";
 import { EventCard } from "@/components/events/EventCard";
 import { formatDateTime, relativeTime } from "@/lib/format";
 import { identifierForUnit } from "@/lib/identifier";
-import type { UnitStatus } from "@/types";
-import { Archive, ArchiveRestore, ArrowLeftRight, FlaskConical, History, ShieldAlert, Pencil } from "lucide-react";
+import type { MEvent, Strain, Transfer, Unit, UnitStatus } from "@/types";
+import {
+  Archive,
+  ArchiveRestore,
+  ArrowLeftRight,
+  FlaskConical,
+  History,
+  ShieldAlert,
+  Pencil,
+} from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/units/$unitCode")({
   head: ({ params }) => ({
     meta: [
       { title: `${params.unitCode} — Myko Valvomo` },
-      { name: "description", content: "Unit detail, event timeline, transfers, and state actions." },
+      {
+        name: "description",
+        content: "Unit detail, event timeline, transfers, and state actions.",
+      },
     ],
   }),
   component: UnitDetailPage,
@@ -26,14 +44,56 @@ export const Route = createFileRoute("/units/$unitCode")({
 function UnitDetailPage() {
   const { unitCode } = Route.useParams();
   const navigate = useNavigate();
-  const { units, events, transfers, strains } = useDataStore();
+  const [unit, setUnit] = useState<Unit | null>(null);
+  const [events, setEvents] = useState<MEvent[]>([]);
+  const [transfers, setTransfers] = useState<Transfer[]>([]);
+  const [strains, setStrains] = useState<Strain[]>([]);
+  const [apiStatus, setApiStatus] = useState<"loading" | "ok" | "error">("loading");
+  const [apiError, setApiError] = useState("");
 
-  const unit = units.find((u) => u.code === unitCode);
+  const loadData = useCallback(
+    async (cancelled?: () => boolean) => {
+      try {
+        const [loadedUnits, loadedEvents, loadedTransfers, loadedStrains] = await Promise.all([
+          getUnits(),
+          getEvents(),
+          getTransfers(),
+          getStrains(),
+        ]);
+        if (!cancelled?.()) {
+          setUnit(loadedUnits.find((u) => u.code === unitCode) ?? null);
+          setEvents(loadedEvents);
+          setTransfers(loadedTransfers);
+          setStrains(loadedStrains);
+          setApiStatus("ok");
+          setApiError("");
+        }
+      } catch (error) {
+        if (!cancelled?.()) {
+          setApiStatus("error");
+          setApiError((error as Error).message);
+        }
+      }
+    },
+    [unitCode],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    void loadData(() => cancelled);
+    return () => {
+      cancelled = true;
+    };
+  }, [loadData]);
+
   const strain = unit ? strains.find((s) => s.code === unit.strainCode) : undefined;
   const isArchived = unit?.status === "ARCHIVED";
 
   const unitEvents = useMemo(
-    () => events.filter((e) => e.unitCode === unitCode).sort((a, b) => b.eventTime.localeCompare(a.eventTime)),
+    () =>
+      events
+        .filter((e) => e.unitCode === unitCode)
+        .sort((a, b) => b.eventTime.localeCompare(a.eventTime)),
     [events, unitCode],
   );
 
@@ -45,90 +105,138 @@ function UnitDetailPage() {
     [transfers, unitCode],
   );
 
-  if (!unit) {
+  if (apiStatus === "loading") {
+    return <div className="p-4 text-sm text-muted-foreground">Loading DB...</div>;
+  }
+
+  if (apiStatus === "error") {
     return (
       <div className="p-4">
         <Card className="p-6 bg-card border-border">
-          <div className="font-mono text-lg">Unit not found</div>
-          <p className="text-sm text-muted-foreground mt-2">No unit with code {unitCode} exists in the current dataset.</p>
-          <Button className="mt-4" variant="secondary" onClick={() => navigate({ to: "/units" })}>Back to units</Button>
+          <div className="font-mono text-lg">DB/API unavailable</div>
+          <p className="text-sm text-muted-foreground mt-2">{apiError}</p>
+          <Button className="mt-4" variant="secondary" onClick={() => navigate({ to: "/units" })}>
+            Back to units
+          </Button>
         </Card>
       </div>
     );
   }
 
-  const mark = (status: UnitStatus, title: string) => {
-    dataActions.updateUnitStatus(unit.code, status);
-    dataActions.addEvent({
-      functionCode: status === "CONTAMINATED" ? "QC" : status === "HARVESTED" ? "HAR" : "OBS",
-      unitCode: unit.code,
-      eventTime: new Date().toISOString(),
-      title,
-      note: `Status changed to ${status}`,
-      statusChange: status,
-    });
-    toast.success(`${unit.code} marked ${status}`);
+  if (!unit) {
+    return (
+      <div className="p-4">
+        <Card className="p-6 bg-card border-border">
+          <div className="font-mono text-lg">Unit not found</div>
+          <p className="text-sm text-muted-foreground mt-2">
+            No unit with code {unitCode} exists in the current dataset.
+          </p>
+          <Button className="mt-4" variant="secondary" onClick={() => navigate({ to: "/units" })}>
+            Back to units
+          </Button>
+        </Card>
+      </div>
+    );
+  }
+
+  const mark = async (status: UnitStatus, title: string) => {
+    try {
+      const updated = await updateUnit(unit.code, { ...unit, status });
+      setUnit(updated);
+      toast.success(`${unit.code} marked ${status}`);
+    } catch (error) {
+      toast.error(`${title} failed: ${(error as Error).message}`);
+    }
   };
 
-  const archivePhysicalUnit = () => {
-    if (!confirm(`Archive ${unit.code}? Use this when the physical ${unit.type.toLowerCase()} no longer exists. It will be hidden from normal views, but history stays available via Show archived.`)) return;
-    dataActions.archiveUnit(unit.code);
-    dataActions.addEvent({
-      functionCode: "OBS",
-      unitCode: unit.code,
-      eventTime: new Date().toISOString(),
-      title: "Physical unit archived",
-      note: "Physical container no longer exists. Unit hidden from normal views.",
-      statusChange: "ARCHIVED",
-    });
-    toast.success(`${unit.code} archived`);
+  const archivePhysicalUnit = async () => {
+    if (
+      !confirm(
+        `Archive ${unit.code}? Use this when the physical ${unit.type.toLowerCase()} no longer exists. It will be hidden from normal views, but history stays available via Show archived.`,
+      )
+    )
+      return;
+    try {
+      await archiveUnits([unit.code]);
+      setUnit({ ...unit, status: "ARCHIVED" });
+      await loadData();
+      toast.success(`${unit.code} archived`);
+    } catch (error) {
+      toast.error((error as Error).message);
+    }
   };
 
-  const restorePhysicalUnit = () => {
-    dataActions.restoreUnit(unit.code, "ACTIVE");
-    dataActions.addEvent({
-      functionCode: "OBS",
-      unitCode: unit.code,
-      eventTime: new Date().toISOString(),
-      title: "Physical unit restored",
-      note: "Unit restored to ACTIVE status.",
-      statusChange: "ACTIVE",
-    });
-    toast.success(`${unit.code} restored`);
+  const restorePhysicalUnit = async () => {
+    try {
+      const updated = await updateUnit(unit.code, { ...unit, status: "ACTIVE" });
+      setUnit(updated);
+      toast.success(`${unit.code} restored`);
+    } catch (error) {
+      toast.error((error as Error).message);
+    }
   };
 
   return (
     <div className="p-4 space-y-4">
       {isArchived && (
         <Card className="p-3 bg-status-archived/10 border-status-archived/40 text-xs text-muted-foreground">
-          <span className="font-mono uppercase text-status-archived">Archived physical unit.</span> This container no longer exists physically. It is hidden from normal list, dashboard, QC and lineage views unless “Show archived” is enabled.
+          <span className="font-mono uppercase text-status-archived">Archived physical unit.</span>{" "}
+          This container no longer exists physically. It is hidden from normal list, dashboard, QC
+          and lineage views unless “Show archived” is enabled.
         </Card>
       )}
       <div className="grid grid-cols-1 xl:grid-cols-[1fr_360px] gap-4 items-start">
         <div className="space-y-4">
-          <Card className={`p-4 bg-card ${isArchived ? "border-status-archived/60 opacity-80" : "border-border"}`}>
+          <Card
+            className={`p-4 bg-card ${isArchived ? "border-status-archived/60 opacity-80" : "border-border"}`}
+          >
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="space-y-2 min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
                   <h1 className="text-xl font-mono tracking-tight">{unit.code}</h1>
                   <TypeBadge type={unit.type} />
-                  {unit.substrate && <span className="rounded border border-border bg-muted px-2 py-0.5 text-[10px] font-mono uppercase text-muted-foreground">SUB:{unit.substrate}</span>}
+                  {unit.substrate && (
+                    <span className="rounded border border-border bg-muted px-2 py-0.5 text-[10px] font-mono uppercase text-muted-foreground">
+                      SUB:{unit.substrate}
+                    </span>
+                  )}
                   <StatusBadge status={unit.status} />
                 </div>
                 <IdentifierTag value={identifierForUnit(unit)} className="text-xs" />
                 <div className="text-xs text-muted-foreground">
-                  #{unit.strainCode}{strain ? ` · ${strain.name} / ${strain.species}` : ""}
+                  #{unit.strainCode}
+                  {strain ? ` · ${strain.name} / ${strain.species}` : ""}
                 </div>
                 {unit.description && <div className="text-xs italic">{unit.description}</div>}
                 {unit.notes && <div className="text-xs text-muted-foreground">{unit.notes}</div>}
               </div>
               <div className="flex flex-wrap gap-2">
                 <Button size="sm" variant="outline" asChild>
-                  <Link to="/units/$unitCode/edit" params={{ unitCode: unit.code }}><Pencil className="h-3 w-3 mr-1" /> Edit</Link>
+                  <Link to="/units/$unitCode/edit" params={{ unitCode: unit.code }}>
+                    <Pencil className="h-3 w-3 mr-1" /> Edit
+                  </Link>
                 </Button>
-                {!isArchived && <Button size="sm" asChild><Link to="/events/new" search={{ unitCode: unit.code, fn: "OBS" }}>Add observation</Link></Button>}
-                {!isArchived && <Button size="sm" variant="secondary" asChild><Link to="/events/new" search={{ unitCode: unit.code, fn: "QC" }}>Add QC</Link></Button>}
-                {!isArchived && <Button size="sm" variant="secondary" asChild><Link to="/transfers/new" search={{ source: unit.code }}>Transfer</Link></Button>}
+                {!isArchived && (
+                  <Button size="sm" asChild>
+                    <Link to="/events/new" search={{ unitCode: unit.code, fn: "OBS" }}>
+                      Add observation
+                    </Link>
+                  </Button>
+                )}
+                {!isArchived && (
+                  <Button size="sm" variant="secondary" asChild>
+                    <Link to="/events/new" search={{ unitCode: unit.code, fn: "QC" }}>
+                      Add QC
+                    </Link>
+                  </Button>
+                )}
+                {!isArchived && (
+                  <Button size="sm" variant="secondary" asChild>
+                    <Link to="/transfers/new" search={{ source: unit.code }}>
+                      Transfer
+                    </Link>
+                  </Button>
+                )}
               </div>
             </div>
             <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mt-4 text-xs">
@@ -138,13 +246,27 @@ function UnitDetailPage() {
               <Info label="Batch time" value={formatDateTime(unit.batchTime)} />
               <Info label="Parent" value={unit.parentUnitCode ?? "—"} />
             </div>
-            {unit.notes && <p className="mt-4 text-sm text-muted-foreground border-t border-border pt-3">{unit.notes}</p>}
+            {unit.notes && (
+              <p className="mt-4 text-sm text-muted-foreground border-t border-border pt-3">
+                {unit.notes}
+              </p>
+            )}
           </Card>
 
           <Card className="p-4 bg-card border-border">
-            <div className="flex items-center gap-2 mb-3"><History className="h-4 w-4 text-muted-foreground" /><h2 className="text-sm font-mono uppercase tracking-wider text-muted-foreground">Event timeline</h2><span className="ml-auto text-[10px] font-mono text-muted-foreground">{unitEvents.length} events</span></div>
+            <div className="flex items-center gap-2 mb-3">
+              <History className="h-4 w-4 text-muted-foreground" />
+              <h2 className="text-sm font-mono uppercase tracking-wider text-muted-foreground">
+                Event timeline
+              </h2>
+              <span className="ml-auto text-[10px] font-mono text-muted-foreground">
+                {unitEvents.length} events
+              </span>
+            </div>
             <div className="space-y-2">
-              {unitEvents.map((event) => <EventCard key={event.id} event={event} unit={unit} strain={strain} />)}
+              {unitEvents.map((event) => (
+                <EventCard key={event.id} event={event} unit={unit} strain={strain} />
+              ))}
               {unitEvents.length === 0 && <Empty text="No events recorded for this unit." />}
             </div>
           </Card>
@@ -152,32 +274,96 @@ function UnitDetailPage() {
 
         <div className="space-y-4">
           <Card className="p-4 bg-card border-border">
-            <div className="flex items-center gap-2 mb-3"><ShieldAlert className="h-4 w-4 text-muted-foreground" /><h2 className="text-sm font-mono uppercase tracking-wider text-muted-foreground">State actions</h2></div>
+            <div className="flex items-center gap-2 mb-3">
+              <ShieldAlert className="h-4 w-4 text-muted-foreground" />
+              <h2 className="text-sm font-mono uppercase tracking-wider text-muted-foreground">
+                State actions
+              </h2>
+            </div>
             <div className="grid grid-cols-1 gap-2">
               {!isArchived ? (
                 <>
-                  <Button variant="secondary" onClick={() => mark("CONTAMINATED", "Contamination marked")}>Mark contaminated</Button>
-                  <Button variant="secondary" onClick={() => mark("DISCARDED", "Unit discarded")}>Mark discarded</Button>
-                  <Button variant="secondary" onClick={() => mark("HARVESTED", "Harvest completed")}>Mark harvested</Button>
-                  <Button variant="ghost" onClick={archivePhysicalUnit}><Archive className="h-4 w-4 mr-2" /> Archive physical unit</Button>
+                  <Button
+                    variant="secondary"
+                    onClick={() => mark("CONTAMINATED", "Contamination marked")}
+                  >
+                    Mark contaminated
+                  </Button>
+                  <Button variant="secondary" onClick={() => mark("DISCARDED", "Unit discarded")}>
+                    Mark discarded
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    onClick={() => mark("HARVESTED", "Harvest completed")}
+                  >
+                    Mark harvested
+                  </Button>
+                  <Button variant="ghost" onClick={archivePhysicalUnit}>
+                    <Archive className="h-4 w-4 mr-2" /> Archive physical unit
+                  </Button>
                 </>
               ) : (
-                <Button variant="secondary" onClick={restorePhysicalUnit}><ArchiveRestore className="h-4 w-4 mr-2" /> Restore unit to active</Button>
+                <Button variant="secondary" onClick={restorePhysicalUnit}>
+                  <ArchiveRestore className="h-4 w-4 mr-2" /> Restore unit to active
+                </Button>
               )}
             </div>
           </Card>
 
           <Card className="p-4 bg-card border-border">
-            <div className="flex items-center gap-2 mb-3"><ArrowLeftRight className="h-4 w-4 text-muted-foreground" /><h2 className="text-sm font-mono uppercase tracking-wider text-muted-foreground">Transfers</h2></div>
+            <div className="flex items-center gap-2 mb-3">
+              <ArrowLeftRight className="h-4 w-4 text-muted-foreground" />
+              <h2 className="text-sm font-mono uppercase tracking-wider text-muted-foreground">
+                Transfers
+              </h2>
+            </div>
             <div className="space-y-2">
-              {relatedTransfers.map((t) => { const isSource = t.sourceUnitCode === unit.code; const other = isSource ? t.targetUnitCode : t.sourceUnitCode; return <div key={t.id} className="border border-border rounded p-2 text-xs bg-secondary/30"><div className="flex items-center gap-2"><ArrowLeftRight className="h-3 w-3 text-muted-foreground" /><span className="font-mono">{t.sourceUnitCode}</span><span className="text-muted-foreground">→</span><span className="font-mono">{t.targetUnitCode}</span></div><div className="mt-1 text-muted-foreground">{t.method} · {t.amount} · {relativeTime(t.transferTime)}</div>{other && <Link to="/units/$unitCode" params={{ unitCode: other }} className="mt-1 inline-block text-primary hover:underline font-mono">Open {other}</Link>}</div>; })}
-              {relatedTransfers.length === 0 && <Empty text="No structured transfers for this unit." />}
+              {relatedTransfers.map((t) => {
+                const isSource = t.sourceUnitCode === unit.code;
+                const other = isSource ? t.targetUnitCode : t.sourceUnitCode;
+                return (
+                  <div
+                    key={t.id}
+                    className="border border-border rounded p-2 text-xs bg-secondary/30"
+                  >
+                    <div className="flex items-center gap-2">
+                      <ArrowLeftRight className="h-3 w-3 text-muted-foreground" />
+                      <span className="font-mono">{t.sourceUnitCode}</span>
+                      <span className="text-muted-foreground">→</span>
+                      <span className="font-mono">{t.targetUnitCode}</span>
+                    </div>
+                    <div className="mt-1 text-muted-foreground">
+                      {t.method} · {t.amount} · {relativeTime(t.transferTime)}
+                    </div>
+                    {other && (
+                      <Link
+                        to="/units/$unitCode"
+                        params={{ unitCode: other }}
+                        className="mt-1 inline-block text-primary hover:underline font-mono"
+                      >
+                        Open {other}
+                      </Link>
+                    )}
+                  </div>
+                );
+              })}
+              {relatedTransfers.length === 0 && (
+                <Empty text="No structured transfers for this unit." />
+              )}
             </div>
           </Card>
 
           <Card className="p-4 bg-card border-border">
-            <div className="flex items-center gap-2 mb-3"><FlaskConical className="h-4 w-4 text-muted-foreground" /><h2 className="text-sm font-mono uppercase tracking-wider text-muted-foreground">Interpretation</h2></div>
-            <p className="text-xs text-muted-foreground leading-relaxed">Unit archive means the physical container no longer exists. The history is retained, but the unit is removed from normal operational views.</p>
+            <div className="flex items-center gap-2 mb-3">
+              <FlaskConical className="h-4 w-4 text-muted-foreground" />
+              <h2 className="text-sm font-mono uppercase tracking-wider text-muted-foreground">
+                Interpretation
+              </h2>
+            </div>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Unit archive means the physical container no longer exists. The history is retained,
+              but the unit is removed from normal operational views.
+            </p>
           </Card>
         </div>
       </div>
@@ -185,5 +371,14 @@ function UnitDetailPage() {
   );
 }
 
-function Info({ label, value }: { label: string; value: string }) { return <div className="border border-border rounded p-2 bg-secondary/20"><div className="text-[10px] font-mono uppercase text-muted-foreground">{label}</div><div className="font-mono truncate">{value}</div></div>; }
-function Empty({ text }: { text: string }) { return <div className="text-xs text-muted-foreground italic px-2 py-3">— {text} —</div>; }
+function Info({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="border border-border rounded p-2 bg-secondary/20">
+      <div className="text-[10px] font-mono uppercase text-muted-foreground">{label}</div>
+      <div className="font-mono truncate">{value}</div>
+    </div>
+  );
+}
+function Empty({ text }: { text: string }) {
+  return <div className="text-xs text-muted-foreground italic px-2 py-3">— {text} —</div>;
+}

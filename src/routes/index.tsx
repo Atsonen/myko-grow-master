@@ -1,12 +1,13 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useDataStore } from "@/store/useDataStore";
+import { useEffect, useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatusBadge } from "@/components/common/StatusBadge";
 import { FunctionBadge } from "@/components/common/FunctionBadge";
 import { TypeBadge } from "@/components/common/TypeBadge";
 import { relativeTime } from "@/lib/format";
-import type { ContainerType } from "@/types";
-import { AlertTriangle, Box, Activity, Clock, ArrowLeftRight } from "lucide-react";
+import { getDbState, requestJson } from "@/lib/apiClient";
+import type { ContainerType, MEvent, Transfer, Unit } from "@/types";
+import { AlertTriangle, Box, Activity, Clock, ArrowLeftRight, Thermometer } from "lucide-react";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -18,32 +19,106 @@ export const Route = createFileRoute("/")({
   component: Dashboard,
 });
 
+type DashboardEnvironmentReading = {
+  id: number | string;
+  timestamp: string;
+  location: string;
+  source: string;
+  mqttTopic?: string;
+  payloadKey?: string;
+  alias?: string;
+  temperatureC?: number;
+  humidityRh?: number;
+  co2Ppm?: number;
+  note?: string;
+  archived?: boolean;
+};
+
 function Dashboard() {
-  const store = useDataStore();
-  const units = store.units.filter((u) => u.status !== "ARCHIVED");
-  const events = store.events.filter((e) => !e.archived && units.some((u) => u.code === e.unitCode));
-  const transfers = store.transfers.filter((t) => !t.archived && units.some((u) => u.code === t.sourceUnitCode || u.code === t.targetUnitCode));
+  const [units, setUnits] = useState<Unit[]>([]);
+  const [events, setEvents] = useState<MEvent[]>([]);
+  const [transfers, setTransfers] = useState<Transfer[]>([]);
+  const [dataStatus, setDataStatus] = useState<"loading" | "ok" | "error">("loading");
+  const [dataError, setDataError] = useState("");
+  const [apiReadings, setApiReadings] = useState<DashboardEnvironmentReading[]>([]);
+  const [temperatureStatus, setTemperatureStatus] = useState<"loading" | "ok" | "error">("loading");
+  const activeDataUnits = units.filter((u) => u.status !== "ARCHIVED");
+  const visibleEvents = events.filter((e) => !e.archived && activeDataUnits.some((u) => u.code === e.unitCode));
+  const visibleTransfers = transfers.filter((t) => !t.archived && activeDataUnits.some((u) => u.code === t.sourceUnitCode || u.code === t.targetUnitCode));
 
-  const activeUnits = units.filter((u) => u.status === "ACTIVE");
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadDbState = async () => {
+      try {
+        const data = await getDbState();
+        if (!cancelled) {
+          setUnits(data.units);
+          setEvents(data.events);
+          setTransfers(data.transfers);
+          setDataStatus("ok");
+          setDataError("");
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setDataStatus("error");
+          setDataError((error as Error).message);
+        }
+      }
+    };
+
+    const loadLatestReadings = async () => {
+      try {
+        const data = await requestJson<DashboardEnvironmentReading[]>("/api/environment/latest?limit=12");
+        if (!cancelled) {
+          setApiReadings(data);
+          setTemperatureStatus("ok");
+        }
+      } catch {
+        if (!cancelled) {
+          setApiReadings([]);
+          setTemperatureStatus("error");
+        }
+      }
+    };
+
+    void loadDbState();
+    void loadLatestReadings();
+    const timer = window.setInterval(() => {
+      void loadDbState();
+      void loadLatestReadings();
+    }, 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  const activeUnits = activeDataUnits.filter((u) => u.status === "ACTIVE");
   const activeBoxes = activeUnits.filter((u) => u.type === "BOX");
-  const contaminated = units.filter((u) => u.status === "CONTAMINATED");
+  const contaminated = activeDataUnits.filter((u) => u.status === "CONTAMINATED");
 
-  const recentObservations = [...events]
+  const recentObservations = [...visibleEvents]
     .filter((e) => e.functionCode === "OBS")
     .sort((a, b) => b.eventTime.localeCompare(a.eventTime))
     .slice(0, 5);
 
-  const qcWarnings = [...events]
+  const qcWarnings = [...visibleEvents]
     .filter((e) => e.functionCode === "QC")
     .sort((a, b) => b.eventTime.localeCompare(a.eventTime))
     .slice(0, 5);
 
-  const recentTransfers = [...transfers]
+  const recentTransfers = [...visibleTransfers]
     .sort((a, b) => b.transferTime.localeCompare(a.transferTime))
     .slice(0, 5);
 
+  const latestTemperatureReadings = apiReadings
+    .filter((reading) => typeof reading.temperatureC === "number")
+    .sort((a, b) => a.location.localeCompare(b.location))
+    .slice(0, 6);
+
   const lastEventByUnit = new Map<string, string>();
-  for (const e of events) {
+  for (const e of visibleEvents) {
     const prev = lastEventByUnit.get(e.unitCode);
     if (!prev || e.eventTime > prev) lastEventByUnit.set(e.unitCode, e.eventTime);
   }
@@ -61,6 +136,7 @@ function Dashboard() {
 
   return (
     <div className="p-4 space-y-4">
+      {dataStatus === "error" && <DbError message={dataError} />}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <StatTile icon={<Activity className="h-4 w-4" />} label="Active units" value={activeUnits.length} />
         <StatTile icon={<Box className="h-4 w-4" />} label="Active boxes" value={activeBoxes.length} />
@@ -69,6 +145,36 @@ function Dashboard() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+        <Card className="bg-card border-border">
+          <CardHeader className="py-3 flex-row items-center justify-between">
+            <CardTitle className="text-sm font-mono uppercase tracking-wider text-muted-foreground">
+              Latest temperatures
+            </CardTitle>
+            <Thermometer className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {latestTemperatureReadings.length === 0 && (temperatureStatus === "error" ? <TemperatureError /> : <Empty />)}
+            {latestTemperatureReadings.map((reading) => (
+              <Link
+                key={`${reading.location}-${reading.timestamp}-${reading.source}`}
+                to="/environment"
+                className="grid grid-cols-[1fr_auto] gap-2 rounded border border-border bg-secondary/20 p-2 text-xs hover:bg-secondary"
+              >
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="truncate font-mono">{reading.location}</span>
+                    {reading.alias && <span className="rounded border border-border bg-muted px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground">{reading.alias}</span>}
+                  </div>
+                  <div className="truncate text-[10px] text-muted-foreground">
+                    {reading.payloadKey ? `${reading.payloadKey} · ` : ""}{reading.source} · {relativeTime(reading.timestamp)}
+                  </div>
+                </div>
+                <div className="font-mono text-lg tabular-nums">{formatTemperature(reading.temperatureC)}</div>
+              </Link>
+            ))}
+          </CardContent>
+        </Card>
+
         <Card className="bg-card border-border">
           <CardHeader className="py-3">
             <CardTitle className="text-sm font-mono uppercase tracking-wider text-muted-foreground">
@@ -169,6 +275,23 @@ function Dashboard() {
 }
 
 function Empty() { return <div className="text-xs text-muted-foreground italic px-2 py-3">— no entries —</div>; }
+
+function TemperatureError() {
+  return <div className="text-xs text-muted-foreground px-2 py-3">DB/API unavailable for environment readings.</div>;
+}
+
+function DbError({ message }: { message: string }) {
+  return (
+    <Card className="border-destructive/40 bg-destructive/10 p-3">
+      <div className="text-sm font-medium">DB/API unavailable</div>
+      <div className="text-xs text-muted-foreground mt-1">{message}</div>
+    </Card>
+  );
+}
+
+function formatTemperature(value: number | undefined) {
+  return typeof value === "number" ? `${value.toFixed(1)} °C` : "—";
+}
 
 function StatTile({ label, value, icon, accent }: { label: string; value: number | string; icon: React.ReactNode; accent?: "contaminated" | "warning"; }) {
   const accentClass = accent === "contaminated" ? "border-status-contaminated/40" : accent === "warning" ? "border-status-warning/40" : "border-border";

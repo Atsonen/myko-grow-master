@@ -23,6 +23,16 @@ export async function query(sql, params = []) {
   }
 }
 
+export async function withConnection(callback) {
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    return await callback(conn);
+  } finally {
+    if (conn) conn.release();
+  }
+}
+
 export async function closeDb() {
   await pool.end();
 }
