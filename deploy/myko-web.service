@@ -1,0 +1,20 @@
+[Unit]
+Description=Myko Valvomo Web UI (production SSR build)
+After=network.target myko-backend.service
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=atte
+Group=atte
+WorkingDirectory=/opt/myko
+ExecStart=/home/atte/.nvm/versions/node/v24.15.0/bin/node /opt/myko/scripts/serve-prod.mjs
+Environment=NODE_ENV=production
+Environment=HOST=127.0.0.1
+Environment=PORT=5200
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -12,7 +12,7 @@ const CORS_ORIGIN = process.env.CORS_ORIGIN || "http://localhost:5199";
 app.use(cors({ origin: CORS_ORIGIN }));
 app.use(express.json({ limit: "50mb" }));
 
-app.get("/health", async (_req, res) => {
+app.get(["/health", "/api/health"], async (_req, res) => {
   try {
     await query("SELECT 1 AS ok");
     res.json({ ok: true, db: true, service: "myko-valvomo-backend" });
@@ -121,12 +121,16 @@ app.post("/api/unit-locations", async (req, res) => {
   res.status(201).json({ id: Number(result.insertId) });
 });
 
-app.get(
-  "/api/trends/variables",
-  asyncRoute(async (_req, res) => {
-    const [environmentRows, dataloggerRows] = await Promise.all([
-      query(
-        `SELECT
+// /api/trends/variables: full stats (COUNT/AVG over ~10M rows) are slow, so they are
+// computed in the background and cached. Requests are answered from the cache, or
+// from a fast index-only metadata query until the first full computation finishes.
+const TRENDS_STATS_REFRESH_MS = Number(process.env.TRENDS_STATS_REFRESH_SECONDS || 600) * 1000;
+const TRENDS_STATS_MAX_SECONDS = Number(process.env.TRENDS_STATS_MAX_SECONDS || 900);
+const TRENDS_FAST_MAX_SECONDS = Number(process.env.TRENDS_FAST_MAX_SECONDS || 5);
+let trendStatsCache = null;
+let trendStatsRefreshing = null;
+
+const TRENDS_ENV_FULL_SQL = `SELECT
        metric,
        location,
        sample_count,
@@ -175,10 +179,8 @@ app.get(
        WHERE archived = 0 AND co2_ppm IS NOT NULL
        GROUP BY location
      ) variables
-     ORDER BY location, metric`,
-      ),
-      query(
-        `SELECT
+     ORDER BY location, metric`;
+const TRENDS_DL_FULL_SQL = `SELECT
            v.source_id,
            v.position,
            v.variable_key,
@@ -199,13 +201,76 @@ app.get(
            ON dv.source_id = v.source_id AND dv.variable_key = v.variable_key
          WHERE v.visible = 1
          GROUP BY v.source_id, v.position, v.variable_key, v.prefix, v.name, v.unit, v.scale
-         ORDER BY v.position`,
-      ),
-    ]);
-    res.json([
-      ...environmentRows.map(mapEnvironmentTrendVariable),
-      ...dataloggerRows.map(mapDataloggerTrendVariable),
-    ]);
+         ORDER BY v.position`;
+
+const TRENDS_ENV_FAST_SQL = `SELECT m.metric, l.location, NULL AS sample_count,
+       DATE_FORMAT(l.min_ts, '%Y-%m-%dT%H:%i:%sZ') AS min_timestamp_iso,
+       DATE_FORMAT(l.max_ts, '%Y-%m-%dT%H:%i:%sZ') AS max_timestamp_iso,
+       NULL AS min_value, NULL AS max_value, NULL AS avg_value
+     FROM (SELECT location, MIN(timestamp) AS min_ts, MAX(timestamp) AS max_ts
+           FROM environment_readings GROUP BY location) l
+     CROSS JOIN (SELECT 'temperatureC' AS metric UNION ALL SELECT 'humidityRh' UNION ALL SELECT 'co2Ppm') m
+     ORDER BY l.location, m.metric`;
+
+// Loose index scan on idx_datalogger_values_variable_timestamp ("Using index for group-by").
+const TRENDS_DL_FAST_SQL = `SELECT v.source_id, v.position, v.variable_key, v.prefix, v.name, v.unit, v.scale,
+       NULL AS sample_count,
+       DATE_FORMAT(r.min_ts, '%Y-%m-%dT%H:%i:%sZ') AS min_timestamp_iso,
+       DATE_FORMAT(r.max_ts, '%Y-%m-%dT%H:%i:%sZ') AS max_timestamp_iso,
+       NULL AS min_value, NULL AS max_value, NULL AS avg_value
+     FROM datalogger_variables v
+     LEFT JOIN (SELECT source_id, variable_key, MIN(timestamp) AS min_ts, MAX(timestamp) AS max_ts
+                FROM datalogger_values GROUP BY source_id, variable_key) r
+       ON r.source_id = v.source_id AND r.variable_key = v.variable_key
+     WHERE v.visible = 1
+     ORDER BY v.position`;
+
+function withStatementTimeout(sql, seconds) {
+  return `SET STATEMENT max_statement_time=${Number(seconds)} FOR ${sql}`;
+}
+
+function buildTrendVariables(environmentRows, dataloggerRows) {
+  return [
+    ...environmentRows.map(mapEnvironmentTrendVariable),
+    ...dataloggerRows.map(mapDataloggerTrendVariable),
+  ];
+}
+
+function refreshTrendStats() {
+  if (trendStatsRefreshing) return trendStatsRefreshing;
+  const started = Date.now();
+  trendStatsRefreshing = (async () => {
+    try {
+      // Sequential to hold at most one pool connection.
+      const environmentRows = await query(withStatementTimeout(TRENDS_ENV_FULL_SQL, TRENDS_STATS_MAX_SECONDS));
+      const dataloggerRows = await query(withStatementTimeout(TRENDS_DL_FULL_SQL, TRENDS_STATS_MAX_SECONDS));
+      // Env rows lacking data are dropped by the full query; keep that behaviour.
+      trendStatsCache = { at: Date.now(), data: buildTrendVariables(environmentRows, dataloggerRows) };
+      console.log(`[trends] stats cache refreshed in ${Date.now() - started} ms`);
+    } catch (error) {
+      console.error("[trends] stats refresh failed", error?.message ?? error);
+    } finally {
+      trendStatsRefreshing = null;
+    }
+  })();
+  return trendStatsRefreshing;
+}
+
+refreshTrendStats();
+setInterval(refreshTrendStats, TRENDS_STATS_REFRESH_MS).unref();
+
+app.get(
+  "/api/trends/variables",
+  asyncRoute(async (_req, res) => {
+    if (trendStatsCache) {
+      if (Date.now() - trendStatsCache.at > TRENDS_STATS_REFRESH_MS) refreshTrendStats();
+      res.set("X-Trends-Cache", "hit");
+      return res.json(trendStatsCache.data);
+    }
+    const environmentRows = await query(withStatementTimeout(TRENDS_ENV_FAST_SQL, TRENDS_FAST_MAX_SECONDS));
+    const dataloggerRows = await query(withStatementTimeout(TRENDS_DL_FAST_SQL, TRENDS_FAST_MAX_SECONDS));
+    res.set("X-Trends-Cache", "warming");
+    res.json(buildTrendVariables(environmentRows, dataloggerRows));
   }),
 );
 
@@ -875,7 +940,7 @@ function mapEnvironmentTrendVariable(row) {
     metric,
     label: `${row.location} - ${trendMetricLabel(metric)}`,
     unit: trendMetricUnit(metric),
-    sampleCount: Number(row.sample_count),
+    sampleCount: row.sample_count === null ? 0 : Number(row.sample_count),
     from: row.min_timestamp_iso ?? new Date(row.min_timestamp).toISOString(),
     to: row.max_timestamp_iso ?? new Date(row.max_timestamp).toISOString(),
     min: row.min_value === null ? undefined : Number(row.min_value),
@@ -894,7 +959,7 @@ function mapDataloggerTrendVariable(row) {
     prefix,
     label: `${prefix} - Datalogger ${String(row.position).padStart(2, "0")} - ${row.name}`,
     unit: row.unit ?? "",
-    sampleCount: Number(row.sample_count),
+    sampleCount: row.sample_count === null ? 0 : Number(row.sample_count),
     from:
       row.min_timestamp_iso ??
       (row.min_timestamp ? new Date(row.min_timestamp).toISOString() : undefined),
