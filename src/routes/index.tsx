@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { CustomDashboard } from "@/components/dashboard/DashboardGrid";
 import { useEffect, useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatusBadge } from "@/components/common/StatusBadge";
@@ -16,7 +17,7 @@ export const Route = createFileRoute("/")({
       { name: "description", content: "Live overview of active units, contamination warnings, and recent activity." },
     ],
   }),
-  component: Dashboard,
+  component: CustomDashboard,
 });
 
 type DashboardEnvironmentReading = {
@@ -34,7 +35,8 @@ type DashboardEnvironmentReading = {
   archived?: boolean;
 };
 
-function Dashboard() {
+// Previous fixed dashboard, kept for reference (not routed).
+export function ClassicDashboard() {
   const [units, setUnits] = useState<Unit[]>([]);
   const [events, setEvents] = useState<MEvent[]>([]);
   const [transfers, setTransfers] = useState<Transfer[]>([]);

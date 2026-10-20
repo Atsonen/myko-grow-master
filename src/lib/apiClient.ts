@@ -345,3 +345,19 @@ export async function getUnitEnvironment(unitCode: string, points = 400) {
     `/api/units/${encodeURIComponent(unitCode)}/environment?points=${points}`,
   );
 }
+
+export async function getDashboardLayout<T = unknown>() {
+  return requestJson<{ id: string; layout: T | null; updatedAt: string | null }>("/api/dashboard/layout");
+}
+
+export async function saveDashboardLayout<T = unknown>(layout: T) {
+  return requestJson<{ id: string; layout: T }>("/api/dashboard/layout", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ layout }),
+  });
+}
+
+export async function resetDashboardLayout() {
+  return requestJson<{ ok: boolean }>("/api/dashboard/layout", { method: "DELETE" });
+}

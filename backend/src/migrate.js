@@ -135,6 +135,13 @@ const statements = [
     PRIMARY KEY (category, value)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 
+  `CREATE TABLE IF NOT EXISTS dashboard_layouts (
+    id VARCHAR(80) PRIMARY KEY,
+    layout_json JSON NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
   `CREATE TABLE IF NOT EXISTS trend_presets (
     id VARCHAR(80) PRIMARY KEY,
     view_key VARCHAR(40) NOT NULL DEFAULT 'myko',

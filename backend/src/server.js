@@ -278,6 +278,62 @@ app.get(
   }),
 );
 
+// Customizable dashboard layout (single user: one row with id "default").
+// Body: { widgets: [{ id, type, title?, config?, x, y, w, h }] }. GET returns layout null
+// when nothing is saved yet so the frontend can use its built-in default.
+app.get(
+  "/api/dashboard/layout",
+  asyncRoute(async (req, res) => {
+    const id = String(req.query.id || "default");
+    const [row] = await query(
+      "SELECT layout_json, DATE_FORMAT(updated_at, '%Y-%m-%dT%H:%i:%sZ') AS updated_iso FROM dashboard_layouts WHERE id = ?",
+      [id],
+    );
+    if (!row) return res.json({ id, layout: null, updatedAt: null });
+    const layout = typeof row.layout_json === "string" ? JSON.parse(row.layout_json) : row.layout_json;
+    res.json({ id, layout, updatedAt: row.updated_iso });
+  }),
+);
+
+app.put(
+  "/api/dashboard/layout",
+  asyncRoute(async (req, res) => {
+    const id = String(req.query.id || "default");
+    const layout = req.body?.layout;
+    if (!layout || !Array.isArray(layout.widgets))
+      return res.status(400).json({ error: "layout.widgets must be an array" });
+    if (layout.widgets.length > 60) return res.status(400).json({ error: "Too many widgets (max 60)" });
+    const widgets = layout.widgets.map((w) => {
+      if (!w || typeof w.id !== "string" || typeof w.type !== "string")
+        throw Object.assign(new Error("Each widget needs string id and type"), { status: 400 });
+      const n = (v, d) => (Number.isFinite(Number(v)) ? Math.max(0, Math.round(Number(v))) : d);
+      return {
+        id: w.id.slice(0, 80),
+        type: w.type.slice(0, 40),
+        title: typeof w.title === "string" ? w.title.slice(0, 160) : undefined,
+        config: w.config && typeof w.config === "object" ? w.config : {},
+        x: n(w.x, 0), y: n(w.y, 0), w: Math.max(1, n(w.w, 4)), h: Math.max(1, n(w.h, 4)),
+      };
+    });
+    const json = JSON.stringify({ version: 1, widgets });
+    if (json.length > 200_000) return res.status(400).json({ error: "Layout too large" });
+    await query(
+      `INSERT INTO dashboard_layouts (id, layout_json) VALUES (?, ?)
+       ON DUPLICATE KEY UPDATE layout_json = VALUES(layout_json)`,
+      [id, json],
+    );
+    res.json({ id, layout: { version: 1, widgets } });
+  }),
+);
+
+app.delete(
+  "/api/dashboard/layout",
+  asyncRoute(async (req, res) => {
+    await query("DELETE FROM dashboard_layouts WHERE id = ?", [String(req.query.id || "default")]);
+    res.json({ ok: true });
+  }),
+);
+
 // /api/trends/variables: full stats (COUNT/AVG over ~10M rows) are slow, so they are
 // computed in the background and cached. Requests are answered from the cache, or
 // from a fast index-only metadata query until the first full computation finishes.
