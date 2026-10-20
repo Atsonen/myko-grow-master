@@ -52,13 +52,15 @@ async function loadGraph(conn = null) {
     if (!children.has(u.parent_unit_code)) children.set(u.parent_unit_code, []); children.get(u.parent_unit_code).push(u.code);
   }
   const memo = new Map();
-  // Strain inheritance is COMPUTED (not copied): own strain, else nearest ancestor's (first parent first).
+  // Strain inheritance is COMPUTED (not copied): own strain, else the FIRST parent's effective strain.
+  // "First" = earliest unit_origins row (lowest id); never "mixed", no fallback to other parents.
   const effective = (code, seen = new Set()) => {
     if (memo.has(code)) return memo.get(code);
     const u = byCode.get(code); if (!u || seen.has(code)) return { strain: null, from: null };
     seen.add(code);
     let r = { strain: u.strain_code || null, from: u.strain_code ? code : null };
-    if (!r.strain) for (const p of parents.get(code) || []) { const e = effective(p, seen); if (e.strain) { r = e; break; } }
+    const first = (parents.get(code) || [])[0];
+    if (!r.strain && first) { const e = effective(first, seen); if (e.strain) r = e; }
     memo.set(code, r); return r;
   };
   return { units, byCode, parents, children, originsBy, effective };

@@ -72,7 +72,7 @@ export function UnitTracePanel({ unitCode, onChanged }: { unitCode: string; onCh
         )}
         <div className="text-xs">
           Strain: <span className="font-mono">{u.effectiveStrainCode ? `#${u.effectiveStrainCode}` : "—"}</span>
-          {u.strainInheritedFrom ? <span className="text-muted-foreground"> (inherited from {u.strainInheritedFrom})</span> : null}
+          {u.strainInheritedFrom ? <span className="text-muted-foreground"> (inherited via first parent from {u.strainInheritedFrom})</span> : null}
         </div>
       </section>
 
