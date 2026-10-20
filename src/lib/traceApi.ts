@@ -29,7 +29,7 @@ export interface UnitTrace {
 }
 
 const post = <T,>(url: string, body: unknown, method = "POST") =>
-  requestJson<T>(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  requestJson<T>(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ source: "ui", ...(body as object) }) });
 
 export const getUnitTrace = (code: string) => requestJson<UnitTrace>(`/api/units/${encodeURIComponent(code)}/trace`);
 export const setUnitOrigins = (code: string, origins: OriginInput[]) => post(`/api/units/${encodeURIComponent(code)}/origins`, { origins }, "PUT");
