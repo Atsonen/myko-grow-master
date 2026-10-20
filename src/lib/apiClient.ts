@@ -293,3 +293,55 @@ async function readApiError(response: Response) {
     return response.statusText;
   }
 }
+
+export async function getUnitLocationHistory(unitCode: string) {
+  return requestJson<UnitLocationRecord[]>(
+    `/api/unit-locations?unitCode=${encodeURIComponent(unitCode)}`,
+  );
+}
+
+export async function moveUnit(payload: {
+  unitCode: string;
+  location: string;
+  movedAt?: string;
+  note?: string;
+}) {
+  return requestJson<UnitLocationRecord>("/api/unit-locations", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function archiveUnitLocation(id: number | string) {
+  return requestJson<{ ok: boolean; unitCode: string; currentLocation: string | null }>(
+    `/api/unit-locations/${encodeURIComponent(String(id))}/archive`,
+    { method: "POST" },
+  );
+}
+
+export interface UnitEnvironmentPoint {
+  timestamp: string;
+  location: string;
+  temperatureC: number | null;
+  temperatureMin: number | null;
+  temperatureMax: number | null;
+  humidityRh: number | null;
+}
+
+export interface UnitEnvironment {
+  unitCode: string;
+  from: string;
+  to: string;
+  ended: boolean;
+  bucketSeconds: number;
+  periods: { location: string; from: string; to: string; assumed: boolean }[];
+  moves: UnitLocationRecord[];
+  points: UnitEnvironmentPoint[];
+}
+
+export async function getUnitEnvironment(unitCode: string, points = 400) {
+  return requestJson<UnitEnvironment>(
+    `/api/units/${encodeURIComponent(unitCode)}/environment?points=${points}`,
+  );
+}

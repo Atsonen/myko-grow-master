@@ -103,23 +103,180 @@ app.get("/api/unit-locations", async (req, res) => {
   res.json(rows.map(mapUnitLocation));
 });
 
-app.post("/api/unit-locations", async (req, res) => {
-  const body = req.body ?? {};
-  if (!body.unitCode || !body.location)
-    return res.status(400).json({ error: "unitCode and location are required" });
-  const movedAt = body.movedAt ? new Date(body.movedAt) : new Date();
-  const result = await query(
-    `INSERT INTO unit_locations (unit_code, location, moved_at, note)
-     VALUES (?, ?, ?, ?)`,
-    [
-      String(body.unitCode),
-      String(body.location).toUpperCase(),
-      toMariaDbDateTime(movedAt),
-      body.note ?? null,
-    ],
+// Moving a unit: append to unit_locations (history) AND keep units.current_location in sync
+// with the latest history row, so every view agrees on where the unit is.
+app.post(
+  "/api/unit-locations",
+  asyncRoute(async (req, res) => {
+    const body = req.body ?? {};
+    const unitCode = String(body.unitCode ?? "").trim();
+    const location = String(body.location ?? "").trim().toUpperCase();
+    if (!unitCode || !location)
+      return res.status(400).json({ error: "unitCode and location are required" });
+    const movedAt = body.movedAt ? new Date(body.movedAt) : new Date();
+    if (Number.isNaN(movedAt.getTime())) return res.status(400).json({ error: "movedAt is invalid" });
+
+    const result = await withConnection(async (conn) => {
+      await conn.beginTransaction();
+      try {
+        const units = await conn.query("SELECT code FROM units WHERE code = ? FOR UPDATE", [unitCode]);
+        if (units.length === 0) {
+          await conn.rollback();
+          return null;
+        }
+        const insert = await conn.query(
+          `INSERT INTO unit_locations (unit_code, location, moved_at, note) VALUES (?, ?, ?, ?)`,
+          [unitCode, location, toMariaDbDateTime(movedAt), body.note ? String(body.note) : null],
+        );
+        await syncUnitCurrentLocation(conn, unitCode);
+        const [row] = await conn.query("SELECT * FROM unit_locations WHERE id = ?", [insert.insertId]);
+        await conn.commit();
+        return mapUnitLocation(row);
+      } catch (error) {
+        await conn.rollback();
+        throw error;
+      }
+    });
+    if (!result) return res.status(404).json({ error: `Unit ${unitCode} not found` });
+    res.status(201).json(result);
+  }),
+);
+
+// Undo a move (soft delete) and re-sync the unit's current location.
+app.post(
+  "/api/unit-locations/:id/archive",
+  asyncRoute(async (req, res) => {
+    const id = Number(req.params.id);
+    const result = await withConnection(async (conn) => {
+      await conn.beginTransaction();
+      try {
+        const rows = await conn.query("SELECT unit_code FROM unit_locations WHERE id = ?", [id]);
+        if (rows.length === 0) {
+          await conn.rollback();
+          return null;
+        }
+        await conn.query("UPDATE unit_locations SET archived = 1 WHERE id = ?", [id]);
+        const current = await syncUnitCurrentLocation(conn, rows[0].unit_code);
+        await conn.commit();
+        return { ok: true, unitCode: rows[0].unit_code, currentLocation: current };
+      } catch (error) {
+        await conn.rollback();
+        throw error;
+      }
+    });
+    if (!result) return res.status(404).json({ error: `Location record ${id} not found` });
+    res.json(result);
+  }),
+);
+
+async function syncUnitCurrentLocation(conn, unitCode) {
+  const [latest] = await conn.query(
+    `SELECT location FROM unit_locations WHERE unit_code = ? AND archived = 0
+     ORDER BY moved_at DESC, id DESC LIMIT 1`,
+    [unitCode],
   );
-  res.status(201).json({ id: Number(result.insertId) });
-});
+  const location = latest?.location ?? null;
+  if (location !== null)
+    // Keep updated_at: it is used as a fallback "ended at" time for finished units.
+    await conn.query(
+      "UPDATE units SET current_location = ?, updated_at = updated_at WHERE code = ?",
+      [location, unitCode],
+    );
+  return location;
+}
+
+// Per-unit environment curve over the unit's lifetime, assembled from its location history.
+// Each history period [moved_at, next moved_at) is joined to environment_readings of that
+// location (readings are already tagged with location via environment_channel_map).
+app.get(
+  "/api/units/:code/environment",
+  asyncRoute(async (req, res) => {
+    const code = String(req.params.code);
+    const maxPoints = Math.min(Math.max(Number(req.query.points) || 400, 20), 2000);
+    const [unit] = await query("SELECT code, status, batch_time, updated_at, current_location FROM units WHERE code = ?", [code]);
+    if (!unit) return res.status(404).json({ error: `Unit ${code} not found` });
+
+    const start = new Date(unit.batch_time);
+    const ended = ["ARCHIVED", "DISCARDED", "HARVESTED"].includes(String(unit.status));
+    let end = new Date();
+    if (ended) {
+      // Prefer the event that ended the unit; then its latest event; then units.updated_at.
+      const [ev] = await query(
+        `SELECT MAX(CASE WHEN status_change IN ('ARCHIVED','DISCARDED','HARVESTED') THEN event_time END) AS ended_at,
+                MAX(event_time) AS last_event
+         FROM events WHERE unit_code = ? AND archived = 0`,
+        [code],
+      );
+      const endedAt = ev?.ended_at ?? ev?.last_event ?? unit.updated_at;
+      end = new Date(endedAt);
+      if (end < start) end = new Date(unit.updated_at);
+    }
+    const history = await query(
+      `SELECT id, location, moved_at, note FROM unit_locations
+       WHERE unit_code = ? AND archived = 0 ORDER BY moved_at, id`,
+      [code],
+    );
+
+    // Build periods. Before the first recorded move the location is unknown; if there is no
+    // history at all, fall back to units.current_location for the whole lifetime.
+    const periods = [];
+    if (history.length === 0 && unit.current_location) {
+      periods.push({ location: unit.current_location, from: start, to: end, assumed: true });
+    }
+    history.forEach((h, i) => {
+      const from = new Date(Math.max(new Date(h.moved_at).getTime(), start.getTime()));
+      const to = i + 1 < history.length ? new Date(history[i + 1].moved_at) : end;
+      if (to > from) periods.push({ location: h.location, from, to, assumed: false });
+    });
+
+    const spanSeconds = Math.max((end.getTime() - start.getTime()) / 1000, 60);
+    const bucketSeconds = Math.max(60, Math.ceil(spanSeconds / maxPoints));
+    const points = [];
+    for (const period of periods) {
+      const rows = await query(
+        `SET STATEMENT max_statement_time=5 FOR
+         SELECT FLOOR(UNIX_TIMESTAMP(timestamp) / ?) AS bucket,
+                AVG(CASE WHEN temperature_c > -100 THEN temperature_c END) AS t,
+                MIN(CASE WHEN temperature_c > -100 THEN temperature_c END) AS tmin,
+                MAX(CASE WHEN temperature_c > -100 THEN temperature_c END) AS tmax,
+                AVG(CASE WHEN humidity_rh >= 0 AND humidity_rh <= 100 THEN humidity_rh END) AS rh
+         FROM environment_readings
+         WHERE location = ? AND timestamp >= ? AND timestamp < ? AND archived = 0
+         GROUP BY bucket ORDER BY bucket`,
+        [bucketSeconds, period.location, toMariaDbDateTime(period.from), toMariaDbDateTime(period.to)],
+      );
+      for (const r of rows) {
+        if (r.t === null && r.rh === null) continue;
+        points.push({
+          timestamp: new Date(
+            Math.max(Number(r.bucket) * bucketSeconds * 1000, period.from.getTime()),
+          ).toISOString(),
+          location: period.location,
+          temperatureC: r.t === null ? null : Math.round(Number(r.t) * 100) / 100,
+          temperatureMin: r.tmin === null ? null : Number(r.tmin),
+          temperatureMax: r.tmax === null ? null : Number(r.tmax),
+          humidityRh: r.rh === null ? null : Math.round(Number(r.rh) * 10) / 10,
+        });
+      }
+    }
+
+    res.json({
+      unitCode: code,
+      from: start.toISOString(),
+      to: end.toISOString(),
+      ended,
+      bucketSeconds,
+      periods: periods.map((p) => ({
+        location: p.location,
+        from: p.from.toISOString(),
+        to: p.to.toISOString(),
+        assumed: p.assumed,
+      })),
+      moves: history.map(mapUnitLocation),
+      points,
+    });
+  }),
+);
 
 // /api/trends/variables: full stats (COUNT/AVG over ~10M rows) are slow, so they are
 // computed in the background and cached. Requests are answered from the cache, or
@@ -651,10 +808,25 @@ app.put(
         }
         await assertUnitReferences(conn, code, body);
 
+        // Editing "current location" is a move: record it in the location history too.
+        if (body.currentLocation) {
+          const [latest] = await conn.query(
+            `SELECT location FROM unit_locations WHERE unit_code = ? AND archived = 0
+             ORDER BY moved_at DESC, id DESC LIMIT 1`,
+            [code],
+          );
+          if (!latest || latest.location !== body.currentLocation) {
+            await conn.query(
+              "INSERT INTO unit_locations (unit_code, location, moved_at, note) VALUES (?, ?, ?, ?)",
+              [code, body.currentLocation, toMariaDbDateTime(new Date()), "Set via unit edit"],
+            );
+          }
+        }
+
         await conn.query(
           `UPDATE units
          SET type = ?, strain_code = ?, status = ?, batch_time = ?, parent_unit_code = ?,
-             substrate = ?, current_location = ?, description = ?, notes = ?
+             substrate = ?, current_location = COALESCE(?, current_location), description = ?, notes = ?
          WHERE code = ?`,
           [
             body.type,

@@ -3,6 +3,11 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
+// All DATETIME columns hold UTC. mariadb-connector 3.x decodes DATETIME using the process's
+// local time zone (it ignores timezone:"Z" for reads), which shifted every Date read by the
+// host offset (+3h in Helsinki summer). Pin the process to UTC so reads match writes.
+process.env.TZ = "UTC";
+
 export const pool = mariadb.createPool({
   host: process.env.DB_HOST || "127.0.0.1",
   port: Number(process.env.DB_PORT || 3306),

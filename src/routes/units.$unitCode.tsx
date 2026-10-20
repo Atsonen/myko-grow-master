@@ -14,6 +14,7 @@ import { IdentifierTag } from "@/components/common/IdentifierTag";
 import { StatusBadge } from "@/components/common/StatusBadge";
 import { TypeBadge } from "@/components/common/TypeBadge";
 import { EventCard } from "@/components/events/EventCard";
+import { UnitLocationPanel } from "@/components/units/UnitLocationPanel";
 import { formatDateTime, relativeTime } from "@/lib/format";
 import { identifierForUnit } from "@/lib/identifier";
 import type { MEvent, Strain, Transfer, Unit, UnitStatus } from "@/types";
@@ -252,6 +253,8 @@ function UnitDetailPage() {
               </p>
             )}
           </Card>
+
+          <UnitLocationPanel unit={unit} onMoved={() => loadData()} />
 
           <Card className="p-4 bg-card border-border">
             <div className="flex items-center gap-2 mb-3">
