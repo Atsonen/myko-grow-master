@@ -16,6 +16,8 @@ const opt = (n) => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : un
 const FILE = opt("--file");
 const APPLY = args.includes("--apply");
 const REPORT = opt("--report");
+const CARRY_STATUS = args.includes("--carry-old-status");
+const CARRY_LOCS = args.includes("--carry-old-locations");
 const EXPECT_FIELDS = Number(opt("--expect-fields") || 0);
 if (!FILE) { console.error("usage: --file <csv> [--apply] [--report out.json] [--expect-fields N]"); process.exit(2); }
 
@@ -141,21 +143,24 @@ const header = rows.shift().cells;
 const width = EXPECT_FIELDS || header.length;
 for (const r of rows) if (r.cells.length !== width) flag("row_field_count", { line: r.line, fields: r.cells.length, expected: width });
 
-// dates: parse, fill blanks/garbage from previous row, flag out-of-order values
+// dates: parse, fill blanks/garbage from previous row, fix outliers vs. neighbours
+const parsed = rows.map((r) => parseDate(r.cells[0]));
 let prev = null; const rowDates = [];
 rows.forEach((r, i) => {
-  let d = parseDate(r.cells[0]);
-  if (!d) { flag("date_unparsed", { line: r.line, value: r.cells[0], used: prev && yymmdd(prev) }); d = prev; }
-  else if (prev && (dayNum(d) < dayNum(prev) - 1 || dayNum(d) > dayNum(prev) + 120)) {
-    const next = rows.slice(i + 1).map((x) => parseDate(x.cells[0])).find(Boolean);
-    const fits = next && dayNum(d) <= dayNum(next) && dayNum(d) >= dayNum(prev);
-    if (!fits) {
-      // try year/month typo fix that lands between prev and next
-      const cands = [{ ...d, y: prev.y }, { ...d, y: next?.y ?? prev.y }, { ...d, m: prev.m, y: prev.y }].filter((c) => parseDate(`${c.d}.${c.m}.${c.y}`));
-      const ok = cands.find((c) => dayNum(c) >= dayNum(prev) && (!next || dayNum(c) <= dayNum(next)));
-      flag("date_out_of_order", { line: r.line, value: r.cells[0], used: ok ? yymmdd(ok) : yymmdd(prev) });
-      d = ok || prev;
-    }
+  let d = parsed[i];
+  if (!d) { flag("date_unparsed", { line: r.line, value: r.cells[0], used: prev && yymmdd(prev) }); rowDates.push(prev); return; }
+  const ahead = parsed.slice(i + 1, i + 4).filter(Boolean);
+  const sortedAhead = ahead.map(dayNum).sort((x, y) => x - y);
+  const nextMin = sortedAhead.length ? sortedAhead[Math.floor((sortedAhead.length - 1) / 2)] : Infinity; // median of next rows
+  const tooEarly = prev && dayNum(d) < dayNum(prev);
+  const tooLate = ahead.length >= 2 && dayNum(d) > nextMin;
+  if (tooEarly || tooLate) {
+    const lo = prev ? dayNum(prev) : -Infinity; const hi = nextMin;
+    const cands = [{ ...d, m: d.m - 1 }, { ...d, m: d.m + 1 }, { ...d, y: prev?.y }, { ...d, y: d.y - 1 }, { ...d, y: d.y + 1 }]
+      .filter((c) => c.y && parseDate(`${c.d}.${c.m}.${c.y}`));
+    const ok = cands.find((c) => dayNum(c) >= lo && dayNum(c) <= hi);
+    flag("date_out_of_order", { line: r.line, value: r.cells[0], used: ok ? yymmdd(ok) : prev && yymmdd(prev), fix: ok ? "typo-corrected" : "copied previous row" });
+    d = ok || prev;
   }
   rowDates.push(d); if (d) prev = d;
 });
@@ -193,37 +198,73 @@ for (const col of cols) {
     strain: null, parent: null, status: "ACTIVE", location: null, events: [], moves: [] });
   for (const a of [col.label, code, col.label.replace(/[\s-]/g, "").toUpperCase()]) if (!aliases.has(a)) aliases.set(a, code);
 }
-const resolve = (ref) => {
+const resolve1 = (ref) => {
   const r = ref.trim().replace(/[.,;:]$/, "");
   return aliases.get(r) || aliases.get(r.replace(/[\s-]/g, "").toUpperCase()) ||
     (/^(\d{6})-?([A-Z]+)-?(\d+)$/.test(r) ? aliases.get(r.replace(/^(\d{6})-?([A-Z]+)-?(\d+)$/, "$1-$2-$3")) : null) || null;
 };
 
+const resolve = (ref) => {
+  let r = ref.trim().replace(/[.,;:]$/, "");
+  for (let k = 0; k < 4 && r; k++) {
+    const hit = resolve1(r); if (hit) return hit;
+    const nr = r.replace(/-(?:S?\d+|\d{6})$/i, ""); if (nr === r) break; r = nr;
+  }
+  return null;
+};
+const placeholders = new Map();
+const phPlan = new Map(); // LC number -> {date}
+for (const u of units.values()) for (const cell of u.cells) {
+  const after = (cell.text.match(/\b(?:ino|tippa|siirto|from|<-)[\s:-]*([^\n]{1,60})/i) || [])[1]; if (!after) continue;
+  for (const t of after.split(/[;,\/\s]+/).filter(Boolean).slice(0, 4)) {
+    if (resolve(t)) break;
+    const m = /^LC-?(\d+)\b(?:-(\d{6}))?/i.exec(t); if (!m) continue;
+    const p = phPlan.get(m[1]) || { explicit: null, earliest: cell.date };
+    if (m[2]) p.explicit = m[2];
+    if (dayNum(cell.date) < dayNum(p.earliest)) p.earliest = cell.date;
+    phPlan.set(m[1], p); break;
+  }
+}
+function placeholderFor(ref) {
+  const m = /^LC-?(\d+)\b/i.exec(ref.trim()); if (!m || !phPlan.has(m[1])) return null;
+  const p = phPlan.get(m[1]); const date = p.explicit || yymmdd(p.earliest);
+  const code = `${date}-LC-${m[1]}`;
+  if (!placeholders.has(code)) {
+    const bd = { y: 2000 + +date.slice(0, 2), m: +date.slice(2, 4), d: +date.slice(4) };
+    units.set(code, { code, label: `LC${m[1]} (referenced only)`, column: null, type: "LC", substrate: null, batch: bd,
+      cells: [], strain: null, parent: null, status: "ACTIVE", location: null, events: [], moves: [], placeholder: true });
+    placeholders.set(code, true);
+    flag("placeholder_unit_created", { code, first_ref: ref.trim(), dated_by: p.explicit ? "date in reference" : "earliest referencing entry" });
+  }
+  return code;
+}
+const resolveText = (text, date, self) => {
+  const after = (text.match(/\b(?:ino|tippa|siirto|from|<-)[\s:-]*([^\n]{1,60})/i) || [])[1];
+  if (!after) return null;
+  const toks = after.split(/[;,\/\s]+/).filter(Boolean).slice(0, 4);
+  for (const t of toks) { const h = resolve(t); if (h && h !== self) return h; }
+  for (const t of toks) { const h = placeholderFor(t); if (h && h !== self) return h; }
+  return null;
+};
+
 // events, transfers, locations, strain hints
 const transfers = []; let evtSeq = 0;
-for (const u of units.values()) {
-  u.cells.forEach((cell, idx) => {
+for (const u of [...units.values()]) {
+  u.cells.forEach((cell) => {
     const { fn, status } = eventFunction(cell.text);
     const time = noonHelsinkiUtc(cell.date);
     const lines = cell.text.split(/\r?\n/);
     const title = lines[0].slice(0, 255);
     const ev = { id: `evt-sheet-${++evtSeq}`, fn, unit: u.code, time, title, description: lines.length > 1 || lines[0].length > 255 ? cell.text : null,
       note: `Sheet line ${cell.line}, column ${u.column} (${u.label})`, status };
-    // inoculation source: "INO <ref>", "<- ref", or a cell that is exactly another unit's label
-    const refs = [];
-    const m1 = cell.text.match(/\b(?:ino|tippa|siirto|from|<-)\s*:?\s*([A-Za-z0-9][A-Za-z0-9 \-]{1,30})/i);
-    if (m1) refs.push(m1[1].split(/\s+(?=\d+(?:[.,]\d+)?\s*ml)|\s{2,}/)[0]);
-    if (resolve(cell.text) && resolve(cell.text) !== u.code) refs.push(cell.text);
-    for (const ref of refs) {
-      let src = resolve(ref);
-      if (!src) { const tok = ref.split(/\s+/); for (let k = tok.length; k > 0 && !src; k--) src = resolve(tok.slice(0, k).join(" ")); }
-      if (src && src !== u.code) {
-        const amount = (cell.text.match(/(\d+(?:[.,]\d+)?)\s*ml/i) || [])[0] || "";
-        transfers.push({ id: `trf-sheet-${transfers.length + 1}`, source: src, target: u.code, time, amount, note: `Sheet line ${cell.line}: ${title}` });
-        if (!u.parent) u.parent = src; ev.fn = "TRF";
-      } else if (/\bino\b/i.test(cell.text)) flag("ino_reference_unresolved", { unit: u.code, line: cell.line, text: title });
-      break;
-    }
+    // inoculation source: "INO <ref>" (token scan) or a cell that is exactly another unit's label
+    let src = resolveText(cell.text, cell.date, u.code);
+    if (!src && resolve(cell.text) && resolve(cell.text) !== u.code) src = resolve(cell.text);
+    if (src) {
+      const amount = (cell.text.match(/(\d+(?:[.,]\d+)?)\s*ml/i) || [])[0] || "";
+      transfers.push({ id: `trf-sheet-${transfers.length + 1}`, source: src, target: u.code, time, amount, note: `Sheet line ${cell.line}: ${title}` });
+      if (!u.parent) u.parent = src; ev.fn = "TRF";
+    } else if (/\bino\b/i.test(cell.text)) flag("ino_reference_unresolved", { unit: u.code, line: cell.line, text: title });
     for (const loc of locationsIn(cell.text)) u.moves.push({ location: LOCATION_ALIASES[loc] || loc, raw: loc, time, line: cell.line });
     const s = strainIn(cell.text); if (s && !u.strain) u.strain = s;
     if (status) u.status = status;
@@ -238,6 +279,34 @@ for (const u of units.values()) { u.strainResolved = strainOf(u) || (defaulted++
 const rawLocs = new Set(); for (const u of units.values()) for (const m of u.moves) if (!LOCATION_ALIASES[m.raw]) rawLocs.add(m.raw);
 if (rawLocs.size) flag("unmapped_location_codes", { codes: [...rawLocs] });
 
+// ---------- compare with existing DB data (read-only) + optional carry-over ----------
+const { pool } = await import("../src/db.js");
+const oldUnits = await pool.query("SELECT code, status, type, notes, current_location FROM units");
+const oldLocs = await pool.query("SELECT unit_code, location, moved_at, note FROM unit_locations WHERE archived = 0 ORDER BY moved_at");
+const byLabel = new Map([...units.values()].map((u) => [u.label, u.code]));
+const match = new Map(); // old code -> new code
+for (const o of oldUnits) {
+  const lbl = (/Original unit label: (.+)/.exec(o.notes || "") || [])[1]?.trim();
+  const nc = units.has(o.code) ? o.code : lbl && byLabel.get(lbl);
+  if (nc) match.set(o.code, nc);
+}
+const oldDeleted = oldUnits.filter((o) => !match.has(o.code)).map((o) => ({ code: o.code, status: o.status, type: o.type }));
+const carry = { status_candidates: [], status_applied: 0, location_rows_candidates: 0, location_rows_applied: 0 };
+for (const o of oldUnits) {
+  const u = units.get(match.get(o.code)); if (!u) continue;
+  if (["ARCHIVED", "HARVESTED"].includes(o.status)) {
+    carry.status_candidates.push({ old: o.code, new: u.code, old_status: o.status, sheet_status: u.status });
+    if (CARRY_STATUS && u.status === "ACTIVE") { u.status = o.status; carry.status_applied++; }
+  }
+}
+for (const l of oldLocs) {
+  const u = units.get(match.get(l.unit_code)); if (!u) continue;
+  carry.location_rows_candidates++;
+  if (CARRY_LOCS) { u.moves.push({ location: l.location, raw: l.location, time: new Date(l.moved_at), line: `old DB (${l.note || "unit_locations"})` }); carry.location_rows_applied++; }
+}
+if (CARRY_LOCS) for (const u of units.values()) { u.moves.sort((a, b) => a.time - b.time); if (u.moves.length) u.location = u.moves[u.moves.length - 1].location; }
+if (!APPLY) await pool.end();
+
 const events = [...units.values()].flatMap((u) => u.events);
 const summary = {
   file: FILE, bytes: raw.length, md5: crypto.createHash("md5").update(raw).digest("hex"),
@@ -250,17 +319,19 @@ const summary = {
   by_strain: Object.fromEntries([...units.values()].reduce((m, u) => m.set(u.strainResolved, (m.get(u.strainResolved) || 0) + 1), new Map())),
   by_function: Object.fromEntries(events.reduce((m, e) => m.set(e.fn, (m.get(e.fn) || 0) + 1), new Map())),
   strain_defaulted_to_GT: defaulted, general_column_entries_skipped: general.length,
+  placeholder_units: [...units.values()].filter((u) => u.placeholder).length,
+  old_units: oldUnits.length, old_units_matched: match.size, old_units_deleted: oldDeleted.length,
+  carry: { ...carry, status_candidates: carry.status_candidates.length, enabled: { status: CARRY_STATUS, locations: CARRY_LOCS } },
 };
 const sample = [...units.values()].slice(0, 5).map((u) => ({ label: u.label, code: u.code, type: u.type, substrate: u.substrate, strain: u.strainResolved,
   parent: u.parent, status: u.status, location: u.location, events: u.events.slice(0, 3).map((e) => ({ fn: e.fn, time: e.time.toISOString(), title: e.title })) }));
 const anomalyCounts = Object.fromEntries(anomalies.reduce((m, a) => m.set(a.kind, (m.get(a.kind) || 0) + 1), new Map()));
 console.log(JSON.stringify({ mode: APPLY ? "APPLY" : "DRY RUN", summary, anomalyCounts, sample }, null, 2));
-if (REPORT) fs.writeFileSync(REPORT, JSON.stringify({ summary, anomalies, general, units: [...units.values()].map(({ cells, events, ...u }) => ({ ...u, events: events.length })), transfers }, null, 2));
+if (REPORT) fs.writeFileSync(REPORT, JSON.stringify({ summary, anomalies, oldDeleted, carryStatus: carry.status_candidates, general, units: [...units.values()].map(({ cells, events, ...u }) => ({ ...u, events: events.length })), transfers }, null, 2));
 if (anomalyCounts.row_field_count && APPLY) { console.error("Refusing to apply: rows with wrong field count (file is not a faithful export)."); process.exit(1); }
 if (!APPLY) process.exit(0);
 
 // ---------- apply (single transaction) ----------
-const { pool } = await import("../src/db.js");
 const conn = await pool.getConnection();
 const SENSOR = ["environment_readings", "datalogger_values", "datalogger_samples", "datalogger_variables", "environment_channel_map", "environment_sources", "trend_presets", "dashboard_layouts"];
 const count = async (t) => Number((await conn.query(`SELECT COUNT(*) n FROM \`${t}\``))[0].n);
