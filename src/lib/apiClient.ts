@@ -438,11 +438,31 @@ export interface AlarmControls {
   heat: boolean;
   cool: boolean;
   setpoint: number;
+  limits: AlarmLimits;
+  /** ISO UTC; null when alarms are enabled */
+  alarmsDisabledUntil: string | null;
   updatedBy?: string;
   updatedAt?: string;
 }
 
-export async function setAlarmControls(pointId: string, patch: Partial<Pick<AlarmControls, "on" | "heat" | "cool" | "setpoint">>) {
+/** Relative to setpoint: WARN ±/+warnDelta for warnMin, HIGH +highDelta for highMin, LOW -lowDelta for lowMin. */
+export interface AlarmLimits {
+  warnDelta: number;
+  warnMin: number;
+  warnBoth: boolean;
+  highDelta: number;
+  highMin: number;
+  lowDelta: number;
+  lowMin: number;
+}
+
+export type AlarmControlsPatch = Partial<Pick<AlarmControls, "on" | "heat" | "cool" | "setpoint">> & {
+  limits?: Partial<AlarmLimits>;
+  /** 1..1440 disables alarms for that many minutes, 0 re-enables now */
+  disableMinutes?: number;
+};
+
+export async function setAlarmControls(pointId: string, patch: AlarmControlsPatch) {
   return requestJson<{ controls: AlarmControls; word: number | null; published: boolean; publishError?: string }>(
     `/api/alarms/${encodeURIComponent(pointId)}/controls`,
     { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) },

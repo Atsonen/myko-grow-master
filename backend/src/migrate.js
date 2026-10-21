@@ -250,6 +250,16 @@ const alterStatements = [
   "ALTER TABLE datalogger_variables ADD COLUMN IF NOT EXISTS visible TINYINT(1) NOT NULL DEFAULT 1 AFTER scale",
   // 2026-10-21: user-editable display name (name stays the seeded sheet name), variable type, bit definitions
   "ALTER TABLE datalogger_variables ADD COLUMN IF NOT EXISTS display_name VARCHAR(160) NULL AFTER name",
+  // 2026-10-22: alarm limits relative to setpoint (editable) + timed alarm disable
+  "ALTER TABLE alarm_point_controls ADD COLUMN IF NOT EXISTS warn_delta DECIMAL(4,1) NOT NULL DEFAULT 1.5 AFTER setpoint",
+  "ALTER TABLE alarm_point_controls ADD COLUMN IF NOT EXISTS warn_min SMALLINT UNSIGNED NOT NULL DEFAULT 30 AFTER warn_delta",
+  "ALTER TABLE alarm_point_controls ADD COLUMN IF NOT EXISTS warn_both TINYINT(1) NOT NULL DEFAULT 1 AFTER warn_min",
+  "ALTER TABLE alarm_point_controls ADD COLUMN IF NOT EXISTS high_delta DECIMAL(4,1) NOT NULL DEFAULT 3.0 AFTER warn_both",
+  "ALTER TABLE alarm_point_controls ADD COLUMN IF NOT EXISTS high_min SMALLINT UNSIGNED NOT NULL DEFAULT 10 AFTER high_delta",
+  "ALTER TABLE alarm_point_controls ADD COLUMN IF NOT EXISTS low_delta DECIMAL(4,1) NOT NULL DEFAULT 3.0 AFTER high_min",
+  "ALTER TABLE alarm_point_controls ADD COLUMN IF NOT EXISTS low_min SMALLINT UNSIGNED NOT NULL DEFAULT 10 AFTER low_delta",
+  "ALTER TABLE alarm_point_controls ADD COLUMN IF NOT EXISTS alarms_disabled_until DATETIME NULL AFTER low_min",
+  "ALTER TABLE alarm_events MODIFY alarm VARCHAR(80) NOT NULL",
   "ALTER TABLE datalogger_variables ADD COLUMN IF NOT EXISTS var_type VARCHAR(16) NOT NULL DEFAULT 'analog' AFTER visible",
   "ALTER TABLE datalogger_variables ADD COLUMN IF NOT EXISTS bits_json JSON NULL AFTER var_type",
 ];
@@ -424,12 +434,27 @@ async function main() {
   for (const statement of statements) {
     await query(statement);
   }
+  const [hadLimits] = await query(
+    `SELECT COUNT(*) AS n FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'alarm_point_controls' AND COLUMN_NAME = 'warn_delta'`,
+  );
   const [hadVarType] = await query(
     `SELECT COUNT(*) AS n FROM information_schema.COLUMNS
      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'datalogger_variables' AND COLUMN_NAME = 'var_type'`,
   );
   for (const statement of alterStatements) {
     await query(statement);
+  }
+  if (Number(hadLimits?.n ?? 0) === 0) {
+    // One-time per-point limit defaults (relative to setpoint); afterwards edited from the dashboard.
+    await query(
+      `UPDATE alarm_point_controls SET warn_delta = 1.0, warn_min = 30, warn_both = 0, high_delta = 3.0, high_min = 10,
+         low_delta = 3.0, low_min = 3 WHERE point_id = 'ColdStorage1'`,
+    );
+    await query(
+      `UPDATE alarm_point_controls SET warn_delta = 1.5, warn_min = 30, warn_both = 1, high_delta = 3.0, high_min = 10,
+         low_delta = 3.0, low_min = 10 WHERE point_id = 'Terrario1'`,
+    );
   }
   if (Number(hadVarType?.n ?? 0) === 0) {
     await query(

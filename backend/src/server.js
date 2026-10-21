@@ -786,7 +786,8 @@ app.get(
 // PUT  /api/alarms/:pointId/controls  {on?, heat?, cool?, setpoint?}  -> stores, logs to alarm_events
 //      (event 'control'), and publishes immediately (retained): <prefix>/json and Myko/PLC (all words).
 const CTRL_SP_SHIFT = 10;
-// Myko/PLC: one retained flat JSON for the PLC, e.g. {"F1":25984,"T1":0,"Heartbeat":123}
+// Myko/PLC: one retained flat JSON for the PLC, e.g. {"F1":25984,"T1":0,"F1dis":0,"T1dis":0,"Heartbeat":123}
+// (<key>dis = alarms temporarily disabled; no free bit in the word: 0-6 alarms, 7-9 ON/HEAT/COOL, 10-14 SP, 15 heartbeat)
 // (point id -> short key; the checker uses the same map).
 const PLC_TOPIC = "Myko/PLC";
 const PLC_KEYS = { ColdStorage1: "F1", Terrario1: "T1" };
@@ -800,11 +801,36 @@ function mapControls(r) {
     heat: Boolean(r.heat),
     cool: Boolean(r.cool),
     setpoint: Number(r.setpoint),
+    limits: {
+      warnDelta: Number(r.warn_delta),
+      warnMin: Number(r.warn_min),
+      warnBoth: Boolean(r.warn_both),
+      highDelta: Number(r.high_delta),
+      highMin: Number(r.high_min),
+      lowDelta: Number(r.low_delta),
+      lowMin: Number(r.low_min),
+    },
+    alarmsDisabledUntil: r.disabled_iso && new Date(r.disabled_iso) > new Date() ? r.disabled_iso : null,
     updatedBy: r.updated_by ?? undefined,
     updatedAt: r.updated_iso ?? undefined,
   };
 }
-const CONTROL_COLS = "point_id, on_state, heat, cool, setpoint, updated_by, DATE_FORMAT(updated_at, '%Y-%m-%dT%H:%i:%sZ') AS updated_iso";
+const CONTROL_COLS =
+  "point_id, on_state, heat, cool, setpoint, warn_delta, warn_min, warn_both, high_delta, high_min, low_delta, low_min, " +
+  "DATE_FORMAT(alarms_disabled_until, '%Y-%m-%dT%H:%i:%sZ') AS disabled_iso, updated_by, DATE_FORMAT(updated_at, '%Y-%m-%dT%H:%i:%sZ') AS updated_iso";
+const LIMIT_FIELDS = [
+  ["warnDelta", "warn_delta", "WARN Δ", "delta"],
+  ["warnMin", "warn_min", "WARN min", "min"],
+  ["highDelta", "high_delta", "HIGH Δ", "delta"],
+  ["highMin", "high_min", "HIGH min", "min"],
+  ["lowDelta", "low_delta", "LOW Δ", "delta"],
+  ["lowMin", "low_min", "LOW min", "min"],
+];
+const helTime = (d) => {
+  const f = (o, x = d) => new Intl.DateTimeFormat("fi-FI", { timeZone: "Europe/Helsinki", ...o }).format(x);
+  const sameDay = f({ dateStyle: "short" }) === f({ dateStyle: "short" }, new Date());
+  return (sameDay ? "" : f({ day: "numeric", month: "numeric" }) + " ") + f({ hour: "2-digit", minute: "2-digit" }).replace(".", ":");
+};
 let mqttPub = null;
 function mqttPublisher() {
   if (!mqttPub) {
@@ -843,6 +869,19 @@ app.put(
     for (const k of ["on", "heat", "cool"]) if (k in b && typeof b[k] !== "boolean") return bad(`${k} must be true/false`);
     if ("setpoint" in b && !(Number.isInteger(b.setpoint) && b.setpoint >= 0 && b.setpoint <= 30))
       return bad("setpoint must be an integer 0..30");
+    // disableMinutes: 1..1440 disables alarms for that long; 0 re-enables now
+    if ("disableMinutes" in b && !(Number.isInteger(b.disableMinutes) && b.disableMinutes >= 0 && b.disableMinutes <= 1440))
+      return bad("disableMinutes must be an integer 0..1440 (max 24 h)");
+    const lim = b.limits ?? {};
+    if (typeof lim !== "object") return bad("limits must be an object");
+    for (const [k, , label, kind] of LIMIT_FIELDS) {
+      if (!(k in lim)) continue;
+      const v = lim[k];
+      if (kind === "delta" && !(typeof v === "number" && v >= 0.1 && v <= 20 && Math.abs(v * 10 - Math.round(v * 10)) < 1e-9))
+        return bad(`${label} must be 0.1..20 °C (0.1 steps)`);
+      if (kind === "min" && !(Number.isInteger(v) && v >= 0 && v <= 1440)) return bad(`${label} must be an integer 0..1440 min`);
+    }
+    if ("warnBoth" in lim && typeof lim.warnBoth !== "boolean") return bad("warnBoth must be true/false");
     const [pt] = await query(`SELECT id, topic_prefix, last_status, last_payload FROM alarm_points WHERE id = ?`, [pointId]);
     const [old] = await query(`SELECT ${CONTROL_COLS} FROM alarm_point_controls WHERE point_id = ?`, [pointId]);
     if (!pt || !old) return res.status(404).json({ error: "No controls for this point" });
@@ -853,16 +892,42 @@ app.put(
       cool: "cool" in b ? b.cool : prev.cool,
       setpoint: "setpoint" in b ? b.setpoint : prev.setpoint,
     };
+    const nextLim = { ...prev.limits };
+    for (const [k] of LIMIT_FIELDS) if (k in lim) nextLim[k] = lim[k];
+    if ("warnBoth" in lim) nextLim.warnBoth = lim.warnBoth;
+    if (nextLim.highDelta < nextLim.warnDelta) return bad("HIGH Δ must be ≥ WARN Δ");
+    if (nextLim.lowDelta < (nextLim.warnBoth ? nextLim.warnDelta : 0)) return bad("LOW Δ must be ≥ WARN Δ");
+    let disabledUntil = prev.alarmsDisabledUntil;
     const changes = [];
     for (const k of ["on", "heat", "cool"]) if (next[k] !== prev[k]) changes.push([k.toUpperCase(), next[k] ? 1 : 0, `${k.toUpperCase()} ${next[k] ? "on" : "off"}`]);
     if (next.setpoint !== prev.setpoint) changes.push(["SP", next.setpoint, `SP ${prev.setpoint}→${next.setpoint}`]);
+    const limChanged = [];
+    for (const [k, , label] of LIMIT_FIELDS) if (nextLim[k] !== prev.limits[k]) limChanged.push(`${label} ${prev.limits[k]}→${nextLim[k]}`);
+    if (nextLim.warnBoth !== prev.limits.warnBoth) limChanged.push(`WARN ${nextLim.warnBoth ? "±" : "+"}`);
+    if (limChanged.length) changes.push(["LIMITS", null, `Rajat: ${limChanged.join(", ")}`.slice(0, 80)]);
+    if ("disableMinutes" in b) {
+      if (b.disableMinutes === 0) {
+        if (prev.alarmsDisabledUntil) changes.push(["DIS", 0, "Hälytykset palautettu"]);
+        disabledUntil = null;
+      } else {
+        const until = new Date(Date.now() + b.disableMinutes * 60000);
+        disabledUntil = until.toISOString().slice(0, 19) + "Z";
+        changes.push(["DIS", 1, `Hälytykset pois päältä klo ${helTime(until)} asti`]);
+      }
+    }
     if (changes.length === 0) return res.json({ controls: prev, word: null, published: false });
-    const alarmBits = pt.last_status === null ? 0 : Number(pt.last_status) & 0x7f;
+    const disabled = Boolean(disabledUntil);
+    const alarmBits = pt.last_status === null || disabled ? 0 : Number(pt.last_status) & 0x7f;
     const heartbeat = pt.last_status === null ? 0 : Number(pt.last_status) & 0x8000; // bit15 owned by the checker
     const word = alarmBits | controlWord(next) | heartbeat;
     await query(
-      "UPDATE alarm_point_controls SET on_state = ?, heat = ?, cool = ?, setpoint = ?, updated_by = ? WHERE point_id = ?",
-      [next.on ? 1 : 0, next.heat ? 1 : 0, next.cool ? 1 : 0, next.setpoint, "dashboard", pointId],
+      `UPDATE alarm_point_controls SET on_state = ?, heat = ?, cool = ?, setpoint = ?, warn_delta = ?, warn_min = ?, warn_both = ?,
+         high_delta = ?, high_min = ?, low_delta = ?, low_min = ?, alarms_disabled_until = ?, updated_by = ? WHERE point_id = ?`,
+      [
+        next.on ? 1 : 0, next.heat ? 1 : 0, next.cool ? 1 : 0, next.setpoint,
+        nextLim.warnDelta, nextLim.warnMin, nextLim.warnBoth ? 1 : 0, nextLim.highDelta, nextLim.highMin, nextLim.lowDelta, nextLim.lowMin,
+        disabledUntil ? disabledUntil.replace("T", " ").replace("Z", "") : null, "dashboard", pointId,
+      ],
     );
     for (const [, value, label] of changes)
       await query(
@@ -878,6 +943,9 @@ app.put(
         ...last,
         status: word,
         alarm_bits: alarmBits,
+        ...(disabled ? { active: [] } : {}),
+        alarms_disabled: disabled,
+        alarms_disabled_until: disabledUntil,
         controls: { on: next.on ? 1 : 0, heat: next.heat ? 1 : 0, cool: next.cool ? 1 : 0, setpoint: next.setpoint },
         layout: { alarms: "0-6", ON: 7, HEAT: 8, COOL: 9, SP: "10-14", HEARTBEAT: 15 },
         control_changed: new Date().toISOString(),
@@ -885,9 +953,15 @@ app.put(
       await publishRetained(`${pt.topic_prefix}/json`, JSON.stringify(js));
       // PLC topic: {"F1":word,"T1":word,"Heartbeat":counter}
       const others = await query(`SELECT id, last_status, last_payload FROM alarm_points WHERE id IN (${PLC_ORDER.map(() => "?").join(",")})`, PLC_ORDER);
+      const disRows = await query(
+        `SELECT point_id FROM alarm_point_controls WHERE alarms_disabled_until > UTC_TIMESTAMP() AND point_id IN (${PLC_ORDER.map(() => "?").join(",")})`,
+        PLC_ORDER,
+      );
+      const disSet = new Set(disRows.map((d) => d.point_id));
       const byId = new Map(others.map((o) => [o.id, o]));
       const plc = {};
       for (const id of PLC_ORDER) plc[PLC_KEYS[id]] = id === pointId ? word : Number(byId.get(id)?.last_status ?? 0);
+      for (const id of PLC_ORDER) plc[`${PLC_KEYS[id]}dis`] = disSet.has(id) ? 1 : 0;
       plc.Heartbeat = Number(jsonCol(byId.get(PLC_ORDER[0])?.last_payload, {})?.heartbeat?.counter ?? 0);
       await publishRetained(PLC_TOPIC, JSON.stringify(plc));
     } catch (e) {

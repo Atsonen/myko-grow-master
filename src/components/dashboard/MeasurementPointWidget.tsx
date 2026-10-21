@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
-import { getAlarmEvents, getAlarmPoints, setAlarmControls, type AlarmControls, type AlarmEvent, type AlarmPoint } from "@/lib/apiClient";
+import { getAlarmEvents, getAlarmPoints, setAlarmControls, type AlarmControls, type AlarmControlsPatch, type AlarmEvent, type AlarmLimits, type AlarmPoint } from "@/lib/apiClient";
 import { toast } from "sonner";
 import { useDashboardData } from "./DashboardData";
 import type { WidgetConfigMap } from "./types";
@@ -20,8 +20,9 @@ function loadPoints(tick: number) {
   return pointsInflight;
 }
 
-export type PointLevel = "ok" | "warn" | "alarm" | "unknown";
+export type PointLevel = "ok" | "warn" | "alarm" | "unknown" | "disabled";
 export function pointLevel(p: AlarmPoint): PointLevel {
+  if (alarmsDisabled(p)) return "disabled";
   if (p.status === null) return "unknown";
   const levels = p.active.map((k) => p.bits.find((b) => b.key === k)?.level ?? "alarm");
   if (levels.includes("alarm")) return "alarm";
@@ -29,7 +30,27 @@ export function pointLevel(p: AlarmPoint): PointLevel {
   return "ok";
 }
 
+export function alarmsDisabled(p: AlarmPoint) {
+  const u = p.controls?.alarmsDisabledUntil;
+  return Boolean(u && new Date(u).getTime() > Date.now());
+}
+const hm = (iso: string) => new Date(iso).toLocaleTimeString("fi-FI", { timeZone: "Europe/Helsinki", hour: "2-digit", minute: "2-digit" });
+const n1 = (x: number) => String(Math.round(x * 10) / 10).replace(".", ",");
+/** Rule text for the setpoint-relative bits, built from the current limits. */
+function relativeRule(key: string, c: AlarmControls, unit: string): string | null {
+  const { setpoint: sp, limits: l } = c;
+  if (!l) return null;
+  if (key === "WARN")
+    return l.warnBoth
+      ? `|value − SP| > ${n1(l.warnDelta)} ${unit} (outside ${n1(sp - l.warnDelta)}…${n1(sp + l.warnDelta)}) for ${l.warnMin} min`
+      : `> SP+${n1(l.warnDelta)} = ${n1(sp + l.warnDelta)} ${unit} for ${l.warnMin} min`;
+  if (key === "HIGH") return `> SP+${n1(l.highDelta)} = ${n1(sp + l.highDelta)} ${unit} for ${l.highMin} min`;
+  if (key === "LOW") return `< SP−${n1(l.lowDelta)} = ${n1(sp - l.lowDelta)} ${unit} for ${l.lowMin} min`;
+  return null;
+}
+
 const LEVEL_STYLE: Record<PointLevel, string> = {
+  disabled: "bg-zinc-500/20 border-dashed border-zinc-400",
   ok: "bg-emerald-500/10 border-emerald-500/40",
   warn: "bg-amber-500/20 border-amber-400/70",
   alarm: "bg-red-600/25 border-red-500",
@@ -51,8 +72,8 @@ export function MeasurementPointWidget({ config }: { config: WidgetConfigMap["me
   const [evTick, setEvTick] = useState(0);
   const id = config.pointId;
 
-  const applyControls = async (patch: Partial<Pick<AlarmControls, "on" | "heat" | "cool" | "setpoint">>) => {
-    if (!id) return;
+  const applyControls = async (patch: AlarmControlsPatch): Promise<boolean> => {
+    if (!id) return false;
     setBusy(true);
     try {
       const r = await setAlarmControls(id, patch);
@@ -61,8 +82,10 @@ export function MeasurementPointWidget({ config }: { config: WidgetConfigMap["me
       const list = await getAlarmPoints();
       setPoint(list.find((p) => p.id === id) ?? null);
       setEvTick((n) => n + 1);
+      return true;
     } catch (e) {
       toast.error((e as Error).message);
+      return false;
     } finally {
       setBusy(false);
     }
@@ -89,6 +112,8 @@ export function MeasurementPointWidget({ config }: { config: WidgetConfigMap["me
   if (!point) return <div className="text-xs text-muted-foreground italic">Loading…</div>;
 
   const level = pointLevel(point);
+  const disabled = alarmsDisabled(point);
+  const active = disabled ? [] : point.active;
   const bitLevel = (k: string) => point.bits.find((b) => b.key === k)?.level ?? "alarm";
   const value = point.current?.value ?? point.alarmValue;
   const checkedAgeMin = point.checked ? (Date.now() - new Date(point.checked).getTime()) / 60_000 : Infinity;
@@ -115,10 +140,14 @@ export function MeasurementPointWidget({ config }: { config: WidgetConfigMap["me
             <span className="text-base text-muted-foreground">{point.unit}</span>
           </div>
           <div className="mt-1 flex flex-wrap gap-1.5" data-testid="mp-chips">
-            {point.active.length === 0 ? (
+            {disabled ? (
+              <span className="rounded-full bg-zinc-700 px-2.5 py-0.5 text-sm font-semibold text-white" data-testid="mp-disabled">
+                ALARMS OFF until {hm(point.controls!.alarmsDisabledUntil!)}
+              </span>
+            ) : active.length === 0 ? (
               <span className="rounded-full bg-emerald-600/80 px-2.5 py-0.5 text-sm font-medium text-white">OK</span>
             ) : (
-              point.active.map((k) => (
+              active.map((k) => (
                 <span key={k} className={`rounded-full px-2.5 py-0.5 text-sm font-semibold ${CHIP[bitLevel(k)]}`}>{k}</span>
               ))
             )}
@@ -146,7 +175,8 @@ export function MeasurementPointWidget({ config }: { config: WidgetConfigMap["me
         <div className="mt-3 space-y-3 text-sm" data-testid="mp-details">
           <div className="space-y-1">
             {point.bits.map((b) => {
-              const on = point.active.includes(b.key);
+              const on = active.includes(b.key);
+              const rule = (point.controls && relativeRule(b.key, point.controls, point.unit)) || b.rule;
               return (
                 <div key={b.bit} className="flex items-start gap-2" data-bit={b.bit} data-on={on ? "1" : "0"}>
                   <span
@@ -155,7 +185,7 @@ export function MeasurementPointWidget({ config }: { config: WidgetConfigMap["me
                   />
                   <span className={`w-20 shrink-0 font-mono ${on ? "font-semibold" : "text-muted-foreground"}`}>{b.key}</span>
                   <span className="min-w-0 flex-1 text-muted-foreground">
-                    {b.rule}
+                    {rule}
                     {on && <span className="block text-xs text-foreground">since {fmt(point.since?.[b.key])}</span>}
                   </span>
                 </div>
@@ -164,6 +194,10 @@ export function MeasurementPointWidget({ config }: { config: WidgetConfigMap["me
           </div>
           {point.controls && (
             <ControlsEditor controls={point.controls} unit={point.unit} busy={busy} onChange={applyControls} />
+          )}
+          {point.controls && <AlarmDisable controls={point.controls} busy={busy} onChange={applyControls} />}
+          {point.controls?.limits && (
+            <LimitsEditor controls={point.controls} unit={point.unit} busy={busy} onSave={(limits) => applyControls({ limits })} />
           )}
           {point.status !== null && (
             <div className="font-mono text-xs" data-testid="mp-word">
@@ -219,7 +253,7 @@ function ControlsEditor({
   controls: AlarmControls;
   unit: string;
   busy: boolean;
-  onChange: (patch: Partial<Pick<AlarmControls, "on" | "heat" | "cool" | "setpoint">>) => void;
+  onChange: (patch: AlarmControlsPatch) => void;
 }) {
   const [sp, setSp] = useState(controls.setpoint);
   useEffect(() => setSp(controls.setpoint), [controls.setpoint]);
@@ -292,6 +326,103 @@ function ControlsEditor({
           changed {fmt(controls.updatedAt)}{controls.updatedBy ? ` · ${controls.updatedBy}` : ""}
         </div>
       )}
+    </div>
+  );
+}
+
+const DISABLE_CHOICES: [number, string][] = [[30, "30 min"], [60, "1 h"], [240, "4 h"], [480, "8 h"]];
+/** Temporarily disable alarms (no WhatsApp, alarm bits 0); duration is mandatory, max 24 h. */
+function AlarmDisable({ controls, busy, onChange }: { controls: AlarmControls; busy: boolean; onChange: (p: AlarmControlsPatch) => void }) {
+  const until = controls.alarmsDisabledUntil;
+  return (
+    <div className="space-y-2 rounded-md border border-border bg-background/40 p-2" data-testid="mp-disable">
+      <div className="text-xs font-mono uppercase text-muted-foreground">Alarms</div>
+      {until ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-semibold">Disabled until {fmt(until)}</span>
+          <button type="button" disabled={busy} onClick={() => onChange({ disableMinutes: 0 })}
+            className="min-h-11 rounded-md border border-emerald-500 bg-emerald-600 px-3 text-sm font-semibold text-white disabled:opacity-50">
+            Re-enable now
+          </button>
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm">Disable for</span>
+          {DISABLE_CHOICES.map(([m, label]) => (
+            <button key={m} type="button" disabled={busy} onClick={() => onChange({ disableMinutes: m })}
+              className="min-h-11 min-w-[3.5rem] rounded-md border border-border bg-secondary/40 px-3 text-sm font-semibold disabled:opacity-50">
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="text-[11px] text-muted-foreground">Re-enabled automatically after the time is up (WhatsApp notice).</div>
+    </div>
+  );
+}
+
+/** Setpoint-relative alarm limits. Validation mirrors the backend. */
+function LimitsEditor({ controls, unit, busy, onSave }: {
+  controls: AlarmControls; unit: string; busy: boolean; onSave: (l: AlarmLimits) => Promise<boolean>;
+}) {
+  const toForm = (l: AlarmLimits) => Object.fromEntries(Object.entries(l).map(([k, v]) => [k, typeof v === "boolean" ? v : String(v)]));
+  const [f, setF] = useState<Record<string, string | boolean>>(() => toForm(controls.limits));
+  useEffect(() => setF(toForm(controls.limits)), [JSON.stringify(controls.limits)]); // eslint-disable-line react-hooks/exhaustive-deps
+  const num = (k: string) => Number(String(f[k]).replace(",", "."));
+  const errors: string[] = [];
+  for (const k of ["warnDelta", "highDelta", "lowDelta"]) {
+    const v = num(k);
+    if (!(v >= 0.1 && v <= 20) || Math.abs(v * 10 - Math.round(v * 10)) > 1e-9) errors.push(`${k.replace("Delta", "").toUpperCase()} Δ 0.1…20`);
+  }
+  for (const k of ["warnMin", "highMin", "lowMin"]) {
+    const v = num(k);
+    if (!(Number.isInteger(v) && v >= 0 && v <= 1440)) errors.push(`${k.replace("Min", "").toUpperCase()} time 0…1440 min`);
+  }
+  if (!errors.length && num("highDelta") < num("warnDelta")) errors.push("HIGH Δ must be ≥ WARN Δ");
+  if (!errors.length && f.warnBoth && num("lowDelta") < num("warnDelta")) errors.push("LOW Δ must be ≥ WARN Δ");
+  const next: AlarmLimits = {
+    warnDelta: num("warnDelta"), warnMin: num("warnMin"), warnBoth: Boolean(f.warnBoth),
+    highDelta: num("highDelta"), highMin: num("highMin"), lowDelta: num("lowDelta"), lowMin: num("lowMin"),
+  };
+  const dirty = JSON.stringify(next) !== JSON.stringify(controls.limits);
+  const sp = controls.setpoint;
+  const row = (label: string, sign: string, dk: string, mk: string, abs: number) => (
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="w-12 font-mono text-sm">{label}</span>
+      <span className="text-sm">{sign}</span>
+      <input aria-label={`${label} delta`} inputMode="decimal" value={String(f[dk])} disabled={busy}
+        onChange={(e) => setF({ ...f, [dk]: e.target.value })}
+        className="h-11 w-16 rounded-md border border-input bg-background text-center tabular-nums" />
+      <span className="text-sm text-muted-foreground">{unit} for</span>
+      <input aria-label={`${label} minutes`} inputMode="numeric" value={String(f[mk])} disabled={busy}
+        onChange={(e) => setF({ ...f, [mk]: e.target.value })}
+        className="h-11 w-16 rounded-md border border-input bg-background text-center tabular-nums" />
+      <span className="text-sm text-muted-foreground">min{Number.isFinite(abs) ? ` (${n1(abs)} ${unit})` : ""}</span>
+    </div>
+  );
+  return (
+    <div className="space-y-2 rounded-md border border-border bg-background/40 p-2" data-testid="mp-limits">
+      <div className="text-xs font-mono uppercase text-muted-foreground">Alarm limits (relative to SP {sp} {unit})</div>
+      {row("WARN", f.warnBoth ? "±" : "+", "warnDelta", "warnMin", f.warnBoth ? NaN : sp + num("warnDelta"))}
+      <label className="flex min-h-11 items-center gap-2 pl-14 text-sm">
+        <input type="checkbox" className="h-5 w-5" checked={Boolean(f.warnBoth)} disabled={busy}
+          onChange={(e) => setF({ ...f, warnBoth: e.target.checked })} />
+        WARN both directions (±)
+      </label>
+      {row("HIGH", "+", "highDelta", "highMin", sp + num("highDelta"))}
+      {row("LOW", "−", "lowDelta", "lowMin", sp - num("lowDelta"))}
+      {errors.length > 0 && <div className="text-xs text-destructive">{errors.join(" · ")}</div>}
+      <div className="flex gap-2">
+        <button type="button" disabled={busy || !dirty || errors.length > 0} onClick={() => onSave(next)}
+          className="min-h-11 rounded-md border border-sky-500 bg-sky-600 px-4 text-sm font-semibold text-white disabled:opacity-40">
+          Save limits
+        </button>
+        {dirty && (
+          <button type="button" disabled={busy} onClick={() => setF(toForm(controls.limits))}
+            className="min-h-11 rounded-md border border-border px-4 text-sm">Reset</button>
+        )}
+      </div>
+      <div className="text-[11px] text-muted-foreground">CRIT, FREEZE/COLD, FLATLINE and STALE are fixed. Checker applies changes on its next run.</div>
     </div>
   );
 }
