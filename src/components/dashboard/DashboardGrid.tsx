@@ -11,6 +11,7 @@ import { getDashboardLayout, resetDashboardLayout, saveDashboardLayout } from "@
 import { DashboardDataProvider, useDashboardData } from "./DashboardData";
 import { WidgetBody, defaultTitle } from "./widgets";
 import { WidgetSettingsDialog } from "./WidgetSettings";
+import { useIsMobile } from "@/hooks/use-mobile";
 import {
   DEFAULT_LAYOUT,
   WIDGET_META,
@@ -43,8 +44,26 @@ export function CustomDashboard() {
   );
 }
 
+/** Phone height per widget in the stacked view (desktop grid units are ignored there). */
+function mobileHeight(w: DashboardWidget): number | undefined {
+  switch (w.type) {
+    case "trend":
+    case "unitCurve":
+      return 300;
+    case "sensorLatest":
+      return 150;
+    case "statusBits":
+    case "note":
+      return undefined; // natural height
+    default:
+      return Math.min(420, Math.max(200, w.h * ROW_HEIGHT));
+  }
+}
+
 function DashboardInner() {
   const data = useDashboardData();
+  // < 768 px: read-only single column in saved desktop order; the saved grid is never touched here.
+  const isMobile = useIsMobile();
   const [saved, setSaved] = useState<DashboardLayout | null>(null);
   const [layout, setLayout] = useState<DashboardLayout>(DEFAULT_LAYOUT);
   const [isDefault, setIsDefault] = useState(true);
@@ -158,25 +177,27 @@ function DashboardInner() {
   };
 
   return (
-    <div className="p-4 space-y-3">
+    <div className="p-4 max-md:p-3 space-y-3">
       <div className="flex flex-wrap items-center gap-2">
         <h1 className="text-lg font-mono flex items-center gap-2">
           <LayoutGrid className="h-4 w-4" /> Dashboard
         </h1>
         {isDefault && !editing && <span className="text-[10px] font-mono uppercase text-muted-foreground">default layout</span>}
         <div className="ml-auto flex flex-wrap items-center gap-2">
-          <span className="text-[10px] font-mono text-muted-foreground">
+          <span className="text-[10px] max-md:text-xs font-mono text-muted-foreground">
             API: {data.status === "ok" ? "connected" : data.status}
             {data.error ? ` - ${data.error}` : ""}
           </span>
-          {!editing ? (
+          {!editing || isMobile ? (
             <>
-              <Button size="sm" variant="secondary" onClick={data.refresh}>
-                <RefreshCw className="h-3 w-3 mr-1" /> Refresh
+              <Button size="sm" variant="secondary" onClick={data.refresh} className="max-md:h-11 max-md:px-4 max-md:text-sm">
+                <RefreshCw className="h-3 w-3 mr-1 max-md:h-4 max-md:w-4" /> Refresh
               </Button>
-              <Button size="sm" variant="outline" onClick={() => setEditing(true)}>
-                <Pencil className="h-3 w-3 mr-1" /> Edit layout
-              </Button>
+              {!isMobile && (
+                <Button size="sm" variant="outline" onClick={() => setEditing(true)}>
+                  <Pencil className="h-3 w-3 mr-1" /> Edit layout
+                </Button>
+              )}
             </>
           ) : (
             <>
@@ -203,6 +224,25 @@ function DashboardInner() {
         </Card>
       )}
 
+      {isMobile ? (
+        <div className="flex flex-col gap-3" data-testid="dashboard-mobile">
+          {[...layout.widgets]
+            .sort((a, b) => a.y - b.y || a.x - b.x)
+            .map((w) => {
+              const h = mobileHeight(w);
+              return (
+                <Card key={w.id} className="flex flex-col bg-card border-border" style={h ? { height: h } : undefined} data-widget={w.type}>
+                  <div className="px-3 pt-2.5 pb-1">
+                    <h2 className="text-base font-medium leading-6 text-foreground truncate">{w.title || defaultTitle(w, labelFor)}</h2>
+                  </div>
+                  <div className={`min-h-0 flex-1 px-3 pb-3 text-sm ${h ? "overflow-auto" : ""}`}>
+                    <WidgetBody widget={w} />
+                  </div>
+                </Card>
+              );
+            })}
+        </div>
+      ) : (
       <ResponsiveGrid
         className={editing ? "myko-grid-editing" : ""}
         layout={gridItems}
@@ -245,6 +285,7 @@ function DashboardInner() {
           </div>
         ))}
       </ResponsiveGrid>
+      )}
 
       {picker && (
         <Dialog open onOpenChange={(open) => !open && setPicker(false)}>

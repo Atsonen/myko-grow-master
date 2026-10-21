@@ -19,6 +19,7 @@ import { useDashboardData } from "./DashboardData";
 import { AXIS_TICK, autoBucket, LEGEND_PROPS, resolveSeries, timeTickLabel, timeTicks, useSeriesDefaults } from "@/lib/seriesStyle";
 import { useWidth } from "@/lib/useWidth";
 import { StatusBitsWidget } from "./StatusBitsWidget";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { renderSeriesChildren } from "@/components/trends/SeriesStyleEditor";
 import { STATUSES, type DashboardWidget, type WidgetConfigMap } from "./types";
 
@@ -84,6 +85,8 @@ export function TrendWidget({ config }: { config: WidgetConfigMap["trend"] }) {
   const rangeHours = config.rangeHours ?? 24;
   const { defaults } = useSeriesDefaults();
   const [boxRef, boxWidth] = useWidth<HTMLDivElement>();
+  // Phones: tap shows the tooltip and keeps it until the next tap (hover trigger hides it on touchend).
+  const isMobile = useIsMobile();
   const [series, setSeries] = useState<Record<string, { ts: number; value: number }[]>>({});
   const [err, setErr] = useState("");
 
@@ -134,7 +137,7 @@ export function TrendWidget({ config }: { config: WidgetConfigMap["trend"] }) {
       <LineChart data={data} margin={{ top: 4, right: 0, left: -10, bottom: 0 }}>
         <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
         <XAxis dataKey="ts" type="number" scale="time" domain={["dataMin", "dataMax"]} ticks={ticks} tickFormatter={(ts: number) => timeTickLabel(ts, ticks)} tick={AXIS_TICK} interval="preserveStartEnd" />
-        <Tooltip labelFormatter={(ts) => formatDateTime(new Date(Number(ts)).toISOString())} contentStyle={{ fontSize: 11 }} />
+        <Tooltip trigger={isMobile ? "click" : "hover"} labelFormatter={(ts) => formatDateTime(new Date(Number(ts)).toISOString())} contentStyle={{ fontSize: 11 }} />
         <Legend {...LEGEND_PROPS} />
         {renderSeriesChildren(resolveSeries(ids, variables, config, defaults), config, (id) => id, { axisWidth: 36 })}
       </LineChart>

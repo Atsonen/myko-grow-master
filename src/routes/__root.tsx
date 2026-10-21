@@ -121,9 +121,9 @@ function RootComponent() {
         <div className="min-h-screen flex w-full bg-background text-foreground">
           <AppSidebar />
           <div className="flex-1 flex flex-col min-w-0">
-            <header className="h-12 flex items-center gap-2 border-b border-border px-3 bg-card/50 backdrop-blur sticky top-0 z-10">
-              <SidebarTrigger />
-              <div className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
+            <header className="h-12 max-md:h-14 flex items-center gap-2 border-b border-border px-3 bg-card/50 backdrop-blur sticky top-0 z-10">
+              <SidebarTrigger className="max-md:h-11 max-md:w-11" />
+              <div className="text-xs font-mono uppercase tracking-widest text-muted-foreground truncate">
                 Myko Valvomo / Console
               </div>
               <LiveClock />
