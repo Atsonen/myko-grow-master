@@ -206,7 +206,15 @@ const alterStatements = [
   "ALTER TABLE trend_presets ADD COLUMN IF NOT EXISTS view_key VARCHAR(40) NOT NULL DEFAULT 'myko' AFTER id",
   "ALTER TABLE datalogger_variables ADD COLUMN IF NOT EXISTS prefix VARCHAR(80) NOT NULL DEFAULT 'Sensor' AFTER variable_key",
   "ALTER TABLE datalogger_variables ADD COLUMN IF NOT EXISTS visible TINYINT(1) NOT NULL DEFAULT 1 AFTER scale",
+  // 2026-10-21: user-editable display name (name stays the seeded sheet name), variable type, bit definitions
+  "ALTER TABLE datalogger_variables ADD COLUMN IF NOT EXISTS display_name VARCHAR(160) NULL AFTER name",
+  "ALTER TABLE datalogger_variables ADD COLUMN IF NOT EXISTS var_type VARCHAR(16) NOT NULL DEFAULT 'analog' AFTER visible",
+  "ALTER TABLE datalogger_variables ADD COLUMN IF NOT EXISTS bits_json JSON NULL AFTER var_type",
 ];
+
+// Datalogger indices that carry status words (AlarmWord_1=16, BitsToDoSomething=18, AlarmWord_2=19;
+// 13/14 reserved for new words). Applied once, when var_type is first added.
+const STATUS_WORD_KEYS = ["dl13", "dl14", "dl16", "dl18", "dl19"];
 
 const dataloggerVariables = [
   { name: "T1 Temp", unit: "C", scale: 0.01 },
@@ -327,8 +335,19 @@ async function main() {
   for (const statement of statements) {
     await query(statement);
   }
+  const [hadVarType] = await query(
+    `SELECT COUNT(*) AS n FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'datalogger_variables' AND COLUMN_NAME = 'var_type'`,
+  );
   for (const statement of alterStatements) {
     await query(statement);
+  }
+  if (Number(hadVarType?.n ?? 0) === 0) {
+    await query(
+      `UPDATE datalogger_variables SET var_type = 'status', visible = 0
+       WHERE source_id = 'src-datalogger' AND variable_key IN (${STATUS_WORD_KEYS.map(() => "?").join(",")})`,
+      STATUS_WORD_KEYS,
+    );
   }
   for (const seed of seedStatements) {
     await query(seed.sql, seed.params);

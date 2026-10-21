@@ -18,6 +18,7 @@ import { formatDateTime, relativeTime } from "@/lib/format";
 import { useDashboardData } from "./DashboardData";
 import { AXIS_TICK, autoBucket, LEGEND_PROPS, resolveSeries, timeTickLabel, timeTicks, useSeriesDefaults } from "@/lib/seriesStyle";
 import { useWidth } from "@/lib/useWidth";
+import { StatusBitsWidget } from "./StatusBitsWidget";
 import { renderSeriesChildren } from "@/components/trends/SeriesStyleEditor";
 import { STATUSES, type DashboardWidget, type WidgetConfigMap } from "./types";
 
@@ -321,6 +322,8 @@ export function WidgetBody({ widget }: { widget: DashboardWidget }) {
       return <LocationSummaryWidget />;
     case "unitCurve":
       return <UnitCurveWidget config={widget.config as WidgetConfigMap["unitCurve"]} />;
+    case "statusBits":
+      return <StatusBitsWidget config={widget.config as WidgetConfigMap["statusBits"]} />;
     case "note":
       return <NoteWidget config={widget.config as WidgetConfigMap["note"]} />;
     default:
@@ -348,5 +351,7 @@ export function defaultTitle(widget: DashboardWidget, labelFor: (id: string) => 
       return `Lifetime · ${(widget.config as WidgetConfigMap["unitCurve"]).unitCode ?? "unit"}`;
     case "note":
       return "Note";
+    case "statusBits":
+      return `Status · ${(widget.config as WidgetConfigMap["statusBits"]).variableKey ?? "word"}`;
   }
 }

@@ -6,6 +6,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { useDashboardData } from "./DashboardData";
 import { autoBucket, BUCKET_OPTIONS } from "@/lib/seriesStyle";
 import { SeriesStyleEditor } from "@/components/trends/SeriesStyleEditor";
+import { dlLabel, useDataloggerVariables } from "@/lib/statusBits";
 import { STATUSES, WIDGET_META, type DashboardWidget, type WidgetConfigMap } from "./types";
 
 const selectCls = "w-full h-9 rounded-md border border-input bg-background px-2 text-sm font-mono";
@@ -38,6 +39,7 @@ export function WidgetSettingsDialog({
   onSave: (w: DashboardWidget) => void;
 }) {
   const { variables, units } = useDashboardData();
+  const dlVars = useDataloggerVariables();
   const [draft, setDraft] = useState<DashboardWidget | null>(widget);
   useEffect(() => setDraft(widget), [widget]);
   if (!draft) return null;
@@ -173,6 +175,49 @@ export function WidgetSettingsDialog({
               </select>
             </Field>
           )}
+
+          {draft.type === "statusBits" && (() => {
+            const c = cfg as WidgetConfigMap["statusBits"];
+            const words = dlVars.filter((v) => v.type === "status");
+            const word = words.find((v) => v.variableKey === c.variableKey);
+            const shown = c.bits ?? [];
+            return (
+              <>
+                <Field label="Status word">
+                  <select value={c.variableKey ?? ""} onChange={(e) => setCfg({ variableKey: e.target.value || undefined, bits: undefined })} className={selectCls}>
+                    <option value="">— select —</option>
+                    {words.map((v) => (
+                      <option key={v.variableKey} value={v.variableKey}>{v.variableKey} · {dlLabel(v)}</option>
+                    ))}
+                  </select>
+                </Field>
+                {word && (
+                  <Field label={`Bits to show (${shown.length ? shown.length : "all"})`}>
+                    <div className="max-h-48 overflow-y-auto rounded border border-border p-2 space-y-1">
+                      {word.bits.map((b) => (
+                        <label key={b.bit} className="flex items-center gap-2 text-xs">
+                          <input
+                            type="checkbox"
+                            checked={!shown.length || shown.includes(b.bit)}
+                            onChange={(e) => {
+                              const base = shown.length ? shown : word.bits.map((x) => x.bit);
+                              const next = e.target.checked ? [...base, b.bit] : base.filter((x) => x !== b.bit);
+                              setCfg({ bits: next.length === word.bits.length ? undefined : next.sort((x, y) => x - y) });
+                            }}
+                          />
+                          <span className="font-mono">bit {b.bit}</span> {b.name}
+                        </label>
+                      ))}
+                      {word.bits.length === 0 && <span className="text-xs text-muted-foreground">No bits defined — use Settings → Datalogger variables.</span>}
+                    </div>
+                  </Field>
+                )}
+                <Field label="Stale after (minutes)">
+                  <Input type="number" min={1} max={1440} value={c.staleMinutes ?? 10} onChange={(e) => setCfg({ staleMinutes: Math.max(1, Number(e.target.value) || 10) })} />
+                </Field>
+              </>
+            );
+          })()}
 
           {draft.type === "note" && (
             <Field label="Text">

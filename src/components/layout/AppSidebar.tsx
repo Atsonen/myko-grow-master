@@ -8,6 +8,7 @@ import {
   Sprout,
   Thermometer,
   TrendingUp,
+  Settings,
 } from "lucide-react";
 import {
   Sidebar,
@@ -29,6 +30,7 @@ const main = [
   { title: "Trends", url: "/trends", icon: TrendingUp },
   { title: "Events", url: "/events", icon: Activity },
   { title: "Data", url: "/data", icon: Database },
+  { title: "Settings", url: "/settings", icon: Settings },
 ];
 
 const plants = [

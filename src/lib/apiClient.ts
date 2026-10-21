@@ -88,14 +88,39 @@ export interface DataloggerVariable {
   unit: string;
   scale: number;
   visible: boolean;
+  /** analog = trendable value, status = bit word, unused = free/placeholder index */
+  type: DataloggerVariableType;
+  displayName?: string;
+  bits: StatusBitDef[];
   archived: boolean;
   description?: string;
 }
 
-export type DataloggerVariablePatch = Pick<
-  DataloggerVariable,
-  "prefix" | "scale" | "unit" | "visible"
->;
+export type DataloggerVariableType = "analog" | "status" | "unused";
+
+export interface StatusBitDef {
+  bit: number;
+  name: string;
+  onColor?: string;
+  offColor?: string;
+  invert?: boolean;
+  alarm?: boolean;
+}
+
+export type DataloggerVariablePatch = Partial<
+  Pick<DataloggerVariable, "prefix" | "scale" | "unit" | "visible" | "type" | "bits">
+> & { displayName?: string | null };
+
+export interface DataloggerLatest {
+  variableKey: string;
+  raw: number | null;
+  value: number | null;
+  timestamp: string | null;
+}
+
+export async function getDataloggerLatest(keys: string[]) {
+  return requestJson<DataloggerLatest[]>(`/api/datalogger/latest?keys=${encodeURIComponent(keys.join(","))}`);
+}
 
 export async function getStateSummary() {
   return requestJson<StateSummary>("/api/state/summary");

@@ -14,6 +14,7 @@ import { Route as TrendsRouteImport } from './routes/trends'
 import { Route as TransfersRouteImport } from './routes/transfers'
 import { Route as TaxonomyRouteImport } from './routes/taxonomy'
 import { Route as StrainsRouteImport } from './routes/strains'
+import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as QcRouteImport } from './routes/qc'
 import { Route as PlantsRouteImport } from './routes/plants'
 import { Route as LineageRouteImport } from './routes/lineage'
@@ -54,6 +55,11 @@ const TaxonomyRoute = TaxonomyRouteImport.update({
 const StrainsRoute = StrainsRouteImport.update({
   id: '/strains',
   path: '/strains',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsRoute = SettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
 const QcRoute = QcRouteImport.update({
@@ -145,6 +151,7 @@ export interface FileRoutesByFullPath {
   '/lineage': typeof LineageRouteWithChildren
   '/plants': typeof PlantsRouteWithChildren
   '/qc': typeof QcRoute
+  '/settings': typeof SettingsRoute
   '/strains': typeof StrainsRouteWithChildren
   '/taxonomy': typeof TaxonomyRoute
   '/transfers': typeof TransfersRouteWithChildren
@@ -168,6 +175,7 @@ export interface FileRoutesByTo {
   '/lineage': typeof LineageRouteWithChildren
   '/plants': typeof PlantsRouteWithChildren
   '/qc': typeof QcRoute
+  '/settings': typeof SettingsRoute
   '/strains': typeof StrainsRouteWithChildren
   '/taxonomy': typeof TaxonomyRoute
   '/transfers': typeof TransfersRouteWithChildren
@@ -192,6 +200,7 @@ export interface FileRoutesById {
   '/lineage': typeof LineageRouteWithChildren
   '/plants': typeof PlantsRouteWithChildren
   '/qc': typeof QcRoute
+  '/settings': typeof SettingsRoute
   '/strains': typeof StrainsRouteWithChildren
   '/taxonomy': typeof TaxonomyRoute
   '/transfers': typeof TransfersRouteWithChildren
@@ -217,6 +226,7 @@ export interface FileRouteTypes {
     | '/lineage'
     | '/plants'
     | '/qc'
+    | '/settings'
     | '/strains'
     | '/taxonomy'
     | '/transfers'
@@ -240,6 +250,7 @@ export interface FileRouteTypes {
     | '/lineage'
     | '/plants'
     | '/qc'
+    | '/settings'
     | '/strains'
     | '/taxonomy'
     | '/transfers'
@@ -263,6 +274,7 @@ export interface FileRouteTypes {
     | '/lineage'
     | '/plants'
     | '/qc'
+    | '/settings'
     | '/strains'
     | '/taxonomy'
     | '/transfers'
@@ -287,6 +299,7 @@ export interface RootRouteChildren {
   LineageRoute: typeof LineageRouteWithChildren
   PlantsRoute: typeof PlantsRouteWithChildren
   QcRoute: typeof QcRoute
+  SettingsRoute: typeof SettingsRoute
   StrainsRoute: typeof StrainsRouteWithChildren
   TaxonomyRoute: typeof TaxonomyRoute
   TransfersRoute: typeof TransfersRouteWithChildren
@@ -329,6 +342,13 @@ declare module '@tanstack/react-router' {
       path: '/strains'
       fullPath: '/strains'
       preLoaderRoute: typeof StrainsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings': {
+      id: '/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof SettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/qc': {
@@ -536,6 +556,7 @@ const rootRouteChildren: RootRouteChildren = {
   LineageRoute: LineageRouteWithChildren,
   PlantsRoute: PlantsRouteWithChildren,
   QcRoute: QcRoute,
+  SettingsRoute: SettingsRoute,
   StrainsRoute: StrainsRouteWithChildren,
   TaxonomyRoute: TaxonomyRoute,
   TransfersRoute: TransfersRouteWithChildren,

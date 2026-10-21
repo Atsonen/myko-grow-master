@@ -440,7 +440,7 @@ const TRENDS_DL_FULL_SQL = `SELECT
            v.position,
            v.variable_key,
            v.prefix,
-           v.name,
+           COALESCE(v.display_name, v.name) AS name,
            v.unit,
            v.scale,
            COUNT(dv.id) AS sample_count,
@@ -454,8 +454,8 @@ const TRENDS_DL_FULL_SQL = `SELECT
          FROM datalogger_variables v
          LEFT JOIN datalogger_values dv
            ON dv.source_id = v.source_id AND dv.variable_key = v.variable_key
-         WHERE v.visible = 1
-         GROUP BY v.source_id, v.position, v.variable_key, v.prefix, v.name, v.unit, v.scale
+         WHERE v.visible = 1 AND v.var_type = 'analog'
+         GROUP BY v.source_id, v.position, v.variable_key, v.prefix, v.name, v.display_name, v.unit, v.scale
          ORDER BY v.position`;
 
 const TRENDS_ENV_FAST_SQL = `SELECT m.metric, l.location, NULL AS sample_count,
@@ -468,7 +468,7 @@ const TRENDS_ENV_FAST_SQL = `SELECT m.metric, l.location, NULL AS sample_count,
      ORDER BY l.location, m.metric`;
 
 // Loose index scan on idx_datalogger_values_variable_timestamp ("Using index for group-by").
-const TRENDS_DL_FAST_SQL = `SELECT v.source_id, v.position, v.variable_key, v.prefix, v.name, v.unit, v.scale,
+const TRENDS_DL_FAST_SQL = `SELECT v.source_id, v.position, v.variable_key, v.prefix, COALESCE(v.display_name, v.name) AS name, v.unit, v.scale,
        NULL AS sample_count,
        DATE_FORMAT(r.min_ts, '%Y-%m-%dT%H:%i:%sZ') AS min_timestamp_iso,
        DATE_FORMAT(r.max_ts, '%Y-%m-%dT%H:%i:%sZ') AS max_timestamp_iso,
@@ -477,7 +477,7 @@ const TRENDS_DL_FAST_SQL = `SELECT v.source_id, v.position, v.variable_key, v.pr
      LEFT JOIN (SELECT source_id, variable_key, MIN(timestamp) AS min_ts, MAX(timestamp) AS max_ts
                 FROM datalogger_values GROUP BY source_id, variable_key) r
        ON r.source_id = v.source_id AND r.variable_key = v.variable_key
-     WHERE v.visible = 1
+     WHERE v.visible = 1 AND v.var_type = 'analog'
      ORDER BY v.position`;
 
 function withStatementTimeout(sql, seconds) {
@@ -637,36 +637,85 @@ app.get(
   "/api/datalogger/variables",
   asyncRoute(async (_req, res) => {
     const rows = await query(
-      `SELECT source_id, position, variable_key, prefix, name, unit, scale, visible, archived, description
-       FROM datalogger_variables
-       ORDER BY source_id, position`,
+      `SELECT ${DL_VAR_COLS} FROM datalogger_variables ORDER BY source_id, position`,
     );
     res.json(rows.map(mapDataloggerVariable));
   }),
 );
 
+const DL_VAR_COLS =
+  "source_id, position, variable_key, prefix, name, display_name, unit, scale, visible, var_type, bits_json, archived, description";
+
+// Partial update. Accepts prefix, scale, unit, visible, displayName, type ('analog'|'status'|'unused'),
+// bits ([{bit, name, onColor?, offColor?, invert?, alarm?}], status words only).
 app.put(
   "/api/datalogger/variables/:sourceId/:variableKey",
   asyncRoute(async (req, res) => {
     const sourceId = requiredString(req.params.sourceId, "sourceId");
     const variableKey = requiredString(req.params.variableKey, "variableKey");
-    const body = normalizeDataloggerVariablePatch(req.body);
-    await query(
-      `UPDATE datalogger_variables
-       SET prefix = ?, scale = ?, unit = ?, visible = ?
+    const sets = normalizeDataloggerVariablePatch(req.body);
+    if (sets.length === 0) return res.status(400).json({ error: "Nothing to update" });
+    const result = await query(
+      `UPDATE datalogger_variables SET ${sets.map(([c]) => `${c} = ?`).join(", ")}
        WHERE source_id = ? AND variable_key = ?`,
-      [body.prefix, body.scale, body.unit, boolToDb(body.visible), sourceId, variableKey],
+      [...sets.map(([, v]) => v), sourceId, variableKey],
     );
-    const rows = await query(
-      `SELECT source_id, position, variable_key, prefix, name, unit, scale, visible, archived, description
-       FROM datalogger_variables
-       WHERE source_id = ? AND variable_key = ?`,
-      [sourceId, variableKey],
-    );
-    if (rows.length === 0) return res.status(404).json({ error: "Datalogger variable not found" });
-    res.json(mapDataloggerVariable(rows[0]));
+    if (!result.affectedRows) return res.status(404).json({ error: "Datalogger variable not found" });
+    const [row] = await query(`SELECT ${DL_VAR_COLS} FROM datalogger_variables WHERE source_id = ? AND variable_key = ?`, [
+      sourceId,
+      variableKey,
+    ]);
+    await refreshDataloggerTrendList().catch(() => undefined);
+    res.json(mapDataloggerVariable(row));
   }),
 );
+
+// Latest raw/scaled value per datalogger variable (?keys=dl16,dl18; default all). One indexed
+// "ORDER BY timestamp DESC LIMIT 1" lookup per key.
+app.get(
+  "/api/datalogger/latest",
+  asyncRoute(async (req, res) => {
+    const vars = await query(
+      "SELECT source_id, variable_key, scale FROM datalogger_variables WHERE source_id = 'src-datalogger' ORDER BY position",
+    );
+    const wanted = String(req.query.keys || "")
+      .split(",")
+      .map((k) => k.trim())
+      .filter(Boolean);
+    const list = wanted.length ? vars.filter((v) => wanted.includes(v.variable_key)) : vars;
+    const out = [];
+    for (const v of list) {
+      const [r] = await query(
+        `SELECT raw_value, DATE_FORMAT(timestamp, '%Y-%m-%dT%H:%i:%sZ') AS ts FROM datalogger_values
+         WHERE source_id = ? AND variable_key = ? ORDER BY timestamp DESC LIMIT 1`,
+        [v.source_id, v.variable_key],
+      );
+      out.push({
+        variableKey: v.variable_key,
+        raw: r ? Number(r.raw_value) : null,
+        value: r ? Number(r.raw_value) * Number(v.scale) : null,
+        timestamp: r?.ts ?? null,
+      });
+    }
+    res.json(out);
+  }),
+);
+
+// After a variable edit, rebuild only the datalogger part of the cached trend list (fast query),
+// keeping cached stats for unchanged entries.
+async function refreshDataloggerTrendList() {
+  if (!trendStatsCache) return;
+  const rows = await query(withStatementTimeout(TRENDS_DL_FAST_SQL, TRENDS_FAST_MAX_SECONDS));
+  const old = new Map(trendStatsCache.data.map((v) => [v.id, v]));
+  const dl = rows.map(mapDataloggerTrendVariable).map((v) => {
+    const prev = old.get(v.id);
+    return prev ? { ...prev, label: v.label, unit: v.unit, prefix: v.prefix } : v;
+  });
+  trendStatsCache = {
+    ...trendStatsCache,
+    data: [...trendStatsCache.data.filter((v) => v.source !== "datalogger_values"), ...dl],
+  };
+}
 
 app.get(
   "/api/trends/presets",
@@ -1250,15 +1299,22 @@ function mapDataloggerTrendVariable(row) {
 }
 
 function mapDataloggerVariable(row) {
+  let bits = row.bits_json;
+  if (typeof bits === "string") {
+    try { bits = JSON.parse(bits); } catch { bits = []; }
+  }
   return {
     sourceId: row.source_id,
     position: Number(row.position),
     variableKey: row.variable_key,
     prefix: row.prefix ?? "Sensor",
     name: row.name,
+    displayName: row.display_name ?? undefined,
     unit: row.unit ?? "",
     scale: Number(row.scale),
     visible: Boolean(row.visible),
+    type: row.var_type ?? "analog",
+    bits: Array.isArray(bits) ? bits : [],
     archived: Boolean(row.archived),
     description: row.description ?? undefined,
   };
@@ -1537,16 +1593,48 @@ function normalizeViewKey(value) {
   throw new Error("viewKey must be myko or plants");
 }
 
+const DL_VAR_TYPES = ["analog", "status", "unused"];
+const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
 function normalizeDataloggerVariablePatch(input) {
-  if (!input || typeof input !== "object") throw new Error("JSON object is required");
-  const scale = Number(input.scale);
-  if (!Number.isFinite(scale)) throw new Error("scale must be a number");
-  return {
-    prefix: (optionalString(input.prefix) ?? "Sensor").slice(0, 80),
-    scale,
-    unit: optionalString(input.unit)?.slice(0, 40) ?? null,
-    visible: input.visible !== false,
-  };
+  if (!input || typeof input !== "object") throw Object.assign(new Error("JSON object is required"), { status: 400 });
+  const bad = (m) => Object.assign(new Error(m), { status: 400 });
+  const sets = [];
+  if ("prefix" in input) sets.push(["prefix", (optionalString(input.prefix) ?? "Sensor").slice(0, 80)]);
+  if ("scale" in input) {
+    const scale = Number(input.scale);
+    if (!Number.isFinite(scale) || scale === 0) throw bad("scale must be a non-zero number");
+    sets.push(["scale", scale]);
+  }
+  if ("unit" in input) sets.push(["unit", optionalString(input.unit)?.slice(0, 40) ?? null]);
+  if ("visible" in input) sets.push(["visible", input.visible === false ? 0 : 1]);
+  if ("displayName" in input) sets.push(["display_name", optionalString(input.displayName)?.slice(0, 160) ?? null]);
+  if ("type" in input) {
+    if (!DL_VAR_TYPES.includes(input.type)) throw bad(`type must be one of ${DL_VAR_TYPES.join(", ")}`);
+    sets.push(["var_type", input.type]);
+  }
+  if ("bits" in input) {
+    if (!Array.isArray(input.bits) || input.bits.length > 32) throw bad("bits must be an array (max 32)");
+    const seen = new Set();
+    const bits = input.bits.map((b) => {
+      const bit = Number(b?.bit);
+      if (!Number.isInteger(bit) || bit < 0 || bit > 31) throw bad("bit must be an integer 0..31");
+      if (seen.has(bit)) throw bad(`bit ${bit} defined twice`);
+      seen.add(bit);
+      const name = optionalString(b.name)?.slice(0, 80);
+      if (!name) throw bad(`bit ${bit} needs a name`);
+      return {
+        bit,
+        name,
+        ...(HEX_COLOR.test(b.onColor ?? "") ? { onColor: b.onColor.toLowerCase() } : {}),
+        ...(HEX_COLOR.test(b.offColor ?? "") ? { offColor: b.offColor.toLowerCase() } : {}),
+        ...(b.invert ? { invert: true } : {}),
+        ...(b.alarm ? { alarm: true } : {}),
+      };
+    });
+    bits.sort((a, b) => a.bit - b.bit);
+    sets.push(["bits_json", JSON.stringify(bits)]);
+  }
+  return sets;
 }
 
 function normalizeStrainBody(input, options = { requireCode: true }) {
