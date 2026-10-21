@@ -1,16 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  Area,
-  AreaChart,
-  CartesianGrid,
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
+import { BUCKET_OPTIONS, resolveSeries, useSeriesDefaults } from "@/lib/seriesStyle";
+import { renderSeriesChildren, SeriesStyleEditor } from "@/components/trends/SeriesStyleEditor";
+import { AreaChart, CartesianGrid, Legend, LineChart, ResponsiveContainer, Tooltip, XAxis } from "recharts";
 import {
   BarChart3,
   CopyPlus,
@@ -563,6 +555,9 @@ function TrendWidget({
   }, [selectedVariableKey, variableMap, widget.bucket, range.from, range.to]);
 
   const chartData = buildMultiSeriesData(series, widget.range);
+  const { defaults } = useSeriesDefaults();
+  const resolved = resolveSeries(series.map((x) => x.variable.id), variableMap, widget, defaults);
+  const selectedResolved = resolveSeries(selectedVariableIds, variableMap, widget, defaults);
   const totalPoints = series.reduce((sum, item) => sum + item.points.length, 0);
 
   const toggleVariable = (variableId: string, checked: boolean) => {
@@ -603,9 +598,9 @@ function TrendWidget({
             onChange={(event) => onChange({ bucket: event.target.value as TrendBucket })}
             className={selectCls}
           >
-            <option value="raw">Raw</option>
-            <option value="hour">Hour</option>
-            <option value="day">Day</option>
+            {BUCKET_OPTIONS.map((b) => (
+              <option key={b.value} value={b.value}>{b.label}</option>
+            ))}
           </select>
         </Field>
         <Button variant="outline" size="icon" onClick={onRemove} aria-label="Remove trend view">
@@ -638,7 +633,10 @@ function TrendWidget({
                 />
                 <span
                   className="h-2.5 w-2.5 shrink-0 rounded-[2px]"
-                  style={{ background: seriesColors[colorIndex % seriesColors.length] }}
+                  style={{
+                    background:
+                      selectedResolved[selectedIndex]?.color ?? seriesColors[colorIndex % seriesColors.length],
+                  }}
                 />
                 <span className="truncate font-mono">{item.label}</span>
               </label>
@@ -646,6 +644,17 @@ function TrendWidget({
           })}
         </div>
       </div>
+
+      {selectedVariableIds.length > 0 && (
+        <div className="rounded border border-border bg-secondary/20 p-2">
+          <SeriesStyleEditor
+            ids={selectedVariableIds}
+            variables={variables}
+            styling={widget}
+            onChange={(st) => onChange({ series: st.series, axes: st.axes })}
+          />
+        </div>
+      )}
 
       {widget.range === "custom" && (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -689,66 +698,26 @@ function TrendWidget({
         {chartData.length > 0 ? (
           <ResponsiveContainer width="100%" height="100%">
             {widget.chartType === "area" ? (
-              <AreaChart data={chartData} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
+              <AreaChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
                 <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" />
-                <XAxis
-                  dataKey="label"
-                  stroke="var(--muted-foreground)"
-                  tick={{ fontSize: 10 }}
-                  minTickGap={24}
-                />
-                <YAxis
-                  stroke="var(--muted-foreground)"
-                  tick={{ fontSize: 10 }}
-                  width={42}
-                  domain={["auto", "auto"]}
-                />
+                <XAxis dataKey="label" stroke="var(--muted-foreground)" tick={{ fontSize: 10 }} minTickGap={24} />
                 <Tooltip contentStyle={tooltipStyle} labelStyle={{ color: "var(--foreground)" }} />
-                {series.map(({ variable, points }, index) => (
-                  <Area
-                    key={variable.id}
-                    type="monotone"
-                    dataKey={seriesKey(index)}
-                    name={variable.label}
-                    stroke={seriesColors[index % seriesColors.length]}
-                    fill={seriesColors[index % seriesColors.length]}
-                    fillOpacity={0.12}
-                    dot={points.length <= 24 ? { r: 2 } : false}
-                    connectNulls
-                    strokeWidth={2}
-                    unit={variable.unit ? ` ${variable.unit}` : undefined}
-                  />
-                ))}
+                <Legend wrapperStyle={{ fontSize: 11 }} />
+                {renderSeriesChildren(resolved, widget, (_id, i) => seriesKey(i), {
+                  kind: "area", strokeWidth: 2, axisStroke: "var(--muted-foreground)",
+                  dots: (i) => (series[i]?.points.length ?? 0) <= 24,
+                })}
               </AreaChart>
             ) : (
-              <LineChart data={chartData} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
+              <LineChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
                 <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" />
-                <XAxis
-                  dataKey="label"
-                  stroke="var(--muted-foreground)"
-                  tick={{ fontSize: 10 }}
-                  minTickGap={24}
-                />
-                <YAxis
-                  stroke="var(--muted-foreground)"
-                  tick={{ fontSize: 10 }}
-                  width={42}
-                  domain={["auto", "auto"]}
-                />
+                <XAxis dataKey="label" stroke="var(--muted-foreground)" tick={{ fontSize: 10 }} minTickGap={24} />
                 <Tooltip contentStyle={tooltipStyle} labelStyle={{ color: "var(--foreground)" }} />
-                {series.map(({ variable, points }, index) => (
-                  <Line
-                    key={variable.id}
-                    type="monotone"
-                    dataKey={seriesKey(index)}
-                    name={variable.label}
-                    stroke={seriesColors[index % seriesColors.length]}
-                    dot={points.length <= 24 ? { r: 2 } : false}
-                    connectNulls
-                    strokeWidth={2}
-                    unit={variable.unit ? ` ${variable.unit}` : undefined}
-                  />
-                ))}
+                <Legend wrapperStyle={{ fontSize: 11 }} />
+                {renderSeriesChildren(resolved, widget, (_id, i) => seriesKey(i), {
+                  strokeWidth: 2, axisStroke: "var(--muted-foreground)",
+                  dots: (i) => (series[i]?.points.length ?? 0) <= 24,
+                })}
               </LineChart>
             )}
           </ResponsiveContainer>
@@ -821,7 +790,7 @@ function createWidget(variableId = ""): TrendWidgetConfig {
     variableId,
     variableIds: variableId ? [variableId] : [],
     range: "24h",
-    bucket: "raw",
+    bucket: "10m",
     chartType: "line",
   };
 }

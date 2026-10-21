@@ -22,7 +22,7 @@ export interface StateSummary {
 export type ImportMode = "upsert" | "replace";
 
 export type TrendMetric = "temperatureC" | "humidityRh" | "co2Ppm";
-export type TrendBucket = "raw" | "hour" | "day";
+export type TrendBucket = "raw" | "5m" | "10m" | "30m" | "hour" | "6h" | "day";
 
 export interface TrendVariable {
   id: string;
@@ -59,6 +59,9 @@ export interface TrendWidgetConfig {
   to?: string;
   bucket: TrendBucket;
   chartType: "line" | "area";
+  /** Widget overrides: per-series display name/color/axis, per-axis min/max. */
+  series?: Record<string, { name?: string; color?: string; axis?: "auto" | "left" | "right" }>;
+  axes?: { left?: { min?: number | null; max?: number | null }; right?: { min?: number | null; max?: number | null } };
 }
 
 export interface TrendLayout {
@@ -360,4 +363,22 @@ export async function saveDashboardLayout<T = unknown>(layout: T) {
 
 export async function resetDashboardLayout() {
   return requestJson<{ ok: boolean }>("/api/dashboard/layout", { method: "DELETE" });
+}
+
+export interface SeriesStyleDefault {
+  name?: string;
+  color?: string;
+  axis?: "left" | "right";
+}
+
+export async function getSeriesDefaults() {
+  return requestJson<{ series: Record<string, SeriesStyleDefault> }>("/api/trends/series-defaults");
+}
+
+export async function saveSeriesDefaults(series: Record<string, SeriesStyleDefault>) {
+  return requestJson<{ series: Record<string, SeriesStyleDefault> }>("/api/trends/series-defaults", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ series }),
+  });
 }

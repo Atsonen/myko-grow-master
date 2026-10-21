@@ -283,6 +283,43 @@ app.get(
   }),
 );
 
+// Global per-variable trend series defaults (display name, color, axis), reused by every
+// trend view; widgets may override. Stored as one row in dashboard_layouts.
+const SERIES_DEFAULTS_ID = "__series_defaults";
+function cleanSeriesStyles(input) {
+  const out = {};
+  if (!input || typeof input !== "object") return out;
+  for (const [k, v] of Object.entries(input).slice(0, 500)) {
+    if (!v || typeof v !== "object") continue;
+    const st = {};
+    if (typeof v.name === "string" && v.name.trim()) st.name = v.name.trim().slice(0, 120);
+    if (typeof v.color === "string" && /^#[0-9a-fA-F]{6}$/.test(v.color)) st.color = v.color.toLowerCase();
+    if (v.axis === "left" || v.axis === "right") st.axis = v.axis;
+    if (Object.keys(st).length) out[String(k).slice(0, 200)] = st;
+  }
+  return out;
+}
+app.get(
+  "/api/trends/series-defaults",
+  asyncRoute(async (_req, res) => {
+    const [row] = await query("SELECT layout_json FROM dashboard_layouts WHERE id = ?", [SERIES_DEFAULTS_ID]);
+    const j = row ? (typeof row.layout_json === "string" ? JSON.parse(row.layout_json) : row.layout_json) : {};
+    res.json({ series: j?.series ?? {} });
+  }),
+);
+app.put(
+  "/api/trends/series-defaults",
+  asyncRoute(async (req, res) => {
+    const series = cleanSeriesStyles(req.body?.series);
+    await query(
+      `INSERT INTO dashboard_layouts (id, layout_json) VALUES (?, ?)
+       ON DUPLICATE KEY UPDATE layout_json = VALUES(layout_json)`,
+      [SERIES_DEFAULTS_ID, JSON.stringify({ series })],
+    );
+    res.json({ series });
+  }),
+);
+
 // Customizable dashboard layout (single user: one row with id "default").
 // Body: { widgets: [{ id, type, title?, config?, x, y, w, h }] }. GET returns layout null
 // when nothing is saved yet so the frontend can use its built-in default.
@@ -503,6 +540,7 @@ app.get(
     if (from > to) return res.status(400).json({ error: "from must be before to" });
 
     const bucket = normalizeTrendBucket(req.query.bucket);
+    const bucketSec = TREND_BUCKET_SECONDS[bucket] ?? 3600;
     if (variable.scope === "dl") {
       const params = [
         variable.sourceId,
@@ -528,13 +566,9 @@ app.get(
       }
 
       const groupExpr =
-        bucket === "day"
-          ? "DATE_FORMAT(dv.timestamp, '%Y-%m-%d 00:00:00')"
-          : "DATE_FORMAT(dv.timestamp, '%Y-%m-%d %H:00:00')";
+        `FLOOR(UNIX_TIMESTAMP(dv.timestamp) / ${bucketSec})`;
       const timestampExpr =
-        bucket === "day"
-          ? "CONCAT(DATE_FORMAT(dv.timestamp, '%Y-%m-%d'), 'T00:00:00Z')"
-          : "CONCAT(DATE_FORMAT(dv.timestamp, '%Y-%m-%dT%H'), ':00:00Z')";
+        `DATE_FORMAT(FROM_UNIXTIME(FLOOR(UNIX_TIMESTAMP(dv.timestamp) / ${bucketSec}) * ${bucketSec}), '%Y-%m-%dT%H:%i:%sZ')`;
       const rows = await query(
         `SELECT
            ${timestampExpr} AS timestamp_iso,
@@ -575,13 +609,9 @@ app.get(
     }
 
     const groupExpr =
-      bucket === "day"
-        ? "DATE_FORMAT(timestamp, '%Y-%m-%d 00:00:00')"
-        : "DATE_FORMAT(timestamp, '%Y-%m-%d %H:00:00')";
+      `FLOOR(UNIX_TIMESTAMP(timestamp) / ${bucketSec})`;
     const timestampExpr =
-      bucket === "day"
-        ? "CONCAT(DATE_FORMAT(timestamp, '%Y-%m-%d'), 'T00:00:00Z')"
-        : "CONCAT(DATE_FORMAT(timestamp, '%Y-%m-%dT%H'), ':00:00Z')";
+      `DATE_FORMAT(FROM_UNIXTIME(FLOOR(UNIX_TIMESTAMP(timestamp) / ${bucketSec}) * ${bucketSec}), '%Y-%m-%dT%H:%i:%sZ')`;
     const rows = await query(
       `SELECT
        ${timestampExpr} AS timestamp_iso,
@@ -1482,9 +1512,12 @@ function trendMetricUnit(metric) {
   return "";
 }
 
+// Aggregation buckets for /api/trends/series. Grouping uses the existing
+// (source_id, variable_key, timestamp) / (location, timestamp) range indexes.
+const TREND_BUCKET_SECONDS = { "5m": 300, "10m": 600, "30m": 1800, hour: 3600, "6h": 21600, day: 86400 };
 function normalizeTrendBucket(value) {
-  if (value === "raw" || value === "hour" || value === "day") return value;
-  return "hour";
+  if (value === "raw" || Object.hasOwn(TREND_BUCKET_SECONDS, value)) return value;
+  return "10m";
 }
 
 function normalizeTrendPreset(input) {

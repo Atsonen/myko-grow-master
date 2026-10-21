@@ -4,6 +4,8 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useDashboardData } from "./DashboardData";
+import { autoBucket, BUCKET_OPTIONS } from "@/lib/seriesStyle";
+import { SeriesStyleEditor } from "@/components/trends/SeriesStyleEditor";
 import { STATUSES, WIDGET_META, type DashboardWidget, type WidgetConfigMap } from "./types";
 
 const selectCls = "w-full h-9 rounded-md border border-input bg-background px-2 text-sm font-mono";
@@ -58,7 +60,7 @@ export function WidgetSettingsDialog({
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="font-mono text-sm uppercase">{WIDGET_META[draft.type].label} settings</DialogTitle>
         </DialogHeader>
@@ -82,6 +84,12 @@ export function WidgetSettingsDialog({
                     {RANGES.map((r) => <option key={r.h} value={r.h}>{r.label}</option>)}
                   </select>
                 </Field>
+                <Field label="Resolution">
+                  <select value={c.bucket ?? "auto"} onChange={(e) => setCfg({ bucket: e.target.value === "auto" ? undefined : e.target.value })} className={selectCls}>
+                    <option value="auto">Auto ({BUCKET_OPTIONS.find((b) => b.value === autoBucket(c.rangeHours ?? 24))?.label})</option>
+                    {BUCKET_OPTIONS.map((b) => <option key={b.value} value={b.value}>{b.label}</option>)}
+                  </select>
+                </Field>
                 <Field label={`Variables (${ids.length} selected)`}>
                   <div className="max-h-56 overflow-y-auto rounded border border-border p-2 space-y-1">
                     {variables.map((v) => (
@@ -99,6 +107,12 @@ export function WidgetSettingsDialog({
                     {variables.length === 0 && <span className="text-xs text-muted-foreground">Loading variables…</span>}
                   </div>
                 </Field>
+                <SeriesStyleEditor
+                  ids={ids}
+                  variables={variables}
+                  styling={c}
+                  onChange={(st) => setCfg({ series: st.series, axes: st.axes })}
+                />
               </>
             );
           })()}

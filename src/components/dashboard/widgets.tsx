@@ -16,6 +16,8 @@ import { FunctionBadge } from "@/components/common/FunctionBadge";
 import { getTrendSeries, getUnitEnvironment, type TrendBucket, type UnitEnvironment } from "@/lib/apiClient";
 import { formatDateTime, relativeTime } from "@/lib/format";
 import { useDashboardData } from "./DashboardData";
+import { autoBucket, resolveSeries, useSeriesDefaults } from "@/lib/seriesStyle";
+import { renderSeriesChildren } from "@/components/trends/SeriesStyleEditor";
 import { STATUSES, type DashboardWidget, type WidgetConfigMap } from "./types";
 
 const COLORS = ["#f97316", "#38bdf8", "#a3e635", "#e879f9", "#facc15", "#f87171"];
@@ -29,11 +31,6 @@ function fmtNumber(v: number | null | undefined, digits = 1) {
   return v === null || v === undefined || Number.isNaN(v) ? "—" : v.toFixed(digits);
 }
 
-function bucketFor(rangeHours: number): TrendBucket {
-  if (rangeHours <= 12) return "raw";
-  if (rangeHours <= 24 * 21) return "hour";
-  return "day";
-}
 
 /* ---------------- Sensor latest value ---------------- */
 export function SensorLatestWidget({ config }: { config: WidgetConfigMap["sensorLatest"] }) {
@@ -83,6 +80,7 @@ export function TrendWidget({ config }: { config: WidgetConfigMap["trend"] }) {
   const { variables, tick } = useDashboardData();
   const ids = config.variableIds ?? [];
   const rangeHours = config.rangeHours ?? 24;
+  const { defaults } = useSeriesDefaults();
   const [series, setSeries] = useState<Record<string, { ts: number; value: number }[]>>({});
   const [err, setErr] = useState("");
 
@@ -91,7 +89,7 @@ export function TrendWidget({ config }: { config: WidgetConfigMap["trend"] }) {
     let cancelled = false;
     const to = new Date();
     const from = new Date(to.getTime() - rangeHours * 3600_000);
-    const bucket = bucketFor(rangeHours);
+    const bucket = !config.bucket || config.bucket === "auto" ? autoBucket(rangeHours) : config.bucket;
     Promise.all(
       ids.map((id) =>
         getTrendSeries({ variableId: id, from: from.toISOString(), to: to.toISOString(), bucket }).then(
@@ -109,7 +107,7 @@ export function TrendWidget({ config }: { config: WidgetConfigMap["trend"] }) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ids.join("|"), rangeHours, tick]);
+  }, [ids.join("|"), rangeHours, config.bucket, tick]);
 
   const data = useMemo(() => {
     const byTs = new Map<number, Record<string, number>>();
@@ -132,24 +130,12 @@ export function TrendWidget({ config }: { config: WidgetConfigMap["trend"] }) {
       : new Date(ts).toLocaleDateString(undefined, { day: "numeric", month: "numeric" });
   return (
     <ResponsiveContainer width="100%" height="100%">
-      <LineChart data={data} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
+      <LineChart data={data} margin={{ top: 4, right: 0, left: -10, bottom: 0 }}>
         <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
         <XAxis dataKey="ts" type="number" scale="time" domain={["dataMin", "dataMax"]} tickFormatter={tickFmt} tick={{ fontSize: 10 }} />
-        <YAxis tick={{ fontSize: 10 }} domain={["auto", "auto"]} />
         <Tooltip labelFormatter={(ts) => formatDateTime(new Date(Number(ts)).toISOString())} contentStyle={{ fontSize: 11 }} />
         <Legend wrapperStyle={{ fontSize: 10 }} />
-        {ids.map((id, i) => (
-          <Line
-            key={id}
-            dataKey={id}
-            name={variables.find((v) => v.id === id)?.label ?? id}
-            stroke={COLORS[i % COLORS.length]}
-            dot={false}
-            strokeWidth={1.5}
-            connectNulls
-            isAnimationActive={false}
-          />
-        ))}
+        {renderSeriesChildren(resolveSeries(ids, variables, config, defaults), config, (id) => id, { axisWidth: 36 })}
       </LineChart>
     </ResponsiveContainer>
   );

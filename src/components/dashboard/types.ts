@@ -1,4 +1,6 @@
 import type { UnitStatus } from "@/types";
+import type { TrendBucket } from "@/lib/apiClient";
+import type { TrendStyling } from "@/lib/seriesStyle";
 
 export type WidgetType =
   | "sensorLatest"
@@ -11,7 +13,8 @@ export type WidgetType =
 
 export interface WidgetConfigMap {
   sensorLatest: { variableId?: string };
-  trend: { variableIds?: string[]; rangeHours?: number };
+  /** bucket unset = auto by range (24 h → 10 min). series/axes = widget overrides. */
+  trend: { variableIds?: string[]; rangeHours?: number; bucket?: TrendBucket | "auto" } & TrendStyling;
   unitsByStatus: { mode?: "count" | "list"; status?: UnitStatus };
   recentEvents: { limit?: number; functionCode?: string };
   locationSummary: Record<string, never>;
