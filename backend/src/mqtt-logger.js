@@ -20,6 +20,12 @@ const LOG_INTERVAL_SECONDS = Number(process.env.ENV_LOG_INTERVAL_SECONDS || 60);
 const LOG_INTERVAL_MS = Math.max(1, LOG_INTERVAL_SECONDS) * 1000;
 const DATALOGGER_LOG_INTERVAL_SECONDS = Number(process.env.DATALOGGER_LOG_INTERVAL_SECONDS || 60);
 const DATALOGGER_LOG_INTERVAL_MS = Math.max(0, DATALOGGER_LOG_INTERVAL_SECONDS) * 1000;
+// Publishers send on (about) the same period as the log interval, so a message arriving a few ms
+// early must not be dropped (that lost ~1 minute in 4). Accept when elapsed >= interval - tolerance.
+const THROTTLE_TOLERANCE_MS = Number(process.env.LOG_INTERVAL_TOLERANCE_SECONDS || 5) * 1000;
+const tol = (intervalMs) => Math.max(0, intervalMs - Math.min(THROTTLE_TOLERANCE_MS, intervalMs / 2));
+const ENV_MIN_ELAPSED_MS = tol(LOG_INTERVAL_MS);
+const DATALOGGER_MIN_ELAPSED_MS = tol(DATALOGGER_LOG_INTERVAL_MS);
 
 let channelCache = [];
 let dataloggerVariableCache = [];
@@ -142,7 +148,7 @@ async function insertSensorBlockReadings(topic, payload, timestamp, channels) {
   for (const channel of channels) {
     const channelId = `${topic}/${channel.payloadKey}/${channel.metric}`;
     const lastSavedAt = lastSavedAtByChannel.get(channelId) ?? 0;
-    if (timestamp.getTime() - lastSavedAt < LOG_INTERVAL_MS) continue;
+    if (timestamp.getTime() - lastSavedAt < ENV_MIN_ELAPSED_MS) continue;
 
     const raw = payload[channel.payloadKey];
     const value = typeof raw === "number" ? raw : Number(raw);
@@ -176,7 +182,7 @@ async function insertSensorBlockReadings(topic, payload, timestamp, channels) {
 async function insertDataloggerSample(topic, payload, payloadText, timestamp, values, variables) {
   if (
     DATALOGGER_LOG_INTERVAL_MS > 0 &&
-    timestamp.getTime() - lastDataloggerSavedAt < DATALOGGER_LOG_INTERVAL_MS
+    timestamp.getTime() - lastDataloggerSavedAt < DATALOGGER_MIN_ELAPSED_MS
   ) {
     return 0;
   }
