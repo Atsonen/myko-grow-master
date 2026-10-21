@@ -230,6 +230,17 @@ const statements = [
     INDEX idx_alarm_events_point_at (point_id, at),
     CONSTRAINT fk_alarm_events_point FOREIGN KEY (point_id) REFERENCES alarm_points(id) ON DELETE CASCADE
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+  // Control values owned by Myko (ON/HEAT/COOL/SP), merged into the point's published status word.
+  `CREATE TABLE IF NOT EXISTS alarm_point_controls (
+    point_id VARCHAR(80) PRIMARY KEY,
+    on_state TINYINT(1) NOT NULL DEFAULT 1,
+    heat TINYINT(1) NOT NULL DEFAULT 0,
+    cool TINYINT(1) NOT NULL DEFAULT 0,
+    setpoint TINYINT UNSIGNED NOT NULL DEFAULT 25,
+    updated_by VARCHAR(80) NULL,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_alarm_point_controls_point FOREIGN KEY (point_id) REFERENCES alarm_points(id) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 ];
 
 const alterStatements = [
@@ -291,6 +302,28 @@ const dataloggerVariables = [
 ];
 
 const seedStatements = [
+  // Terrario 1 alarm point (checker: /home/atte/myko-ml/alarm_points_check.py), thresholds relative to setpoint SP.
+  {
+    sql: `INSERT IGNORE INTO alarm_points (id, name, topic_prefix, value_source, unit, bits_json, sort_order)
+          VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    params: [
+      "Terrario1",
+      "Terrario 1",
+      "Myko/Alarms/Terrario1",
+      "dl:src-datalogger:dl00",
+      "°C",
+      JSON.stringify([
+        { bit: 0, key: "WARN", level: "warn", rule: "|T − SP| > 1.5 °C for 30 min" },
+        { bit: 1, key: "HIGH", level: "alarm", rule: "T > SP + 3 °C for 10 min" },
+        { bit: 2, key: "CRIT", level: "alarm", rule: "> 30 °C for 3 min" },
+        { bit: 3, key: "LOW", level: "alarm", rule: "T < SP − 3 °C for 10 min" },
+        { bit: 4, key: "COLD", level: "alarm", rule: "< 15 °C for 3 min" },
+        { bit: 5, key: "FLATLINE", level: "warn", rule: "value unchanged for 15 min" },
+        { bit: 6, key: "STALE", level: "warn", rule: "no data for 10 min" },
+      ]),
+      20,
+    ],
+  },
   // Kylmäsäilytystila 1 alarm point (checker: /home/atte/myko-ml/cold_alarm_check.py). INSERT IGNORE keeps user edits.
   {
     sql: `INSERT IGNORE INTO alarm_points (id, name, topic_prefix, value_source, unit, bits_json, sort_order)
@@ -313,6 +346,9 @@ const seedStatements = [
       10,
     ],
   },
+  // Default controls (INSERT IGNORE: user changes persist). ColdStorage1 SP 8, Terrario1 SP 25.
+  { sql: "INSERT IGNORE INTO alarm_point_controls (point_id, on_state, heat, cool, setpoint, updated_by) VALUES ('ColdStorage1', 1, 0, 0, 8, 'migration')", params: [] },
+  { sql: "INSERT IGNORE INTO alarm_point_controls (point_id, on_state, heat, cool, setpoint, updated_by) VALUES ('Terrario1', 1, 0, 0, 25, 'migration')", params: [] },
   // Event function INOC (inoculation) added 2026-10-20
   { sql: "INSERT IGNORE INTO taxonomy_terms (category, value) VALUES ('functions', 'INOC')", params: [] },
   // Predefined locations and substrates (dropdowns; backend rejects unknown codes) – 2026-10-20

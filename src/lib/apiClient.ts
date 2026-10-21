@@ -430,13 +430,30 @@ export interface AlarmPoint {
   checked: string | null;
   lastMessageAt: string | null;
   current: { value: number; timestamp: string } | null;
+  controls: AlarmControls | null;
+}
+
+export interface AlarmControls {
+  on: boolean;
+  heat: boolean;
+  cool: boolean;
+  setpoint: number;
+  updatedBy?: string;
+  updatedAt?: string;
+}
+
+export async function setAlarmControls(pointId: string, patch: Partial<Pick<AlarmControls, "on" | "heat" | "cool" | "setpoint">>) {
+  return requestJson<{ controls: AlarmControls; word: number | null; published: boolean; publishError?: string }>(
+    `/api/alarms/${encodeURIComponent(pointId)}/controls`,
+    { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) },
+  );
 }
 
 export interface AlarmEvent {
   id: number;
   alarm: string;
   bit: number | null;
-  event: "start" | "clear";
+  event: "start" | "clear" | "control";
   at: string;
   value: number | null;
   statusWord: number | null;

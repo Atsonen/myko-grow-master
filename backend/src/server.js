@@ -1,6 +1,7 @@
 import cors from "cors";
 import dotenv from "dotenv";
 import express from "express";
+import mqtt from "mqtt";
 import { query, withConnection } from "./db.js";
 import { normalizeOrigins, registerTraceRoutes, writeOrigins } from "./trace.js";
 
@@ -745,8 +746,11 @@ app.get(
   "/api/alarms/points",
   asyncRoute(async (_req, res) => {
     const rows = await query(`SELECT ${ALARM_POINT_COLS} FROM alarm_points WHERE enabled = 1 ORDER BY sort_order, name`);
+    const ctrl = new Map(
+      (await query(`SELECT ${CONTROL_COLS} FROM alarm_point_controls`)).map((c) => [c.point_id, mapControls(c)]),
+    );
     const out = [];
-    for (const r of rows) out.push(mapAlarmPoint(r, await alarmPointValue(r.value_source)));
+    for (const r of rows) out.push({ ...mapAlarmPoint(r, await alarmPointValue(r.value_source)), controls: ctrl.get(r.id) ?? null });
     res.json(out);
   }),
 );
@@ -772,6 +776,126 @@ app.get(
         statusWord: r.status_word === null ? null : Number(r.status_word),
       })),
     );
+  }),
+);
+
+// ---- Alarm point controls (ON/HEAT/COOL/SP), owned by Myko ----
+// Word layout: bits 0-6 alarms (from the checker), bit7 ON, bit8 HEAT, bit9 COOL, bits10-14 SP (0-30),
+// bit15 heartbeat (toggled by the checker every minute; kept as-is here).
+// GET  /api/alarms/:pointId/controls
+// PUT  /api/alarms/:pointId/controls  {on?, heat?, cool?, setpoint?}  -> stores, logs to alarm_events
+//      (event 'control'), and publishes immediately (retained): <prefix>/json and Myko/PLC (all words).
+const CTRL_SP_SHIFT = 10;
+// Myko/PLC: one retained flat JSON for the PLC, e.g. {"F1":25984,"T1":0,"Heartbeat":123}
+// (point id -> short key; the checker uses the same map).
+const PLC_TOPIC = "Myko/PLC";
+const PLC_KEYS = { ColdStorage1: "F1", Terrario1: "T1" };
+const PLC_ORDER = Object.keys(PLC_KEYS);
+function controlWord(c) {
+  return ((c.on ? 1 : 0) << 7) | ((c.heat ? 1 : 0) << 8) | ((c.cool ? 1 : 0) << 9) | ((c.setpoint & 0x1f) << CTRL_SP_SHIFT);
+}
+function mapControls(r) {
+  return {
+    on: Boolean(r.on_state),
+    heat: Boolean(r.heat),
+    cool: Boolean(r.cool),
+    setpoint: Number(r.setpoint),
+    updatedBy: r.updated_by ?? undefined,
+    updatedAt: r.updated_iso ?? undefined,
+  };
+}
+const CONTROL_COLS = "point_id, on_state, heat, cool, setpoint, updated_by, DATE_FORMAT(updated_at, '%Y-%m-%dT%H:%i:%sZ') AS updated_iso";
+let mqttPub = null;
+function mqttPublisher() {
+  if (!mqttPub) {
+    mqttPub = mqtt.connect(process.env.MQTT_URL || "mqtt://192.168.1.51:1883", {
+      clientId: `myko-backend-controls-${process.pid}`,
+      reconnectPeriod: 5000,
+    });
+    mqttPub.on("error", (e) => console.error("[controls mqtt]", e.message));
+  }
+  return mqttPub;
+}
+function publishRetained(topic, message) {
+  const c = mqttPublisher();
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error("MQTT publish timeout")), 8000);
+    c.publish(topic, message, { qos: 1, retain: true }, (err) => {
+      clearTimeout(t);
+      err ? reject(err) : resolve();
+    });
+  });
+}
+app.get(
+  "/api/alarms/:pointId/controls",
+  asyncRoute(async (req, res) => {
+    const [r] = await query(`SELECT ${CONTROL_COLS} FROM alarm_point_controls WHERE point_id = ?`, [req.params.pointId]);
+    if (!r) return res.status(404).json({ error: "No controls for this point" });
+    res.json(mapControls(r));
+  }),
+);
+app.put(
+  "/api/alarms/:pointId/controls",
+  asyncRoute(async (req, res) => {
+    const pointId = req.params.pointId;
+    const b = req.body ?? {};
+    const bad = (m) => res.status(400).json({ error: m });
+    for (const k of ["on", "heat", "cool"]) if (k in b && typeof b[k] !== "boolean") return bad(`${k} must be true/false`);
+    if ("setpoint" in b && !(Number.isInteger(b.setpoint) && b.setpoint >= 0 && b.setpoint <= 30))
+      return bad("setpoint must be an integer 0..30");
+    const [pt] = await query(`SELECT id, topic_prefix, last_status, last_payload FROM alarm_points WHERE id = ?`, [pointId]);
+    const [old] = await query(`SELECT ${CONTROL_COLS} FROM alarm_point_controls WHERE point_id = ?`, [pointId]);
+    if (!pt || !old) return res.status(404).json({ error: "No controls for this point" });
+    const prev = mapControls(old);
+    const next = {
+      on: "on" in b ? b.on : prev.on,
+      heat: "heat" in b ? b.heat : prev.heat,
+      cool: "cool" in b ? b.cool : prev.cool,
+      setpoint: "setpoint" in b ? b.setpoint : prev.setpoint,
+    };
+    const changes = [];
+    for (const k of ["on", "heat", "cool"]) if (next[k] !== prev[k]) changes.push([k.toUpperCase(), next[k] ? 1 : 0, `${k.toUpperCase()} ${next[k] ? "on" : "off"}`]);
+    if (next.setpoint !== prev.setpoint) changes.push(["SP", next.setpoint, `SP ${prev.setpoint}→${next.setpoint}`]);
+    if (changes.length === 0) return res.json({ controls: prev, word: null, published: false });
+    const alarmBits = pt.last_status === null ? 0 : Number(pt.last_status) & 0x7f;
+    const heartbeat = pt.last_status === null ? 0 : Number(pt.last_status) & 0x8000; // bit15 owned by the checker
+    const word = alarmBits | controlWord(next) | heartbeat;
+    await query(
+      "UPDATE alarm_point_controls SET on_state = ?, heat = ?, cool = ?, setpoint = ?, updated_by = ? WHERE point_id = ?",
+      [next.on ? 1 : 0, next.heat ? 1 : 0, next.cool ? 1 : 0, next.setpoint, "dashboard", pointId],
+    );
+    for (const [, value, label] of changes)
+      await query(
+        "INSERT INTO alarm_events (point_id, alarm, bit, event, at, value, status_word) VALUES (?, ?, NULL, 'control', UTC_TIMESTAMP(3), ?, ?)",
+        [pointId, label, value, word],
+      );
+    // Publish the merged word now (the checker re-publishes the same layout every minute).
+    let published = true;
+    let publishError;
+    try {
+      const last = jsonCol(pt.last_payload, {}) ?? {};
+      const js = {
+        ...last,
+        status: word,
+        alarm_bits: alarmBits,
+        controls: { on: next.on ? 1 : 0, heat: next.heat ? 1 : 0, cool: next.cool ? 1 : 0, setpoint: next.setpoint },
+        layout: { alarms: "0-6", ON: 7, HEAT: 8, COOL: 9, SP: "10-14", HEARTBEAT: 15 },
+        control_changed: new Date().toISOString(),
+      };
+      await publishRetained(`${pt.topic_prefix}/json`, JSON.stringify(js));
+      // PLC topic: {"F1":word,"T1":word,"Heartbeat":counter}
+      const others = await query(`SELECT id, last_status, last_payload FROM alarm_points WHERE id IN (${PLC_ORDER.map(() => "?").join(",")})`, PLC_ORDER);
+      const byId = new Map(others.map((o) => [o.id, o]));
+      const plc = {};
+      for (const id of PLC_ORDER) plc[PLC_KEYS[id]] = id === pointId ? word : Number(byId.get(id)?.last_status ?? 0);
+      plc.Heartbeat = Number(jsonCol(byId.get(PLC_ORDER[0])?.last_payload, {})?.heartbeat?.counter ?? 0);
+      await publishRetained(PLC_TOPIC, JSON.stringify(plc));
+    } catch (e) {
+      published = false;
+      publishError = e.message;
+    }
+    const [r] = await query(`SELECT ${CONTROL_COLS} FROM alarm_point_controls WHERE point_id = ?`, [pointId]);
+    res.json({ controls: mapControls(r), word, published, publishError });
   }),
 );
 

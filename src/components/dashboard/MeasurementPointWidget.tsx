@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
-import { getAlarmEvents, getAlarmPoints, type AlarmEvent, type AlarmPoint } from "@/lib/apiClient";
+import { getAlarmEvents, getAlarmPoints, setAlarmControls, type AlarmControls, type AlarmEvent, type AlarmPoint } from "@/lib/apiClient";
+import { toast } from "sonner";
 import { useDashboardData } from "./DashboardData";
 import type { WidgetConfigMap } from "./types";
 
@@ -46,7 +47,26 @@ export function MeasurementPointWidget({ config }: { config: WidgetConfigMap["me
   const [events, setEvents] = useState<AlarmEvent[]>([]);
   const [open, setOpen] = useState(false);
   const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [evTick, setEvTick] = useState(0);
   const id = config.pointId;
+
+  const applyControls = async (patch: Partial<Pick<AlarmControls, "on" | "heat" | "cool" | "setpoint">>) => {
+    if (!id) return;
+    setBusy(true);
+    try {
+      const r = await setAlarmControls(id, patch);
+      if (!r.published) toast.error(`Saved, but MQTT publish failed: ${r.publishError ?? "unknown"}`);
+      pointsCache = null;
+      const list = await getAlarmPoints();
+      setPoint(list.find((p) => p.id === id) ?? null);
+      setEvTick((n) => n + 1);
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   useEffect(() => {
     if (!id) return;
@@ -62,7 +82,7 @@ export function MeasurementPointWidget({ config }: { config: WidgetConfigMap["me
     let cancelled = false;
     getAlarmEvents(id, 20).then((e) => !cancelled && setEvents(e)).catch(() => undefined);
     return () => { cancelled = true; };
-  }, [id, open, tick, point?.status]);
+  }, [id, open, tick, point?.status, evTick]);
 
   if (!id) return <div className="text-xs text-muted-foreground italic">Pick a measurement point in widget settings.</div>;
   if (err) return <div className="text-xs text-destructive">{err}</div>;
@@ -102,6 +122,16 @@ export function MeasurementPointWidget({ config }: { config: WidgetConfigMap["me
                 <span key={k} className={`rounded-full px-2.5 py-0.5 text-sm font-semibold ${CHIP[bitLevel(k)]}`}>{k}</span>
               ))
             )}
+            {point.controls && (
+              <span className="flex flex-wrap gap-1.5" data-testid="mp-controls-compact">
+                <span className={`rounded-full px-2.5 py-0.5 text-sm font-medium ${point.controls.on ? "bg-sky-600 text-white" : "bg-zinc-600 text-zinc-200"}`}>
+                  {point.controls.on ? "ON" : "OFF"}
+                </span>
+                {point.controls.heat && <span className="rounded-full bg-orange-500 px-2.5 py-0.5 text-sm font-medium text-black">HEAT</span>}
+                {point.controls.cool && <span className="rounded-full bg-cyan-400 px-2.5 py-0.5 text-sm font-medium text-black">COOL</span>}
+                <span className="rounded-full border border-border px-2.5 py-0.5 text-sm">SP {point.controls.setpoint} {point.unit}</span>
+              </span>
+            )}
             {checkedAgeMin > 5 && (
               <span className="rounded-full bg-secondary px-2.5 py-0.5 text-sm text-muted-foreground" title="Alarm checker has not reported recently">
                 checker {fmt(point.checked)}
@@ -132,6 +162,14 @@ export function MeasurementPointWidget({ config }: { config: WidgetConfigMap["me
               );
             })}
           </div>
+          {point.controls && (
+            <ControlsEditor controls={point.controls} unit={point.unit} busy={busy} onChange={applyControls} />
+          )}
+          {point.status !== null && (
+            <div className="font-mono text-xs" data-testid="mp-word">
+              word {point.status} = {(point.status >>> 0).toString(2).padStart(16, "0").replace(/(.{4})(?=.)/g, "$1 ")}
+            </div>
+          )}
           <div className="text-xs text-muted-foreground">
             Reading {fmt(point.current?.timestamp ?? point.lastReading)} · checked {fmt(point.checked)} · word {point.status ?? "—"}
           </div>
@@ -144,18 +182,114 @@ export function MeasurementPointWidget({ config }: { config: WidgetConfigMap["me
                 {events.map((e) => (
                   <li key={e.id} className="flex flex-wrap items-center gap-x-2">
                     <span className="w-28 shrink-0 tabular-nums text-muted-foreground">{fmt(e.at)}</span>
-                    <span
-                      className={`rounded px-1.5 text-xs font-semibold ${e.event === "start" ? CHIP[bitLevel(e.alarm)] : "bg-secondary text-foreground"}`}
-                    >
-                      {e.alarm}
-                    </span>
-                    <span>{e.event === "start" ? "started" : "cleared"}</span>
-                    {e.value !== null && <span className="text-muted-foreground">{e.value.toFixed(1)} {point.unit}</span>}
+                    {e.event === "control" ? (
+                      <>
+                        <span className="rounded bg-sky-700 px-1.5 text-xs font-semibold text-white">CTRL</span>
+                        <span>{e.alarm}</span>
+                      </>
+                    ) : (
+                      <>
+                        <span
+                          className={`rounded px-1.5 text-xs font-semibold ${e.event === "start" ? CHIP[bitLevel(e.alarm)] : "bg-secondary text-foreground"}`}
+                        >
+                          {e.alarm}
+                        </span>
+                        <span>{e.event === "start" ? "started" : "cleared"}</span>
+                        {e.value !== null && <span className="text-muted-foreground">{e.value.toFixed(1)} {point.unit}</span>}
+                      </>
+                    )}
                   </li>
                 ))}
               </ul>
             )}
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** ON/HEAT/COOL toggles and setpoint stepper (0-30). 44 px touch targets. */
+function ControlsEditor({
+  controls,
+  unit,
+  busy,
+  onChange,
+}: {
+  controls: AlarmControls;
+  unit: string;
+  busy: boolean;
+  onChange: (patch: Partial<Pick<AlarmControls, "on" | "heat" | "cool" | "setpoint">>) => void;
+}) {
+  const [sp, setSp] = useState(controls.setpoint);
+  useEffect(() => setSp(controls.setpoint), [controls.setpoint]);
+  const toggle = (k: "on" | "heat" | "cool", label: string, onCls: string) => (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={controls[k]}
+      aria-label={label}
+      disabled={busy}
+      onClick={() => onChange({ [k]: !controls[k] })}
+      className={`min-h-11 min-w-[4.5rem] rounded-md border px-3 text-sm font-semibold transition-colors disabled:opacity-50 ${
+        controls[k] ? onCls : "border-border bg-secondary/40 text-muted-foreground"
+      }`}
+    >
+      {label} {controls[k] ? "●" : "○"}
+    </button>
+  );
+  const commitSp = (v: number) => {
+    const n = Math.max(0, Math.min(30, Math.round(v)));
+    setSp(n);
+    if (n !== controls.setpoint) onChange({ setpoint: n });
+  };
+  return (
+    <div className="space-y-2 rounded-md border border-border bg-background/40 p-2" data-testid="mp-controls">
+      <div className="text-xs font-mono uppercase text-muted-foreground">Controls</div>
+      <div className="flex flex-wrap gap-2">
+        {toggle("on", "ON", "border-sky-500 bg-sky-600 text-white")}
+        {toggle("heat", "HEAT", "border-orange-400 bg-orange-500 text-black")}
+        {toggle("cool", "COOL", "border-cyan-300 bg-cyan-400 text-black")}
+      </div>
+      <div className="flex items-center gap-2">
+        <span className="text-sm">Setpoint</span>
+        <button
+          type="button"
+          aria-label="Setpoint down"
+          disabled={busy || sp <= 0}
+          onClick={() => commitSp(sp - 1)}
+          className="h-11 w-11 rounded-md border border-border text-xl disabled:opacity-40"
+        >
+          −
+        </button>
+        <input
+          aria-label="Setpoint"
+          type="number"
+          inputMode="numeric"
+          min={0}
+          max={30}
+          step={1}
+          value={sp}
+          disabled={busy}
+          onChange={(e) => setSp(Number(e.target.value))}
+          onBlur={() => commitSp(sp)}
+          onKeyDown={(e) => e.key === "Enter" && commitSp(sp)}
+          className="h-11 w-16 rounded-md border border-input bg-background text-center text-lg tabular-nums"
+        />
+        <button
+          type="button"
+          aria-label="Setpoint up"
+          disabled={busy || sp >= 30}
+          onClick={() => commitSp(sp + 1)}
+          className="h-11 w-11 rounded-md border border-border text-xl disabled:opacity-40"
+        >
+          +
+        </button>
+        <span className="text-sm text-muted-foreground">{unit}</span>
+      </div>
+      {controls.updatedAt && (
+        <div className="text-[11px] text-muted-foreground">
+          changed {fmt(controls.updatedAt)}{controls.updatedBy ? ` · ${controls.updatedBy}` : ""}
         </div>
       )}
     </div>
