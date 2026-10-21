@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { Settings, X } from "lucide-react";
+import * as DialogPrimitive from "@radix-ui/react-dialog";
+import * as TabsPrimitive from "@radix-ui/react-tabs";
 import { getAlarmEvents, getAlarmPoints, setAlarmControls, type AlarmControls, type AlarmControlsPatch, type AlarmEvent, type AlarmLimits, type AlarmPoint } from "@/lib/apiClient";
 import { toast } from "sonner";
 import { useDashboardData } from "./DashboardData";
@@ -103,7 +105,7 @@ export function MeasurementPointWidget({ config }: { config: WidgetConfigMap["me
   useEffect(() => {
     if (!id || !open) return;
     let cancelled = false;
-    getAlarmEvents(id, 20).then((e) => !cancelled && setEvents(e)).catch(() => undefined);
+    getAlarmEvents(id, 50).then((e) => !cancelled && setEvents(e)).catch(() => undefined);
     return () => { cancelled = true; };
   }, [id, open, tick, point?.status, evTick]);
 
@@ -118,19 +120,10 @@ export function MeasurementPointWidget({ config }: { config: WidgetConfigMap["me
   const value = point.current?.value ?? point.alarmValue;
   const checkedAgeMin = point.checked ? (Date.now() - new Date(point.checked).getTime()) / 60_000 : Infinity;
 
+  const TAB = "min-h-11 flex-1 rounded-md px-3 text-sm font-semibold text-muted-foreground data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow";
   return (
-    <div
-      className={`rounded-md border-2 p-3 transition-colors ${LEVEL_STYLE[level]} ${open ? "" : "h-full"}`}
-      data-testid="measurement-point"
-      data-level={level}
-    >
-      <button
-        type="button"
-        className="flex w-full min-h-11 items-start gap-3 text-left"
-        onClick={() => setOpen(!open)}
-        aria-expanded={open}
-        aria-label={`${point.name}: ${open ? "hide" : "show"} details`}
-      >
+    <div className={`h-full rounded-md border-2 p-3 transition-colors ${LEVEL_STYLE[level]}`} data-testid="measurement-point" data-level={level}>
+      <div className="flex w-full items-start gap-3">
         <div className="min-w-0 flex-1">
           <div className="truncate text-base font-medium" data-testid="mp-name">{config.name || point.name}</div>
           <div className="flex items-baseline gap-1">
@@ -168,77 +161,119 @@ export function MeasurementPointWidget({ config }: { config: WidgetConfigMap["me
             )}
           </div>
         </div>
-        {open ? <ChevronUp className="mt-1 h-5 w-5 shrink-0" /> : <ChevronDown className="mt-1 h-5 w-5 shrink-0" />}
-      </button>
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          aria-label={`${point.name}: asetukset`}
+          data-testid="mp-gear"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md border border-border bg-background/40 hover:bg-secondary"
+        >
+          <Settings className="h-5 w-5" />
+        </button>
+      </div>
 
-      {open && (
-        <div className="mt-3 space-y-3 text-sm" data-testid="mp-details">
-          <div className="space-y-1">
-            {point.bits.map((b) => {
-              const on = active.includes(b.key);
-              const rule = (point.controls && relativeRule(b.key, point.controls, point.unit)) || b.rule;
-              return (
-                <div key={b.bit} className="flex items-start gap-2" data-bit={b.bit} data-on={on ? "1" : "0"}>
-                  <span
-                    className="mt-1 h-3.5 w-3.5 shrink-0 rounded-full"
-                    style={{ background: on ? (b.level === "alarm" ? "#ef4444" : "#f59e0b") : "#3f3f46" }}
-                  />
-                  <span className={`w-20 shrink-0 font-mono ${on ? "font-semibold" : "text-muted-foreground"}`}>{b.key}</span>
-                  <span className="min-w-0 flex-1 text-muted-foreground">
-                    {rule}
-                    {on && <span className="block text-xs text-foreground">since {fmt(point.since?.[b.key])}</span>}
-                  </span>
+      <DialogPrimitive.Root open={open} onOpenChange={setOpen}>
+        <DialogPrimitive.Portal>
+          <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/70" data-testid="mp-backdrop" />
+          <DialogPrimitive.Content
+            data-testid="mp-dialog"
+            aria-describedby={undefined}
+            className="fixed z-50 flex flex-col border bg-background shadow-lg inset-0 md:inset-auto md:left-1/2 md:top-1/2 md:h-[min(85vh,760px)] md:w-[min(92vw,720px)] md:-translate-x-1/2 md:-translate-y-1/2 md:rounded-lg"
+          >
+            <div className={`flex items-center gap-3 border-b-2 p-3 ${LEVEL_STYLE[level]}`}>
+              <div className="min-w-0 flex-1">
+                <DialogPrimitive.Title className="truncate text-lg font-semibold">{config.name || point.name}</DialogPrimitive.Title>
+                <div className="text-sm text-muted-foreground tabular-nums">
+                  {value === null || value === undefined ? "—" : value.toFixed(1)} {point.unit}
+                  {point.controls ? ` · SP ${point.controls.setpoint} ${point.unit}` : ""}
+                  {disabled ? ` · hälytykset pois ${hm(point.controls!.alarmsDisabledUntil!)} asti` : active.length ? ` · ${active.join(", ")}` : " · OK"}
                 </div>
-              );
-            })}
-          </div>
-          {point.controls && (
-            <ControlsEditor controls={point.controls} unit={point.unit} busy={busy} onChange={applyControls} />
-          )}
-          {point.controls && <AlarmDisable controls={point.controls} busy={busy} onChange={applyControls} />}
-          {point.controls?.limits && (
-            <LimitsEditor controls={point.controls} unit={point.unit} busy={busy} onSave={(limits) => applyControls({ limits })} />
-          )}
-          {point.status !== null && (
-            <div className="font-mono text-xs" data-testid="mp-word">
-              word {point.status} = {(point.status >>> 0).toString(2).padStart(16, "0").replace(/(.{4})(?=.)/g, "$1 ")}
+              </div>
+              <DialogPrimitive.Close aria-label="Sulje" data-testid="mp-close" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md border border-border hover:bg-secondary">
+                <X className="h-5 w-5" />
+              </DialogPrimitive.Close>
             </div>
-          )}
-          <div className="text-xs text-muted-foreground">
-            Reading {fmt(point.current?.timestamp ?? point.lastReading)} · checked {fmt(point.checked)} · word {point.status ?? "—"}
-          </div>
-          <div>
-            <div className="mb-1 text-xs font-mono uppercase text-muted-foreground">Recent events</div>
-            {events.length === 0 ? (
-              <div className="text-xs italic text-muted-foreground">No alarm events recorded yet.</div>
-            ) : (
-              <ul className="space-y-0.5" data-testid="mp-events">
-                {events.map((e) => (
-                  <li key={e.id} className="flex flex-wrap items-center gap-x-2">
-                    <span className="w-28 shrink-0 tabular-nums text-muted-foreground">{fmt(e.at)}</span>
-                    {e.event === "control" ? (
-                      <>
-                        <span className="rounded bg-sky-700 px-1.5 text-xs font-semibold text-white">CTRL</span>
-                        <span>{e.alarm}</span>
-                      </>
-                    ) : (
-                      <>
-                        <span
-                          className={`rounded px-1.5 text-xs font-semibold ${e.event === "start" ? CHIP[bitLevel(e.alarm)] : "bg-secondary text-foreground"}`}
-                        >
-                          {e.alarm}
+            <TabsPrimitive.Root defaultValue="tila" className="flex min-h-0 flex-1 flex-col">
+              <TabsPrimitive.List className="m-3 mb-0 flex gap-1 overflow-x-auto rounded-lg bg-muted p-1" data-testid="mp-tabs">
+                <TabsPrimitive.Trigger value="tila" className={TAB}>Tila</TabsPrimitive.Trigger>
+                <TabsPrimitive.Trigger value="ohjaus" className={TAB}>Ohjaus</TabsPrimitive.Trigger>
+                <TabsPrimitive.Trigger value="rajat" className={TAB}>Hälytysrajat</TabsPrimitive.Trigger>
+                <TabsPrimitive.Trigger value="tapahtumat" className={TAB}>Tapahtumat</TabsPrimitive.Trigger>
+              </TabsPrimitive.List>
+              <TabsPrimitive.Content value="tila" className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3 text-sm" data-testid="mp-details">
+                <div className="space-y-1.5">
+                  {point.bits.map((b) => {
+                    const on = active.includes(b.key);
+                    const rule = (point.controls && relativeRule(b.key, point.controls, point.unit)) || b.rule;
+                    return (
+                      <div key={b.bit} className="flex items-start gap-2" data-bit={b.bit} data-on={on ? "1" : "0"}>
+                        <span className="mt-1 h-3.5 w-3.5 shrink-0 rounded-full" style={{ background: on ? (b.level === "alarm" ? "#ef4444" : "#f59e0b") : "#3f3f46" }} />
+                        <span className={`w-20 shrink-0 font-mono ${on ? "font-semibold" : "text-muted-foreground"}`}>{b.key}</span>
+                        <span className="min-w-0 flex-1 text-muted-foreground">
+                          {rule}
+                          {on && <span className="block text-xs text-foreground">since {fmt(point.since?.[b.key])}</span>}
                         </span>
-                        <span>{e.event === "start" ? "started" : "cleared"}</span>
-                        {e.value !== null && <span className="text-muted-foreground">{e.value.toFixed(1)} {point.unit}</span>}
-                      </>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </div>
-      )}
+                      </div>
+                    );
+                  })}
+                </div>
+                {point.status !== null && (
+                  <div className="font-mono text-xs" data-testid="mp-word">
+                    word {point.status} = {(point.status >>> 0).toString(2).padStart(16, "0").replace(/(.{4})(?=.)/g, "$1 ")}
+                  </div>
+                )}
+                <div className="text-xs text-muted-foreground">
+                  Reading {fmt(point.current?.timestamp ?? point.lastReading)} · checked {fmt(point.checked)}
+                </div>
+              </TabsPrimitive.Content>
+              <TabsPrimitive.Content value="ohjaus" className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3 text-sm">
+                {point.controls ? (
+                  <>
+                    <ControlsEditor controls={point.controls} unit={point.unit} busy={busy} onChange={applyControls} />
+                    <AlarmDisable controls={point.controls} busy={busy} onChange={applyControls} />
+                  </>
+                ) : (
+                  <div className="text-xs italic text-muted-foreground">No controls for this point.</div>
+                )}
+              </TabsPrimitive.Content>
+              <TabsPrimitive.Content value="rajat" className="min-h-0 flex-1 overflow-y-auto p-3 text-sm">
+                {point.controls?.limits ? (
+                  <LimitsEditor controls={point.controls} unit={point.unit} busy={busy} onSave={(limits) => applyControls({ limits })} />
+                ) : (
+                  <div className="text-xs italic text-muted-foreground">No editable limits for this point.</div>
+                )}
+              </TabsPrimitive.Content>
+              <TabsPrimitive.Content value="tapahtumat" className="min-h-0 flex-1 overflow-y-auto p-3 text-sm" data-testid="mp-events-tab">
+                {events.length === 0 ? (
+                  <div className="text-xs italic text-muted-foreground">No alarm events recorded yet.</div>
+                ) : (
+                  <ul className="space-y-1" data-testid="mp-events">
+                    {events.map((e) => (
+                      <li key={e.id} className="flex flex-wrap items-center gap-x-2">
+                        <span className="w-28 shrink-0 tabular-nums text-muted-foreground">{fmt(e.at)}</span>
+                        {e.event === "control" ? (
+                          <>
+                            <span className="rounded bg-sky-700 px-1.5 text-xs font-semibold text-white">CTRL</span>
+                            <span>{e.alarm}</span>
+                          </>
+                        ) : (
+                          <>
+                            <span className={`rounded px-1.5 text-xs font-semibold ${e.event === "start" ? CHIP[bitLevel(e.alarm)] : "bg-secondary text-foreground"}`}>
+                              {e.alarm}
+                            </span>
+                            <span>{e.event === "start" ? "started" : "cleared"}</span>
+                            {e.value !== null && <span className="text-muted-foreground">{e.value.toFixed(1)} {point.unit}</span>}
+                          </>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </TabsPrimitive.Content>
+            </TabsPrimitive.Root>
+          </DialogPrimitive.Content>
+        </DialogPrimitive.Portal>
+      </DialogPrimitive.Root>
     </div>
   );
 }
