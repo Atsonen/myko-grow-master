@@ -136,3 +136,44 @@ export function axisLabel(series: ResolvedSeries[], side: "left" | "right") {
   const units = Array.from(new Set(series.filter((s) => s.axis === side).map((s) => s.unit).filter(Boolean)));
   return units.join(" / ");
 }
+
+/* ---- readable time axis ---- */
+const H = 3600_000;
+const TICK_STEPS = [10 * 60_000, 30 * 60_000, H, 2 * H, 3 * H, 6 * H, 12 * H, 24 * H, 48 * H, 7 * 24 * H, 14 * 24 * H, 30 * 24 * H];
+
+/** Ticks aligned to local clock/day boundaries, at most one per ~minPx pixels. */
+export function timeTicks(fromMs: number, toMs: number, widthPx: number, minPx = 95): number[] {
+  if (!(toMs > fromMs) || widthPx <= 0) return [];
+  const maxTicks = Math.max(2, Math.floor(widthPx / minPx));
+  const step = TICK_STEPS.find((s) => (toMs - fromMs) / s <= maxTicks) ?? TICK_STEPS[TICK_STEPS.length - 1];
+  const d = new Date(fromMs);
+  if (step >= 24 * H) d.setHours(0, 0, 0, 0);
+  else d.setMinutes(0, 0, 0);
+  const out: number[] = [];
+  let t = d.getTime();
+  // walk in local time so DST does not shift day ticks
+  while (t <= toMs && out.length < 500) {
+    const x = new Date(t);
+    const aligned = step >= 24 * H ? true : step >= H ? x.getHours() % (step / H) === 0 && x.getMinutes() === 0 : x.getMinutes() % (step / 60_000) === 0;
+    if (t >= fromMs && aligned) out.push(t);
+    if (step >= 24 * H) { x.setDate(x.getDate() + step / (24 * H)); t = x.getTime(); }
+    else t += Math.min(step, H) === step ? step : H;
+  }
+  return out;
+}
+
+/** "ti 21.10." at midnight (or for day-or-longer steps), otherwise "12:00"; first tick always gets the weekday. */
+export function timeTickLabel(ts: number, ticks: number[]): string {
+  const d = new Date(ts);
+  const step = ticks.length > 1 ? ticks[1] - ticks[0] : 0;
+  const day = d.toLocaleDateString("fi-FI", { weekday: "short", day: "numeric", month: "numeric" }).replace(/\.$/, "") + ".";
+  const time = d.toLocaleTimeString("fi-FI", { hour: "2-digit", minute: "2-digit" }).replace(".", ":");
+  if (step >= 24 * H) return day;
+  const midnight = d.getHours() === 0 && d.getMinutes() === 0;
+  if (midnight) return day;
+  if (ts === ticks[0]) return `${d.toLocaleDateString("fi-FI", { weekday: "short" })} ${time}`;
+  return time;
+}
+
+export const LEGEND_PROPS = { iconSize: 14, wrapperStyle: { fontSize: 14, lineHeight: "20px", paddingTop: 4 } } as const;
+export const AXIS_TICK = { fontSize: 12 } as const;

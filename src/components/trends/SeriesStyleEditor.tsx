@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Area, Line, YAxis } from "recharts";
 import type { TrendVariable } from "@/lib/apiClient";
 import {
+  AXIS_TICK,
   axisDomain,
   axisLabel,
   resolveSeries,
@@ -135,18 +136,18 @@ export function renderSeriesChildren(
 ) {
   const hasRight = resolved.some((s) => s.axis === "right");
   const hasLeft = resolved.some((s) => s.axis === "left") || !hasRight;
-  const tick = { fontSize: 10 };
+  const tick = AXIS_TICK;
   const lDom = axisDomain(styling?.axes?.left);
   const rDom = axisDomain(styling?.axes?.right);
   const out = [];
   if (hasLeft)
     out.push(
-      <YAxis key="ax-l" yAxisId="left" orientation="left" tick={tick} domain={lDom} width={opts.axisWidth ?? 42}
+      <YAxis key="ax-l" yAxisId="left" orientation="left" tick={tick} domain={lDom} width={opts.axisWidth ?? 48}
         stroke={opts.axisStroke} allowDataOverflow={lDom.some((d) => d !== "auto")} />,
     );
   if (hasRight)
     out.push(
-      <YAxis key="ax-r" yAxisId="right" orientation="right" tick={tick} domain={rDom} width={opts.axisWidth ?? 42}
+      <YAxis key="ax-r" yAxisId="right" orientation="right" tick={tick} domain={rDom} width={opts.axisWidth ?? 48}
         stroke={opts.axisStroke} allowDataOverflow={rDom.some((d) => d !== "auto")} />,
     );
   resolved.forEach((s, i) => {

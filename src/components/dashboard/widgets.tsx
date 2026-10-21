@@ -16,7 +16,8 @@ import { FunctionBadge } from "@/components/common/FunctionBadge";
 import { getTrendSeries, getUnitEnvironment, type TrendBucket, type UnitEnvironment } from "@/lib/apiClient";
 import { formatDateTime, relativeTime } from "@/lib/format";
 import { useDashboardData } from "./DashboardData";
-import { autoBucket, resolveSeries, useSeriesDefaults } from "@/lib/seriesStyle";
+import { AXIS_TICK, autoBucket, LEGEND_PROPS, resolveSeries, timeTickLabel, timeTicks, useSeriesDefaults } from "@/lib/seriesStyle";
+import { useWidth } from "@/lib/useWidth";
 import { renderSeriesChildren } from "@/components/trends/SeriesStyleEditor";
 import { STATUSES, type DashboardWidget, type WidgetConfigMap } from "./types";
 
@@ -81,6 +82,7 @@ export function TrendWidget({ config }: { config: WidgetConfigMap["trend"] }) {
   const ids = config.variableIds ?? [];
   const rangeHours = config.rangeHours ?? 24;
   const { defaults } = useSeriesDefaults();
+  const [boxRef, boxWidth] = useWidth<HTMLDivElement>();
   const [series, setSeries] = useState<Record<string, { ts: number; value: number }[]>>({});
   const [err, setErr] = useState("");
 
@@ -124,20 +126,19 @@ export function TrendWidget({ config }: { config: WidgetConfigMap["trend"] }) {
   if (ids.length === 0) return <Muted>Pick variables in widget settings.</Muted>;
   if (err) return <div className="text-xs text-destructive">{err}</div>;
   if (data.length === 0) return <Muted>No data for the last {rangeHours} h.</Muted>;
-  const tickFmt = (ts: number) =>
-    rangeHours <= 48
-      ? new Date(ts).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })
-      : new Date(ts).toLocaleDateString(undefined, { day: "numeric", month: "numeric" });
+  const ticks = timeTicks(data[0].ts, data[data.length - 1].ts, boxWidth - 100);
   return (
+    <div ref={boxRef} className="h-full w-full min-w-0">
     <ResponsiveContainer width="100%" height="100%">
       <LineChart data={data} margin={{ top: 4, right: 0, left: -10, bottom: 0 }}>
         <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-        <XAxis dataKey="ts" type="number" scale="time" domain={["dataMin", "dataMax"]} tickFormatter={tickFmt} tick={{ fontSize: 10 }} />
+        <XAxis dataKey="ts" type="number" scale="time" domain={["dataMin", "dataMax"]} ticks={ticks} tickFormatter={(ts: number) => timeTickLabel(ts, ticks)} tick={AXIS_TICK} interval="preserveStartEnd" />
         <Tooltip labelFormatter={(ts) => formatDateTime(new Date(Number(ts)).toISOString())} contentStyle={{ fontSize: 11 }} />
-        <Legend wrapperStyle={{ fontSize: 10 }} />
+        <Legend {...LEGEND_PROPS} />
         {renderSeriesChildren(resolveSeries(ids, variables, config, defaults), config, (id) => id, { axisWidth: 36 })}
       </LineChart>
     </ResponsiveContainer>
+    </div>
   );
 }
 

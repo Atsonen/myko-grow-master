@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { BUCKET_OPTIONS, resolveSeries, useSeriesDefaults } from "@/lib/seriesStyle";
+import { AXIS_TICK, BUCKET_OPTIONS, LEGEND_PROPS, resolveSeries, timeTickLabel, timeTicks, useSeriesDefaults } from "@/lib/seriesStyle";
+import { useWidth } from "@/lib/useWidth";
 import { renderSeriesChildren, SeriesStyleEditor } from "@/components/trends/SeriesStyleEditor";
 import { AreaChart, CartesianGrid, Legend, LineChart, ResponsiveContainer, Tooltip, XAxis } from "recharts";
 import {
@@ -558,6 +559,11 @@ function TrendWidget({
   const { defaults } = useSeriesDefaults();
   const resolved = resolveSeries(series.map((x) => x.variable.id), variableMap, widget, defaults);
   const selectedResolved = resolveSeries(selectedVariableIds, variableMap, widget, defaults);
+  const [chartRef, chartWidth] = useWidth<HTMLDivElement>();
+  const ticks =
+    chartData.length > 1
+      ? timeTicks(Number(chartData[0].ts), Number(chartData[chartData.length - 1].ts), chartWidth - 110)
+      : [];
   const totalPoints = series.reduce((sum, item) => sum + item.points.length, 0);
 
   const toggleVariable = (variableId: string, checked: boolean) => {
@@ -694,15 +700,15 @@ function TrendWidget({
         </span>
       </div>
 
-      <div className="h-[280px] w-full min-w-0">
+      <div ref={chartRef} className="h-[300px] w-full min-w-0">
         {chartData.length > 0 ? (
           <ResponsiveContainer width="100%" height="100%">
             {widget.chartType === "area" ? (
               <AreaChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
                 <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" />
-                <XAxis dataKey="label" stroke="var(--muted-foreground)" tick={{ fontSize: 10 }} minTickGap={24} />
-                <Tooltip contentStyle={tooltipStyle} labelStyle={{ color: "var(--foreground)" }} />
-                <Legend wrapperStyle={{ fontSize: 11 }} />
+                <XAxis dataKey="ts" type="number" scale="time" domain={["dataMin", "dataMax"]} ticks={ticks} tickFormatter={(ts: number) => timeTickLabel(ts, ticks)} stroke="var(--muted-foreground)" tick={AXIS_TICK} />
+                <Tooltip contentStyle={tooltipStyle} labelStyle={{ color: "var(--foreground)" }} labelFormatter={(ts) => new Date(Number(ts)).toLocaleString("fi-FI", { weekday: "short", day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" })} />
+                <Legend {...LEGEND_PROPS} />
                 {renderSeriesChildren(resolved, widget, (_id, i) => seriesKey(i), {
                   kind: "area", strokeWidth: 2, axisStroke: "var(--muted-foreground)",
                   dots: (i) => (series[i]?.points.length ?? 0) <= 24,
@@ -711,9 +717,9 @@ function TrendWidget({
             ) : (
               <LineChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
                 <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" />
-                <XAxis dataKey="label" stroke="var(--muted-foreground)" tick={{ fontSize: 10 }} minTickGap={24} />
-                <Tooltip contentStyle={tooltipStyle} labelStyle={{ color: "var(--foreground)" }} />
-                <Legend wrapperStyle={{ fontSize: 11 }} />
+                <XAxis dataKey="ts" type="number" scale="time" domain={["dataMin", "dataMax"]} ticks={ticks} tickFormatter={(ts: number) => timeTickLabel(ts, ticks)} stroke="var(--muted-foreground)" tick={AXIS_TICK} />
+                <Tooltip contentStyle={tooltipStyle} labelStyle={{ color: "var(--foreground)" }} labelFormatter={(ts) => new Date(Number(ts)).toLocaleString("fi-FI", { weekday: "short", day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" })} />
+                <Legend {...LEGEND_PROPS} />
                 {renderSeriesChildren(resolved, widget, (_id, i) => seriesKey(i), {
                   strokeWidth: 2, axisStroke: "var(--muted-foreground)",
                   dots: (i) => (series[i]?.points.length ?? 0) <= 24,
@@ -767,6 +773,7 @@ function buildMultiSeriesData(series: LoadedSeries[], range: TrendWidgetConfig["
     for (const point of item.points) {
       const current = rows.get(point.timestamp) ?? {
         timestamp: point.timestamp,
+        ts: new Date(point.timestamp).getTime(),
         label: formatTick(point.timestamp, range),
       };
       current[seriesKey(index)] = point.value;
