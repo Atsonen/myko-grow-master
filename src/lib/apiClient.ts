@@ -407,3 +407,45 @@ export async function saveSeriesDefaults(series: Record<string, SeriesStyleDefau
     body: JSON.stringify({ series }),
   });
 }
+
+export interface AlarmBitDef {
+  bit: number;
+  key: string;
+  level: "warn" | "alarm";
+  rule: string;
+}
+
+export interface AlarmPoint {
+  id: string;
+  name: string;
+  topicPrefix: string;
+  valueSource?: string;
+  unit: string;
+  bits: AlarmBitDef[];
+  status: number | null;
+  active: string[];
+  since: Record<string, string | null>;
+  alarmValue: number | null;
+  lastReading: string | null;
+  checked: string | null;
+  lastMessageAt: string | null;
+  current: { value: number; timestamp: string } | null;
+}
+
+export interface AlarmEvent {
+  id: number;
+  alarm: string;
+  bit: number | null;
+  event: "start" | "clear";
+  at: string;
+  value: number | null;
+  statusWord: number | null;
+}
+
+export async function getAlarmPoints() {
+  return requestJson<AlarmPoint[]>("/api/alarms/points");
+}
+
+export async function getAlarmEvents(pointId: string, limit = 20) {
+  return requestJson<AlarmEvent[]>(`/api/alarms/${encodeURIComponent(pointId)}/events?limit=${limit}`);
+}

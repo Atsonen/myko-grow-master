@@ -1,6 +1,7 @@
 import mqtt from "mqtt";
 import dotenv from "dotenv";
 import { closeDb, query, withConnection } from "./db.js";
+import { alarmPointForTopic, handleAlarmMessage, loadAlarmPoints } from "./alarm-points.js";
 
 dotenv.config();
 
@@ -51,7 +52,29 @@ client.on("connect", async () => {
     if (error) console.error("[mqtt] subscribe error", error);
     else console.log(`[mqtt] subscribed ${MQTT_TOPICS.join(", ")}`);
   });
+  alarmTopics = [];
+  await syncAlarmSubscriptions();
 });
+
+// Alarm point topics (<prefix>/json); re-read every minute so new points need no restart.
+let alarmTopics = [];
+async function syncAlarmSubscriptions() {
+  try {
+    const topics = await loadAlarmPoints();
+    const add = topics.filter((t) => !alarmTopics.includes(t));
+    const remove = alarmTopics.filter((t) => !topics.includes(t));
+    if (remove.length) client.unsubscribe(remove);
+    if (add.length)
+      client.subscribe(add, { qos: 1 }, (error) => {
+        if (error) console.error("[alarm] subscribe error", error);
+        else console.log(`[alarm] subscribed ${add.join(", ")}`);
+      });
+    alarmTopics = topics;
+  } catch (error) {
+    console.error("[alarm] load points error", error.message);
+  }
+}
+setInterval(() => client.connected && void syncAlarmSubscriptions(), 60_000).unref();
 
 client.on("reconnect", () => console.log("[mqtt] reconnecting..."));
 client.on("error", (error) => console.error("[mqtt] error", error.message));
@@ -65,6 +88,16 @@ client.on("message", async (topic, payloadBuffer) => {
     payload = JSON.parse(payloadText);
   } catch {
     payload = payloadText;
+  }
+
+  const alarmPoint = alarmPointForTopic(topic);
+  if (alarmPoint) {
+    try {
+      await handleAlarmMessage(alarmPoint, payload, receivedAt);
+    } catch (error) {
+      console.error("[alarm] handle error", error);
+    }
+    return;
   }
 
   try {

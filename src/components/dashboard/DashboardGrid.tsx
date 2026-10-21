@@ -53,6 +53,7 @@ function mobileHeight(w: DashboardWidget): number | undefined {
     case "sensorLatest":
       return 150;
     case "statusBits":
+    case "measurementPoint":
     case "note":
       return undefined; // natural height
     default:

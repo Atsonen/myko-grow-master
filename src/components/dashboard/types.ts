@@ -10,7 +10,8 @@ export type WidgetType =
   | "locationSummary"
   | "unitCurve"
   | "note"
-  | "statusBits";
+  | "statusBits"
+  | "measurementPoint";
 
 export interface WidgetConfigMap {
   sensorLatest: { variableId?: string };
@@ -23,6 +24,8 @@ export interface WidgetConfigMap {
   note: { text?: string };
   /** bits: subset of defined bit numbers to show (empty = all). */
   statusBits: { variableKey?: string; bits?: number[]; staleMinutes?: number };
+  /** pointId = alarm_points.id; name overrides the point name. */
+  measurementPoint: { pointId?: string; name?: string };
 }
 
 export interface DashboardWidget<T extends WidgetType = WidgetType> {
@@ -52,6 +55,7 @@ export const WIDGET_META: Record<
   locationSummary: { label: "Locations", description: "Units per location with current temperature.", w: 4, h: 5, minW: 3, minH: 3 },
   unitCurve: { label: "Unit lifetime curve", description: "Temperature across one unit's lifetime.", w: 6, h: 6, minW: 3, minH: 4 },
   statusBits: { label: "Status bits", description: "Lamps for the bits of a datalogger status word.", w: 4, h: 3, minW: 2, minH: 2 },
+  measurementPoint: { label: "Mittauspiste", description: "Measurement point: value + alarm status, expandable bits and event history.", w: 3, h: 4, minW: 2, minH: 3 },
   note: { label: "Note", description: "Free text note.", w: 3, h: 3, minW: 2, minH: 2 },
 };
 

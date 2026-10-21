@@ -7,6 +7,7 @@ import { useDashboardData } from "./DashboardData";
 import { autoBucket, BUCKET_OPTIONS } from "@/lib/seriesStyle";
 import { SeriesStyleEditor } from "@/components/trends/SeriesStyleEditor";
 import { dlLabel, useDataloggerVariables } from "@/lib/statusBits";
+import { usePointList } from "./MeasurementPointWidget";
 import { STATUSES, WIDGET_META, type DashboardWidget, type WidgetConfigMap } from "./types";
 
 const selectCls = "w-full h-9 rounded-md border border-input bg-background px-2 text-sm font-mono";
@@ -40,6 +41,7 @@ export function WidgetSettingsDialog({
 }) {
   const { variables, units } = useDashboardData();
   const dlVars = useDataloggerVariables();
+  const alarmPoints = usePointList();
   const [draft, setDraft] = useState<DashboardWidget | null>(widget);
   useEffect(() => setDraft(widget), [widget]);
   if (!draft) return null;
@@ -214,6 +216,25 @@ export function WidgetSettingsDialog({
                 )}
                 <Field label="Stale after (minutes)">
                   <Input type="number" min={1} max={1440} value={c.staleMinutes ?? 10} onChange={(e) => setCfg({ staleMinutes: Math.max(1, Number(e.target.value) || 10) })} />
+                </Field>
+              </>
+            );
+          })()}
+
+          {draft.type === "measurementPoint" && (() => {
+            const c = cfg as WidgetConfigMap["measurementPoint"];
+            return (
+              <>
+                <Field label="Measurement point">
+                  <select value={c.pointId ?? ""} onChange={(e) => setCfg({ pointId: e.target.value || undefined })} className={selectCls}>
+                    <option value="">— select —</option>
+                    {alarmPoints.map((p) => (
+                      <option key={p.id} value={p.id}>{p.name} · {p.topicPrefix}</option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Display name (optional)">
+                  <Input value={c.name ?? ""} onChange={(e) => setCfg({ name: e.target.value || undefined })} />
                 </Field>
               </>
             );

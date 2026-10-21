@@ -701,6 +701,80 @@ app.get(
   }),
 );
 
+// ---- Alarm points (measurement points with an external alarm checker) ----
+// GET /api/alarms/points            -> points with latest alarm state + current value
+// GET /api/alarms/:pointId/events   -> start/clear transitions, newest first (?limit=20, max 200)
+function jsonCol(v, fallback) {
+  if (v === null || v === undefined) return fallback;
+  if (typeof v !== "string") return v;
+  try { return JSON.parse(v); } catch { return fallback; }
+}
+async function alarmPointValue(valueSource) {
+  const m = /^dl:([^:]+):(.+)$/.exec(valueSource || "");
+  if (!m) return null;
+  const [r] = await query(
+    `SELECT dv.raw_value * v.scale AS value, DATE_FORMAT(dv.timestamp, '%Y-%m-%dT%H:%i:%s.%fZ') AS ts
+     FROM datalogger_values dv JOIN datalogger_variables v ON v.source_id = dv.source_id AND v.variable_key = dv.variable_key
+     WHERE dv.source_id = ? AND dv.variable_key = ? ORDER BY dv.timestamp DESC LIMIT 1`,
+    [m[1], m[2]],
+  );
+  return r ? { value: Number(r.value), timestamp: r.ts.replace(/(\.\d{3})\d*Z$/, "$1Z") } : null;
+}
+function mapAlarmPoint(r, current) {
+  const p = jsonCol(r.last_payload, {}) ?? {};
+  return {
+    id: r.id,
+    name: r.name,
+    topicPrefix: r.topic_prefix,
+    valueSource: r.value_source ?? undefined,
+    unit: r.unit ?? "",
+    bits: jsonCol(r.bits_json, []),
+    status: r.last_status === null ? null : Number(r.last_status),
+    active: jsonCol(r.last_active, []) ?? [],
+    since: p.since ?? {},
+    alarmValue: Number.isFinite(Number(p.temp)) && p.temp !== null ? Number(p.temp) : null,
+    lastReading: p.last_reading ?? null,
+    checked: p.checked ?? null,
+    lastMessageAt: r.last_message_iso ?? null,
+    current,
+  };
+}
+const ALARM_POINT_COLS = `id, name, topic_prefix, value_source, unit, bits_json, sort_order, last_status, last_active, last_payload,
+  DATE_FORMAT(last_message_at, '%Y-%m-%dT%H:%i:%sZ') AS last_message_iso`;
+app.get(
+  "/api/alarms/points",
+  asyncRoute(async (_req, res) => {
+    const rows = await query(`SELECT ${ALARM_POINT_COLS} FROM alarm_points WHERE enabled = 1 ORDER BY sort_order, name`);
+    const out = [];
+    for (const r of rows) out.push(mapAlarmPoint(r, await alarmPointValue(r.value_source)));
+    res.json(out);
+  }),
+);
+app.get(
+  "/api/alarms/:pointId/events",
+  asyncRoute(async (req, res) => {
+    const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 20));
+    const [pt] = await query("SELECT id FROM alarm_points WHERE id = ?", [req.params.pointId]);
+    if (!pt) return res.status(404).json({ error: "Unknown alarm point" });
+    const rows = await query(
+      `SELECT id, alarm, bit, event, DATE_FORMAT(at, '%Y-%m-%dT%H:%i:%sZ') AS at_iso, value, status_word
+       FROM alarm_events WHERE point_id = ? ORDER BY at DESC, id DESC LIMIT ${limit}`,
+      [pt.id],
+    );
+    res.json(
+      rows.map((r) => ({
+        id: Number(r.id),
+        alarm: r.alarm,
+        bit: r.bit === null ? null : Number(r.bit),
+        event: r.event,
+        at: r.at_iso,
+        value: r.value === null ? null : Number(r.value),
+        statusWord: r.status_word === null ? null : Number(r.status_word),
+      })),
+    );
+  }),
+);
+
 // After a variable edit, rebuild only the datalogger part of the cached trend list (fast query),
 // keeping cached stats for unchanged entries.
 async function refreshDataloggerTrendList() {

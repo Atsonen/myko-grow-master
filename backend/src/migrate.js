@@ -199,6 +199,37 @@ const statements = [
     INDEX idx_datalogger_values_sample (sample_id),
     CONSTRAINT fk_datalogger_values_sample FOREIGN KEY (sample_id) REFERENCES datalogger_samples(id) ON DELETE CASCADE
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+  // Measurement points with an external alarm checker publishing <topic_prefix>/json (2026-10-21)
+  `CREATE TABLE IF NOT EXISTS alarm_points (
+    id VARCHAR(80) PRIMARY KEY,
+    name VARCHAR(160) NOT NULL,
+    topic_prefix VARCHAR(255) NOT NULL,
+    value_source VARCHAR(200) NULL,
+    unit VARCHAR(40) NULL,
+    bits_json JSON NULL,
+    sort_order INT NOT NULL DEFAULT 0,
+    enabled TINYINT(1) NOT NULL DEFAULT 1,
+    last_status INT NULL,
+    last_active JSON NULL,
+    last_payload JSON NULL,
+    last_message_at DATETIME(3) NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_alarm_points_topic (topic_prefix)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+  `CREATE TABLE IF NOT EXISTS alarm_events (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    point_id VARCHAR(80) NOT NULL,
+    alarm VARCHAR(40) NOT NULL,
+    bit INT NULL,
+    event VARCHAR(10) NOT NULL,
+    at DATETIME(3) NOT NULL,
+    value DOUBLE NULL,
+    status_word INT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_alarm_events_point_at (point_id, at),
+    CONSTRAINT fk_alarm_events_point FOREIGN KEY (point_id) REFERENCES alarm_points(id) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 ];
 
 const alterStatements = [
@@ -260,6 +291,28 @@ const dataloggerVariables = [
 ];
 
 const seedStatements = [
+  // Kylmäsäilytystila 1 alarm point (checker: /home/atte/myko-ml/cold_alarm_check.py). INSERT IGNORE keeps user edits.
+  {
+    sql: `INSERT IGNORE INTO alarm_points (id, name, topic_prefix, value_source, unit, bits_json, sort_order)
+          VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    params: [
+      "ColdStorage1",
+      "Kylmäsäilytystila 1",
+      "Myko/Alarms/ColdStorage1",
+      "dl:src-datalogger:dl02",
+      "°C",
+      JSON.stringify([
+        { bit: 0, key: "WARN", level: "warn", rule: "> 9 °C for 30 min" },
+        { bit: 1, key: "HIGH", level: "alarm", rule: "> 11 °C for 10 min" },
+        { bit: 2, key: "CRIT", level: "alarm", rule: "> 14 °C for 3 min" },
+        { bit: 3, key: "LOW", level: "alarm", rule: "< 5 °C for 3 min" },
+        { bit: 4, key: "FREEZE", level: "alarm", rule: "≤ 0 °C" },
+        { bit: 5, key: "FLATLINE", level: "warn", rule: "value unchanged for 15 min" },
+        { bit: 6, key: "STALE", level: "warn", rule: "no data for 10 min" },
+      ]),
+      10,
+    ],
+  },
   // Event function INOC (inoculation) added 2026-10-20
   { sql: "INSERT IGNORE INTO taxonomy_terms (category, value) VALUES ('functions', 'INOC')", params: [] },
   // Predefined locations and substrates (dropdowns; backend rejects unknown codes) – 2026-10-20
