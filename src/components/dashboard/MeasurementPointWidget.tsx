@@ -51,17 +51,34 @@ function relativeRule(key: string, c: AlarmControls, unit: string): string | nul
   return null;
 }
 
+// ISA-101 / high-performance HMI: neutral gray when normal, colour only for abnormal states.
+// The surrounding dashboard Card is the only frame; abnormal states add an inset ring to it.
 const LEVEL_STYLE: Record<PointLevel, string> = {
-  disabled: "bg-zinc-500/20 border-dashed border-zinc-400",
-  ok: "bg-emerald-500/10 border-emerald-500/40",
-  warn: "bg-amber-500/20 border-amber-400/70",
-  alarm: "bg-red-600/25 border-red-500",
-  unknown: "bg-secondary/30 border-border",
+  disabled: "outline-dashed outline-1 -outline-offset-4 outline-zinc-500",
+  ok: "",
+  warn: "ring-2 ring-inset ring-amber-400 bg-amber-400/[0.06]",
+  alarm: "ring-2 ring-inset ring-red-500 bg-red-500/[0.10]",
+  unknown: "",
 };
 const CHIP: Record<string, string> = {
-  warn: "bg-amber-400 text-black",
-  alarm: "bg-red-600 text-white",
+  warn: "text-amber-300",
+  alarm: "text-red-400",
 };
+
+/** ISA-101 alarm indicator: priority 1 = red square "1", priority 2 = yellow triangle "2". */
+export function AlarmIndicator({ level, className = "h-5 w-5" }: { level: string; className?: string }) {
+  if (level === "alarm")
+    return (
+      <span className={`inline-flex shrink-0 items-center justify-center bg-red-600 text-[11px] font-bold leading-none text-white ${className}`} aria-label="priority 1 alarm">1</span>
+    );
+  return (
+    <svg viewBox="0 0 20 18" className={`shrink-0 ${className}`} aria-label="priority 2 warning">
+      <polygon points="10,1 19,17 1,17" fill="#facc15" />
+      <text x="10" y="15" textAnchor="middle" fontSize="10" fontWeight="700" fill="#000">2</text>
+    </svg>
+  );
+}
+const MUTED = "text-sm text-muted-foreground";
 
 /** "Mittauspiste": a measurement point with alarm status from an external checker. */
 export function MeasurementPointWidget({ config }: { config: WidgetConfigMap["measurementPoint"] }) {
@@ -122,53 +139,48 @@ export function MeasurementPointWidget({ config }: { config: WidgetConfigMap["me
 
   const TAB = "min-h-11 flex-1 rounded-md px-3 text-sm font-semibold text-muted-foreground data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow";
   return (
-    <div className={`h-full rounded-md border-2 p-3 transition-colors ${LEVEL_STYLE[level]}`} data-testid="measurement-point" data-level={level}>
-      <div className="flex w-full items-start gap-3">
+    <div className={`h-full px-3 py-2.5 ${LEVEL_STYLE[level]}`} data-testid="measurement-point" data-level={level}>
+      <div className="flex w-full items-start gap-2">
         <div className="min-w-0 flex-1">
-          <div className="truncate text-base font-medium" data-testid="mp-name">{config.name || point.name}</div>
+          <div className="truncate text-[15px] font-medium leading-6 text-muted-foreground" data-testid="mp-name">{config.name || point.name}</div>
           <div className="flex items-baseline gap-1">
-            <span className="text-3xl font-semibold tabular-nums" data-testid="mp-value">
+            <span className="text-4xl font-semibold tabular-nums text-foreground" data-testid="mp-value">
               {value === null || value === undefined ? "—" : value.toFixed(1)}
             </span>
             <span className="text-base text-muted-foreground">{point.unit}</span>
           </div>
-          <div className="mt-1 flex flex-wrap gap-1.5" data-testid="mp-chips">
+          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1" data-testid="mp-chips">
             {disabled ? (
-              <span className="rounded-full bg-zinc-700 px-2.5 py-0.5 text-sm font-semibold text-white" data-testid="mp-disabled">
-                ALARMS OFF until {hm(point.controls!.alarmsDisabledUntil!)}
-              </span>
+              <span className={MUTED} data-testid="mp-disabled">Hälytykset pois {hm(point.controls!.alarmsDisabledUntil!)} asti</span>
             ) : active.length === 0 ? (
-              <span className="rounded-full bg-emerald-600/80 px-2.5 py-0.5 text-sm font-medium text-white">OK</span>
+              <span className={MUTED}>Normaali</span>
             ) : (
               active.map((k) => (
-                <span key={k} className={`rounded-full px-2.5 py-0.5 text-sm font-semibold ${CHIP[bitLevel(k)]}`}>{k}</span>
+                <span key={k} className={`inline-flex items-center gap-1.5 text-sm font-semibold ${CHIP[bitLevel(k)]}`}>
+                  <AlarmIndicator level={bitLevel(k)} />
+                  {k}
+                </span>
               ))
             )}
-            {point.controls && (
-              <span className="flex flex-wrap gap-1.5" data-testid="mp-controls-compact">
-                <span className={`rounded-full px-2.5 py-0.5 text-sm font-medium ${point.controls.on ? "bg-sky-600 text-white" : "bg-zinc-600 text-zinc-200"}`}>
-                  {point.controls.on ? "ON" : "OFF"}
-                </span>
-                {point.controls.heat && <span className="rounded-full bg-orange-500 px-2.5 py-0.5 text-sm font-medium text-black">HEAT</span>}
-                {point.controls.cool && <span className="rounded-full bg-cyan-400 px-2.5 py-0.5 text-sm font-medium text-black">COOL</span>}
-                <span className="rounded-full border border-border px-2.5 py-0.5 text-sm">SP {point.controls.setpoint} {point.unit}</span>
-              </span>
-            )}
-            {checkedAgeMin > 5 && (
-              <span className="rounded-full bg-secondary px-2.5 py-0.5 text-sm text-muted-foreground" title="Alarm checker has not reported recently">
-                checker {fmt(point.checked)}
-              </span>
-            )}
           </div>
+          {point.controls && (
+            <div className={`mt-0.5 flex flex-wrap gap-x-3 ${MUTED}`} data-testid="mp-controls-compact">
+              <span className={point.controls.on ? "text-foreground/80" : ""}>{point.controls.on ? "ON" : "OFF"}</span>
+              {point.controls.heat && <span>HEAT</span>}
+              {point.controls.cool && <span>COOL</span>}
+              <span>SP {point.controls.setpoint} {point.unit}</span>
+              {checkedAgeMin > 5 && <span title="Alarm checker has not reported recently">checker {fmt(point.checked)}</span>}
+            </div>
+          )}
         </div>
         <button
           type="button"
           onClick={() => setOpen(true)}
           aria-label={`${point.name}: asetukset`}
           data-testid="mp-gear"
-          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md border border-border bg-background/40 hover:bg-secondary"
+          className="-mr-2 -mt-1 flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-muted-foreground/70 hover:bg-secondary/60 hover:text-foreground"
         >
-          <Settings className="h-5 w-5" />
+          <Settings className="h-[18px] w-[18px]" />
         </button>
       </div>
 
@@ -180,7 +192,7 @@ export function MeasurementPointWidget({ config }: { config: WidgetConfigMap["me
             aria-describedby={undefined}
             className="fixed z-50 flex flex-col border bg-background shadow-lg inset-0 md:inset-auto md:left-1/2 md:top-1/2 md:h-[min(85vh,760px)] md:w-[min(92vw,720px)] md:-translate-x-1/2 md:-translate-y-1/2 md:rounded-lg"
           >
-            <div className={`flex items-center gap-3 border-b-2 p-3 ${LEVEL_STYLE[level]}`}>
+            <div className={`flex items-center gap-3 border-b border-border p-3 ${LEVEL_STYLE[level]}`}>
               <div className="min-w-0 flex-1">
                 <DialogPrimitive.Title className="truncate text-lg font-semibold">{config.name || point.name}</DialogPrimitive.Title>
                 <div className="text-sm text-muted-foreground tabular-nums">
@@ -189,7 +201,7 @@ export function MeasurementPointWidget({ config }: { config: WidgetConfigMap["me
                   {disabled ? ` · hälytykset pois ${hm(point.controls!.alarmsDisabledUntil!)} asti` : active.length ? ` · ${active.join(", ")}` : " · OK"}
                 </div>
               </div>
-              <DialogPrimitive.Close aria-label="Sulje" data-testid="mp-close" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md border border-border hover:bg-secondary">
+              <DialogPrimitive.Close aria-label="Sulje" data-testid="mp-close" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground">
                 <X className="h-5 w-5" />
               </DialogPrimitive.Close>
             </div>
@@ -207,8 +219,10 @@ export function MeasurementPointWidget({ config }: { config: WidgetConfigMap["me
                     const rule = (point.controls && relativeRule(b.key, point.controls, point.unit)) || b.rule;
                     return (
                       <div key={b.bit} className="flex items-start gap-2" data-bit={b.bit} data-on={on ? "1" : "0"}>
-                        <span className="mt-1 h-3.5 w-3.5 shrink-0 rounded-full" style={{ background: on ? (b.level === "alarm" ? "#ef4444" : "#f59e0b") : "#3f3f46" }} />
-                        <span className={`w-20 shrink-0 font-mono ${on ? "font-semibold" : "text-muted-foreground"}`}>{b.key}</span>
+                        <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center">
+                          {on ? <AlarmIndicator level={b.level} /> : <span className="h-3 w-3 rounded-full border border-zinc-500" />}
+                        </span>
+                        <span className={`w-20 shrink-0 font-mono ${on ? `font-semibold ${CHIP[b.level]}` : "text-muted-foreground"}`}>{b.key}</span>
                         <span className="min-w-0 flex-1 text-muted-foreground">
                           {rule}
                           {on && <span className="block text-xs text-foreground">since {fmt(point.since?.[b.key])}</span>}
@@ -253,12 +267,13 @@ export function MeasurementPointWidget({ config }: { config: WidgetConfigMap["me
                         <span className="w-28 shrink-0 tabular-nums text-muted-foreground">{fmt(e.at)}</span>
                         {e.event === "control" ? (
                           <>
-                            <span className="rounded bg-sky-700 px-1.5 text-xs font-semibold text-white">CTRL</span>
+                            <span className="rounded border border-border px-1.5 text-xs text-muted-foreground">CTRL</span>
                             <span>{e.alarm}</span>
                           </>
                         ) : (
                           <>
-                            <span className={`rounded px-1.5 text-xs font-semibold ${e.event === "start" ? CHIP[bitLevel(e.alarm)] : "bg-secondary text-foreground"}`}>
+                            <span className={`inline-flex items-center gap-1 text-xs font-semibold ${e.event === "start" ? CHIP[bitLevel(e.alarm)] : "text-muted-foreground"}`}>
+                              {e.event === "start" && <AlarmIndicator level={bitLevel(e.alarm)} className="h-4 w-4" />}
                               {e.alarm}
                             </span>
                             <span>{e.event === "start" ? "started" : "cleared"}</span>
@@ -313,12 +328,12 @@ function ControlsEditor({
     if (n !== controls.setpoint) onChange({ setpoint: n });
   };
   return (
-    <div className="space-y-2 rounded-md border border-border bg-background/40 p-2" data-testid="mp-controls">
+    <div className="space-y-2 rounded-md border border-border p-2" data-testid="mp-controls">
       <div className="text-xs font-mono uppercase text-muted-foreground">Controls</div>
       <div className="flex flex-wrap gap-2">
-        {toggle("on", "ON", "border-sky-500 bg-sky-600 text-white")}
-        {toggle("heat", "HEAT", "border-orange-400 bg-orange-500 text-black")}
-        {toggle("cool", "COOL", "border-cyan-300 bg-cyan-400 text-black")}
+        {toggle("on", "ON", "border-zinc-400 bg-zinc-200 text-zinc-900")}
+        {toggle("heat", "HEAT", "border-zinc-400 bg-zinc-200 text-zinc-900")}
+        {toggle("cool", "COOL", "border-zinc-400 bg-zinc-200 text-zinc-900")}
       </div>
       <div className="flex items-center gap-2">
         <span className="text-sm">Setpoint</span>
@@ -370,13 +385,13 @@ const DISABLE_CHOICES: [number, string][] = [[30, "30 min"], [60, "1 h"], [240, 
 function AlarmDisable({ controls, busy, onChange }: { controls: AlarmControls; busy: boolean; onChange: (p: AlarmControlsPatch) => void }) {
   const until = controls.alarmsDisabledUntil;
   return (
-    <div className="space-y-2 rounded-md border border-border bg-background/40 p-2" data-testid="mp-disable">
+    <div className="space-y-2 rounded-md border border-border p-2" data-testid="mp-disable">
       <div className="text-xs font-mono uppercase text-muted-foreground">Alarms</div>
       {until ? (
         <div className="flex flex-wrap items-center gap-2">
           <span className="font-semibold">Disabled until {fmt(until)}</span>
           <button type="button" disabled={busy} onClick={() => onChange({ disableMinutes: 0 })}
-            className="min-h-11 rounded-md border border-emerald-500 bg-emerald-600 px-3 text-sm font-semibold text-white disabled:opacity-50">
+            className="min-h-11 rounded-md border border-zinc-400 bg-zinc-200 text-zinc-900 px-3 text-sm font-semibold disabled:opacity-50">
             Re-enable now
           </button>
         </div>
@@ -436,7 +451,7 @@ function LimitsEditor({ controls, unit, busy, onSave }: {
     </div>
   );
   return (
-    <div className="space-y-2 rounded-md border border-border bg-background/40 p-2" data-testid="mp-limits">
+    <div className="space-y-2 rounded-md border border-border p-2" data-testid="mp-limits">
       <div className="text-xs font-mono uppercase text-muted-foreground">Alarm limits (relative to SP {sp} {unit})</div>
       {row("WARN", f.warnBoth ? "±" : "+", "warnDelta", "warnMin", f.warnBoth ? NaN : sp + num("warnDelta"))}
       <label className="flex min-h-11 items-center gap-2 pl-14 text-sm">
@@ -449,7 +464,7 @@ function LimitsEditor({ controls, unit, busy, onSave }: {
       {errors.length > 0 && <div className="text-xs text-destructive">{errors.join(" · ")}</div>}
       <div className="flex gap-2">
         <button type="button" disabled={busy || !dirty || errors.length > 0} onClick={() => onSave(next)}
-          className="min-h-11 rounded-md border border-sky-500 bg-sky-600 px-4 text-sm font-semibold text-white disabled:opacity-40">
+          className="min-h-11 rounded-md border border-zinc-400 bg-zinc-200 text-zinc-900 px-4 text-sm font-semibold disabled:opacity-40">
           Save limits
         </button>
         {dirty && (

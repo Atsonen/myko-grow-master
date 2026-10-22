@@ -232,6 +232,12 @@ function DashboardInner() {
             .map((w) => {
               const h = mobileHeight(w);
               return (
+                w.type === "measurementPoint" ? (
+                  // self-framed widget: single frame, its own name header (ISA-101 style)
+                  <Card key={w.id} className="overflow-hidden bg-card border-border" data-widget={w.type}>
+                    <WidgetBody widget={w} />
+                  </Card>
+                ) : (
                 <Card key={w.id} className="flex flex-col bg-card border-border" style={h ? { height: h } : undefined} data-widget={w.type}>
                   <div className="px-3 pt-2.5 pb-1">
                     <h2 className="text-base font-medium leading-6 text-foreground truncate">{w.title || defaultTitle(w, labelFor)}</h2>
@@ -240,6 +246,7 @@ function DashboardInner() {
                     <WidgetBody widget={w} />
                   </div>
                 </Card>
+                )
               );
             })}
         </div>
@@ -260,7 +267,8 @@ function DashboardInner() {
       >
         {layout.widgets.map((w) => (
           <div key={w.id}>
-            <Card className={`h-full flex flex-col bg-card ${editing ? "border-primary/50 border-dashed" : "border-border"}`}>
+            <Card className={`h-full flex flex-col overflow-hidden bg-card ${editing ? "border-primary/50 border-dashed" : "border-border"}`}>
+              {w.type === "measurementPoint" && !editing ? null : (
               <div className={`flex items-center gap-1 px-3 pt-2 pb-1 ${editing ? "myko-drag-handle cursor-move" : ""}`}>
                 {editing && <GripVertical className="h-4 w-4 text-muted-foreground" />}
                 <h2 className="text-[15px] font-medium leading-6 text-foreground truncate">
@@ -279,7 +287,8 @@ function DashboardInner() {
                   </div>
                 )}
               </div>
-              <div className="min-h-0 flex-1 overflow-auto px-3 pb-3">
+              )}
+              <div className={`min-h-0 flex-1 overflow-auto ${w.type === "measurementPoint" ? "" : "px-3 pb-3"}`}>
                 <WidgetBody widget={w} />
               </div>
             </Card>
