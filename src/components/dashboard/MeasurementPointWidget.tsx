@@ -244,6 +244,27 @@ export function MeasurementPointWidget({ config }: { config: WidgetConfigMap["me
                     word {point.status} = {(point.status >>> 0).toString(2).padStart(16, "0").replace(/(.{4})(?=.)/g, "$1 ")}
                   </div>
                 )}
+                {point.status !== null && (
+                  <div className="space-y-1 border-t border-border pt-2" data-testid="mp-ctrlbits">
+                    {([[7, "ON", "ohjaus päällä"], [8, "HEAT", "lämmitys"], [9, "COOL", "jäähdytys"], [15, "WA_DIS", "WhatsApp-hälytykset pois"]] as const).map(([bit, key, txt]) => {
+                      const on = ((point.status! >>> bit) & 1) === 1;
+                      return (
+                        <div key={bit} className="flex items-start gap-2" data-bit={bit} data-on={on ? "1" : "0"}>
+                          <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center">
+                            <span className={`h-3 w-3 rounded-full border ${on ? "border-zinc-300 bg-zinc-300" : "border-zinc-500"}`} />
+                          </span>
+                          <span className={`w-20 shrink-0 font-mono ${on ? "" : "text-muted-foreground"}`}>{key}</span>
+                          <span className="text-muted-foreground">bit {bit} · {txt}</span>
+                        </div>
+                      );
+                    })}
+                    <div className="flex items-start gap-2 text-muted-foreground">
+                      <span className="h-5 w-5 shrink-0" />
+                      <span className="w-20 shrink-0 font-mono">SP</span>
+                      <span>bit 10–14 · asetusarvo {(point.status! >>> 10) & 0x1f} {point.unit}</span>
+                    </div>
+                  </div>
+                )}
                 <div className="text-xs text-muted-foreground">
                   Reading {fmt(point.current?.timestamp ?? point.lastReading)} · checked {fmt(point.checked)}
                 </div>

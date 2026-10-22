@@ -832,13 +832,13 @@ app.get(
 
 // ---- Alarm point controls (ON/HEAT/COOL/SP), owned by Myko ----
 // Word layout: bits 0-6 alarms (from the checker), bit7 ON, bit8 HEAT, bit9 COOL, bits10-14 SP (0-30),
-// bit15 heartbeat (toggled by the checker every minute; kept as-is here).
+// bit15 WA_DISABLED (WhatsApp alarms disabled; same as <key>dis). Heartbeat is only the separate "Heartbeat" counter.
 // GET  /api/alarms/:pointId/controls
 // PUT  /api/alarms/:pointId/controls  {on?, heat?, cool?, setpoint?}  -> stores, logs to alarm_events
 //      (event 'control'), and publishes immediately (retained): <prefix>/json and Sensors/Mykovalvomo/Ctrl (all words).
 const CTRL_SP_SHIFT = 10;
 // Sensors/Mykovalvomo/Ctrl: one retained flat JSON for the PLC, e.g. {"F1":25984,"T1":0,"F1dis":0,"T1dis":0,"Heartbeat":123}
-// (<key>dis = alarms temporarily disabled; no free bit in the word: 0-6 alarms, 7-9 ON/HEAT/COOL, 10-14 SP, 15 heartbeat)
+// (<key>dis = WhatsApp alarms disabled, also bit15 of the word: 0-6 alarms, 7-9 ON/HEAT/COOL, 10-14 SP, 15 WA_DISABLED)
 // (point id -> short key; the checker uses the same map).
 const PLC_TOPIC = "Sensors/Mykovalvomo/Ctrl";
 const PLC_KEYS = { ColdStorage1: "F1", Terrario1: "T1" };
@@ -970,8 +970,7 @@ app.put(
     const disabled = Boolean(disabledUntil);
     // "disabled" only mutes WhatsApp in the checker; alarm bits stay as they are
     const alarmBits = pt.last_status === null ? 0 : Number(pt.last_status) & 0x7f;
-    const heartbeat = pt.last_status === null ? 0 : Number(pt.last_status) & 0x8000; // bit15 owned by the checker
-    const word = alarmBits | controlWord(next) | heartbeat;
+    const word = alarmBits | controlWord(next) | (disabled ? 0x8000 : 0); // bit15 = WhatsApp alarms disabled
     await query(
       `UPDATE alarm_point_controls SET on_state = ?, heat = ?, cool = ?, setpoint = ?, warn_delta = ?, warn_min = ?, warn_both = ?,
          high_delta = ?, high_min = ?, low_delta = ?, low_min = ?, alarms_disabled_until = ?, updated_by = ? WHERE point_id = ?`,
@@ -998,7 +997,7 @@ app.put(
         alarms_disabled: disabled,
         alarms_disabled_until: disabledUntil,
         controls: { on: next.on ? 1 : 0, heat: next.heat ? 1 : 0, cool: next.cool ? 1 : 0, setpoint: next.setpoint },
-        layout: { alarms: "0-6", ON: 7, HEAT: 8, COOL: 9, SP: "10-14", HEARTBEAT: 15 },
+        layout: { alarms: "0-6", ON: 7, HEAT: 8, COOL: 9, SP: "10-14", WA_DISABLED: 15 },
         control_changed: new Date().toISOString(),
       };
       await publishRetained(`${pt.topic_prefix}/json`, JSON.stringify(js));
