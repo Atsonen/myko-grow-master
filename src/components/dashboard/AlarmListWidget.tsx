@@ -52,10 +52,11 @@ const activeText = (r: AlarmSummaryRow) => (r.active ? (r.priority === 1 ? "text
 export function AlarmListWidget({ config }: { config: WidgetConfigMap["alarmList"] }) {
   const { tick } = useDashboardData();
   const [hours, setHours] = useState(config.hours ?? 24);
-  const [pointId, setPointId] = useState(config.pointId ?? "");
+  const [points, setPoints] = useState<string[]>(config.pointId ? [config.pointId] : []); // empty = all
+  const [types, setTypes] = useState<string[]>([]); // empty = all
   const [prio, setPrio] = useState<string>(config.priority ? String(config.priority) : "");
   const [activeOnly, setActiveOnly] = useState(Boolean(config.activeOnly));
-  const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "start", dir: -1 });
+  const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "state", dir: 1 }); // active first, then newest
   const [data, setData] = useState<AlarmSummary | null>(null);
   const [err, setErr] = useState("");
   const limit = config.limit ?? 200;
@@ -71,13 +72,19 @@ export function AlarmListWidget({ config }: { config: WidgetConfigMap["alarmList
 
   const rows = useMemo(() => {
     const list = (data?.rows ?? []).filter(
-      (r) => (!pointId || r.pointId === pointId) && (!prio || String(r.priority) === prio) && (!activeOnly || r.active),
+      (r) => (!points.length || points.includes(r.pointId)) && (!types.length || types.includes(r.alarm)) && (!prio || String(r.priority) === prio) && (!activeOnly || r.active),
     );
     return [...list].sort((a, b) => {
       const x = sortVal(a, sort.key), y = sortVal(b, sort.key);
       return (x < y ? -1 : x > y ? 1 : 0) * sort.dir || b.start.localeCompare(a.start);
     });
-  }, [data, pointId, prio, activeOnly, sort]);
+  }, [data, points, types, prio, activeOnly, sort]);
+  const allTypes = useMemo(() => [...new Set((data?.rows ?? []).map((r) => r.alarm))].sort(), [data]);
+  const activeByPoint = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const r of data?.rows ?? []) if (r.active) m.set(r.pointId, (m.get(r.pointId) ?? 0) + 1);
+    return m;
+  }, [data]);
   const activeCount = (data?.rows ?? []).filter((r) => r.active).length;
   const clickSort = (k: SortKey) => setSort((s) => (s.key === k ? { key: k, dir: (s.dir * -1) as 1 | -1 } : { key: k, dir: k === "start" || k === "duration" ? -1 : 1 }));
 
@@ -86,11 +93,13 @@ export function AlarmListWidget({ config }: { config: WidgetConfigMap["alarmList
 
   return (
     <div className="@container flex h-full flex-col gap-2 text-sm" data-testid="alarm-list">
+      <ChipGroup label="Mittauspiste" testId="al-points" allLabel="Kaikki pisteet" selected={points} onChange={setPoints}
+        options={data.points.map((p) => ({ value: p.id, label: p.name, badge: activeByPoint.get(p.id) }))} />
+      {allTypes.length > 0 && (
+        <ChipGroup label="Hälytystyyppi" testId="al-types" allLabel="Kaikki tyypit" selected={types} onChange={setTypes} mono
+          options={allTypes.map((t) => ({ value: t, label: t }))} />
+      )}
       <div className="flex flex-wrap items-center gap-2" data-testid="al-filters">
-        <select aria-label="Mittauspiste" value={pointId} onChange={(e) => setPointId(e.target.value)} className={SEL}>
-          <option value="">Kaikki pisteet</option>
-          {data.points.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-        </select>
         <select aria-label="Prioriteetti" value={prio} onChange={(e) => setPrio(e.target.value)} className={SEL}>
           <option value="">Kaikki prioriteetit</option>
           <option value="1">1 – hälytys</option>
@@ -149,10 +158,10 @@ export function AlarmListWidget({ config }: { config: WidgetConfigMap["alarmList
           <div className="flex min-h-0 flex-1 flex-col gap-2 @2xl:hidden" data-testid="al-cards">
             <select aria-label="Lajittelu" value={`${sort.key}:${sort.dir}`} className={SEL}
               onChange={(e) => { const [k, d] = e.target.value.split(":"); setSort({ key: k as SortKey, dir: Number(d) as 1 | -1 }); }}>
+              <option value="state:1">Aktiiviset ensin</option>
               <option value="start:-1">Uusin ensin</option>
               <option value="start:1">Vanhin ensin</option>
               <option value="priority:1">Prioriteetti</option>
-              <option value="state:1">Aktiiviset ensin</option>
               <option value="duration:-1">Pisin kesto</option>
               <option value="point:1">Mittauspiste A–Ö</option>
             </select>
@@ -176,6 +185,29 @@ export function AlarmListWidget({ config }: { config: WidgetConfigMap["alarmList
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+/** Multi-select as toggle chips (44 px). Empty selection = all. */
+function ChipGroup({ label, options, selected, onChange, allLabel, testId, mono }: {
+  label: string; options: { value: string; label: string; badge?: number }[]; selected: string[];
+  onChange: (v: string[]) => void; allLabel: string; testId: string; mono?: boolean;
+}) {
+  const toggle = (v: string) => onChange(selected.includes(v) ? selected.filter((x) => x !== v) : [...selected, v]);
+  const chip = (on: boolean) =>
+    `min-h-11 rounded-md border px-3 text-sm transition-colors ${on ? "border-zinc-300 bg-zinc-200 font-semibold text-zinc-900" : "border-border text-muted-foreground hover:text-foreground"}`;
+  return (
+    <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label={label} data-testid={testId}>
+      <span className="w-full text-xs uppercase text-muted-foreground @md:w-auto @md:pr-1">{label}</span>
+      <button type="button" aria-pressed={selected.length === 0} onClick={() => onChange([])} className={chip(selected.length === 0)}>{allLabel}</button>
+      {options.map((o) => (
+        <button key={o.value} type="button" aria-pressed={selected.includes(o.value)} onClick={() => toggle(o.value)}
+          className={`${chip(selected.includes(o.value))} ${mono ? "font-mono" : ""} inline-flex items-center gap-1.5`}>
+          {o.label}
+          {o.badge ? <span className="rounded bg-red-600 px-1.5 text-xs font-bold text-white" title={`${o.badge} aktiivista`}>{o.badge}</span> : null}
+        </button>
+      ))}
     </div>
   );
 }

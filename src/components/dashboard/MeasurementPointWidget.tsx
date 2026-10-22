@@ -78,6 +78,13 @@ export function AlarmIndicator({ level, className = "h-5 w-5" }: { level: string
   );
 }
 const MUTED = "text-sm text-muted-foreground";
+/** Muted pastel tints for active control states (ISA-101: distinct from alarm red/yellow, inactive stays gray). */
+export const CTRL_TINT = { on: "text-[#a8d5b5]", heat: "text-[#d9b08f]", cool: "text-[#a9c8e8]" } as const;
+const CTRL_TOGGLE = {
+  on: "border-[#a8d5b5]/60 bg-[#a8d5b5]/15 text-[#a8d5b5]",
+  heat: "border-[#d9b08f]/60 bg-[#d9b08f]/15 text-[#d9b08f]",
+  cool: "border-[#a9c8e8]/60 bg-[#a9c8e8]/15 text-[#a9c8e8]",
+} as const;
 
 /** "Mittauspiste": a measurement point with alarm status from an external checker. */
 export function MeasurementPointWidget({ config }: { config: WidgetConfigMap["measurementPoint"] }) {
@@ -165,9 +172,9 @@ export function MeasurementPointWidget({ config }: { config: WidgetConfigMap["me
           )}
           {point.controls && (
             <div className={`mt-0.5 flex flex-wrap gap-x-3 ${MUTED}`} data-testid="mp-controls-compact">
-              <span className={point.controls.on ? "text-foreground/80" : ""}>{point.controls.on ? "ON" : "OFF"}</span>
-              {point.controls.heat && <span>HEAT</span>}
-              {point.controls.cool && <span>COOL</span>}
+              <span className={point.controls.on ? CTRL_TINT.on : ""} data-testid="mp-on">{point.controls.on ? "ON" : "OFF"}</span>
+              {point.controls.heat && <span className={CTRL_TINT.heat}>HEAT</span>}
+              {point.controls.cool && <span className={CTRL_TINT.cool}>COOL</span>}
               <span>SP {point.controls.setpoint} {point.unit}</span>
               {checkedAgeMin > 5 && <span title="Alarm checker has not reported recently">checker {fmt(point.checked)}</span>}
             </div>
@@ -332,9 +339,9 @@ function ControlsEditor({
     <div className="space-y-2 rounded-md border border-border p-2" data-testid="mp-controls">
       <div className="text-xs font-mono uppercase text-muted-foreground">Controls</div>
       <div className="flex flex-wrap gap-2">
-        {toggle("on", "ON", "border-zinc-400 bg-zinc-200 text-zinc-900")}
-        {toggle("heat", "HEAT", "border-zinc-400 bg-zinc-200 text-zinc-900")}
-        {toggle("cool", "COOL", "border-zinc-400 bg-zinc-200 text-zinc-900")}
+        {toggle("on", "ON", CTRL_TOGGLE.on)}
+        {toggle("heat", "HEAT", CTRL_TOGGLE.heat)}
+        {toggle("cool", "COOL", CTRL_TOGGLE.cool)}
       </div>
       <div className="flex items-center gap-2">
         <span className="text-sm">Setpoint</span>
