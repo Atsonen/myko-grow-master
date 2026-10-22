@@ -835,12 +835,12 @@ app.get(
 // bit15 heartbeat (toggled by the checker every minute; kept as-is here).
 // GET  /api/alarms/:pointId/controls
 // PUT  /api/alarms/:pointId/controls  {on?, heat?, cool?, setpoint?}  -> stores, logs to alarm_events
-//      (event 'control'), and publishes immediately (retained): <prefix>/json and Myko/PLC (all words).
+//      (event 'control'), and publishes immediately (retained): <prefix>/json and Sensors/Mykovalvomo/Ctrl (all words).
 const CTRL_SP_SHIFT = 10;
-// Myko/PLC: one retained flat JSON for the PLC, e.g. {"F1":25984,"T1":0,"F1dis":0,"T1dis":0,"Heartbeat":123}
+// Sensors/Mykovalvomo/Ctrl: one retained flat JSON for the PLC, e.g. {"F1":25984,"T1":0,"F1dis":0,"T1dis":0,"Heartbeat":123}
 // (<key>dis = alarms temporarily disabled; no free bit in the word: 0-6 alarms, 7-9 ON/HEAT/COOL, 10-14 SP, 15 heartbeat)
 // (point id -> short key; the checker uses the same map).
-const PLC_TOPIC = "Myko/PLC";
+const PLC_TOPIC = "Sensors/Mykovalvomo/Ctrl";
 const PLC_KEYS = { ColdStorage1: "F1", Terrario1: "T1" };
 const PLC_ORDER = Object.keys(PLC_KEYS);
 function controlWord(c) {
