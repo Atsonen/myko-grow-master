@@ -221,6 +221,34 @@ export function WidgetSettingsDialog({
             );
           })()}
 
+          {draft.type === "alarmList" && (() => {
+            const c = cfg as WidgetConfigMap["alarmList"];
+            return (
+              <>
+                <Field label="Default time range">
+                  <select value={String(c.hours ?? 24)} onChange={(e) => setCfg({ hours: Number(e.target.value) })} className={selectCls}>
+                    {[[1, "1 h"], [8, "8 h"], [24, "24 h"], [168, "7 d"], [720, "30 d"], [2160, "90 d"]].map(([h, l]) => (
+                      <option key={h} value={h}>{l}</option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Max rows">
+                  <select value={String(c.limit ?? 200)} onChange={(e) => setCfg({ limit: Number(e.target.value) })} className={selectCls}>
+                    {[50, 100, 200, 500, 1000].map((n) => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                </Field>
+                <Field label="Default point filter">
+                  <select value={c.pointId ?? ""} onChange={(e) => setCfg({ pointId: e.target.value || undefined })} className={selectCls}>
+                    <option value="">All points</option>
+                    {alarmPoints.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  </select>
+                </Field>
+                <Field label="Default: active only">
+                  <input type="checkbox" className="h-5 w-5" checked={Boolean(c.activeOnly)} onChange={(e) => setCfg({ activeOnly: e.target.checked || undefined })} />
+                </Field>
+              </>
+            );
+          })()}
           {draft.type === "measurementPoint" && (() => {
             const c = cfg as WidgetConfigMap["measurementPoint"];
             return (

@@ -486,3 +486,29 @@ export async function getAlarmPoints() {
 export async function getAlarmEvents(pointId: string, limit = 20) {
   return requestJson<AlarmEvent[]>(`/api/alarms/${encodeURIComponent(pointId)}/events?limit=${limit}`);
 }
+
+export interface AlarmSummaryRow {
+  id: number;
+  pointId: string;
+  pointName: string;
+  unit: string;
+  alarm: string;
+  bit: number | null;
+  /** 1 = alarm (red square), 2 = warning (yellow triangle) */
+  priority: 1 | 2;
+  start: string;
+  end: string | null;
+  active: boolean;
+  value: number | null;
+  endValue: number | null;
+  durationSec: number;
+}
+export interface AlarmSummary {
+  hours: number;
+  generatedAt: string;
+  points: { id: string; name: string }[];
+  rows: AlarmSummaryRow[];
+}
+export async function getAlarmSummary(hours = 24, limit = 500) {
+  return requestJson<AlarmSummary>(`/api/alarms/summary?hours=${hours}&limit=${limit}`);
+}

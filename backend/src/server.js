@@ -779,6 +779,57 @@ app.get(
   }),
 );
 
+// ---- Alarm summary (SCADA-style alarm list across all points) ----
+// GET /api/alarms/summary?hours=24&limit=500
+// One row per alarm occurrence (start paired with its following clear). Rows that started in the window,
+// plus alarms still active regardless of start time. priority: 1 = alarm level, 2 = warning level.
+app.get(
+  "/api/alarms/summary",
+  asyncRoute(async (req, res) => {
+    const hours = Math.min(24 * 90, Math.max(1, Number(req.query.hours) || 24));
+    const limit = Math.min(2000, Math.max(1, Number(req.query.limit) || 500));
+    const points = await query("SELECT id, name, unit, bits_json FROM alarm_points");
+    const meta = new Map(points.map((p) => [p.id, { name: p.name, unit: p.unit, bits: jsonCol(p.bits_json, []) ?? [] }]));
+    const ev = await query(
+      `SELECT id, point_id, alarm, bit, event, DATE_FORMAT(at, '%Y-%m-%dT%H:%i:%s.%fZ') AS at_iso, value
+       FROM alarm_events WHERE event IN ('start','clear') ORDER BY at ASC, id ASC`,
+    );
+    const open = new Map();
+    const rows = [];
+    for (const e of ev) {
+      const k = `${e.point_id}|${e.alarm}`;
+      if (e.event === "start") {
+        if (open.has(k)) continue; // duplicate start while active
+        const m = meta.get(e.point_id);
+        const level = m?.bits.find((b) => b.key === e.alarm)?.level ?? "alarm";
+        const row = {
+          id: Number(e.id), pointId: e.point_id, pointName: m?.name ?? e.point_id, unit: m?.unit ?? "",
+          alarm: e.alarm, bit: e.bit === null ? null : Number(e.bit), priority: level === "alarm" ? 1 : 2,
+          start: e.at_iso.replace(/\.(\d{3})\d*Z$/, ".$1Z"), end: null, active: true,
+          value: e.value === null ? null : Number(e.value), endValue: null,
+        };
+        open.set(k, row);
+        rows.push(row);
+      } else {
+        const row = open.get(k);
+        if (!row) continue;
+        row.end = e.at_iso.replace(/\.(\d{3})\d*Z$/, ".$1Z");
+        row.active = false;
+        row.endValue = e.value === null ? null : Number(e.value);
+        open.delete(k);
+      }
+    }
+    const from = Date.now() - hours * 3600_000;
+    const now = Date.now();
+    const out = rows
+      .filter((r) => r.active || new Date(r.start).getTime() >= from || (r.end && new Date(r.end).getTime() >= from))
+      .map((r) => ({ ...r, durationSec: Math.round(((r.end ? new Date(r.end).getTime() : now) - new Date(r.start).getTime()) / 1000) }))
+      .sort((a, b) => b.start.localeCompare(a.start))
+      .slice(0, limit);
+    res.json({ hours, generatedAt: new Date().toISOString(), points: points.map((p) => ({ id: p.id, name: p.name })), rows: out });
+  }),
+);
+
 // ---- Alarm point controls (ON/HEAT/COOL/SP), owned by Myko ----
 // Word layout: bits 0-6 alarms (from the checker), bit7 ON, bit8 HEAT, bit9 COOL, bits10-14 SP (0-30),
 // bit15 heartbeat (toggled by the checker every minute; kept as-is here).
@@ -917,7 +968,8 @@ app.put(
     }
     if (changes.length === 0) return res.json({ controls: prev, word: null, published: false });
     const disabled = Boolean(disabledUntil);
-    const alarmBits = pt.last_status === null || disabled ? 0 : Number(pt.last_status) & 0x7f;
+    // "disabled" only mutes WhatsApp in the checker; alarm bits stay as they are
+    const alarmBits = pt.last_status === null ? 0 : Number(pt.last_status) & 0x7f;
     const heartbeat = pt.last_status === null ? 0 : Number(pt.last_status) & 0x8000; // bit15 owned by the checker
     const word = alarmBits | controlWord(next) | heartbeat;
     await query(
@@ -943,7 +995,6 @@ app.put(
         ...last,
         status: word,
         alarm_bits: alarmBits,
-        ...(disabled ? { active: [] } : {}),
         alarms_disabled: disabled,
         alarms_disabled_until: disabledUntil,
         controls: { on: next.on ? 1 : 0, heat: next.heat ? 1 : 0, cool: next.cool ? 1 : 0, setpoint: next.setpoint },

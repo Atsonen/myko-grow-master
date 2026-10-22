@@ -24,7 +24,6 @@ function loadPoints(tick: number) {
 
 export type PointLevel = "ok" | "warn" | "alarm" | "unknown" | "disabled";
 export function pointLevel(p: AlarmPoint): PointLevel {
-  if (alarmsDisabled(p)) return "disabled";
   if (p.status === null) return "unknown";
   const levels = p.active.map((k) => p.bits.find((b) => b.key === k)?.level ?? "alarm");
   if (levels.includes("alarm")) return "alarm";
@@ -132,14 +131,14 @@ export function MeasurementPointWidget({ config }: { config: WidgetConfigMap["me
 
   const level = pointLevel(point);
   const disabled = alarmsDisabled(point);
-  const active = disabled ? [] : point.active;
+  const active = point.active; // disabling only mutes WhatsApp; state/colour stay live
   const bitLevel = (k: string) => point.bits.find((b) => b.key === k)?.level ?? "alarm";
   const value = point.current?.value ?? point.alarmValue;
   const checkedAgeMin = point.checked ? (Date.now() - new Date(point.checked).getTime()) / 60_000 : Infinity;
 
   const TAB = "min-h-11 flex-1 rounded-md px-3 text-sm font-semibold text-muted-foreground data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow";
   return (
-    <div className={`h-full px-3 py-2.5 ${LEVEL_STYLE[level]}`} data-testid="measurement-point" data-level={level}>
+    <div className={`h-full px-3 py-2.5 ${LEVEL_STYLE[level]} ${disabled && (level === "ok" || level === "unknown") ? LEVEL_STYLE.disabled : ""}`} data-testid="measurement-point" data-level={level}>
       <div className="flex w-full items-start gap-2">
         <div className="min-w-0 flex-1">
           <div className="truncate text-[15px] font-medium leading-6 text-muted-foreground" data-testid="mp-name">{config.name || point.name}</div>
@@ -150,9 +149,7 @@ export function MeasurementPointWidget({ config }: { config: WidgetConfigMap["me
             <span className="text-base text-muted-foreground">{point.unit}</span>
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1" data-testid="mp-chips">
-            {disabled ? (
-              <span className={MUTED} data-testid="mp-disabled">Hälytykset pois {hm(point.controls!.alarmsDisabledUntil!)} asti</span>
-            ) : active.length === 0 ? (
+            {active.length === 0 ? (
               <span className={MUTED}>Normaali</span>
             ) : (
               active.map((k) => (
@@ -163,6 +160,9 @@ export function MeasurementPointWidget({ config }: { config: WidgetConfigMap["me
               ))
             )}
           </div>
+          {disabled && (
+            <div className={MUTED} data-testid="mp-disabled">WhatsApp-hälytykset pois {hm(point.controls!.alarmsDisabledUntil!)} asti</div>
+          )}
           {point.controls && (
             <div className={`mt-0.5 flex flex-wrap gap-x-3 ${MUTED}`} data-testid="mp-controls-compact">
               <span className={point.controls.on ? "text-foreground/80" : ""}>{point.controls.on ? "ON" : "OFF"}</span>
@@ -198,7 +198,8 @@ export function MeasurementPointWidget({ config }: { config: WidgetConfigMap["me
                 <div className="text-sm text-muted-foreground tabular-nums">
                   {value === null || value === undefined ? "—" : value.toFixed(1)} {point.unit}
                   {point.controls ? ` · SP ${point.controls.setpoint} ${point.unit}` : ""}
-                  {disabled ? ` · hälytykset pois ${hm(point.controls!.alarmsDisabledUntil!)} asti` : active.length ? ` · ${active.join(", ")}` : " · OK"}
+                  {active.length ? ` · ${active.join(", ")}` : " · Normaali"}
+                  {disabled ? ` · WhatsApp-hälytykset pois ${hm(point.controls!.alarmsDisabledUntil!)} asti` : ""}
                 </div>
               </div>
               <DialogPrimitive.Close aria-label="Sulje" data-testid="mp-close" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground">
@@ -386,18 +387,18 @@ function AlarmDisable({ controls, busy, onChange }: { controls: AlarmControls; b
   const until = controls.alarmsDisabledUntil;
   return (
     <div className="space-y-2 rounded-md border border-border p-2" data-testid="mp-disable">
-      <div className="text-xs font-mono uppercase text-muted-foreground">Alarms</div>
+      <div className="text-xs font-mono uppercase text-muted-foreground">WhatsApp-hälytykset</div>
       {until ? (
         <div className="flex flex-wrap items-center gap-2">
-          <span className="font-semibold">Disabled until {fmt(until)}</span>
+          <span className="font-semibold">WhatsApp-hälytykset pois {fmt(until)} asti</span>
           <button type="button" disabled={busy} onClick={() => onChange({ disableMinutes: 0 })}
             className="min-h-11 rounded-md border border-zinc-400 bg-zinc-200 text-zinc-900 px-3 text-sm font-semibold disabled:opacity-50">
-            Re-enable now
+            Palauta nyt
           </button>
         </div>
       ) : (
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-sm">Disable for</span>
+          <span className="text-sm">WhatsApp-hälytykset pois</span>
           {DISABLE_CHOICES.map(([m, label]) => (
             <button key={m} type="button" disabled={busy} onClick={() => onChange({ disableMinutes: m })}
               className="min-h-11 min-w-[3.5rem] rounded-md border border-border bg-secondary/40 px-3 text-sm font-semibold disabled:opacity-50">
@@ -406,7 +407,7 @@ function AlarmDisable({ controls, busy, onChange }: { controls: AlarmControls; b
           ))}
         </div>
       )}
-      <div className="text-[11px] text-muted-foreground">Re-enabled automatically after the time is up (WhatsApp notice).</div>
+      <div className="text-[11px] text-muted-foreground">Vain WhatsApp-viestit vaimennetaan; hälytysbitit, PLC, väri ja tapahtumaloki toimivat normaalisti. Palautuu automaattisesti ajan päätyttyä (WhatsApp-ilmoitus).</div>
     </div>
   );
 }

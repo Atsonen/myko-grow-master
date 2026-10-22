@@ -54,6 +54,7 @@ function mobileHeight(w: DashboardWidget): number | undefined {
       return 150;
     case "statusBits":
     case "measurementPoint":
+    case "alarmList":
     case "note":
       return undefined; // natural height
     default:

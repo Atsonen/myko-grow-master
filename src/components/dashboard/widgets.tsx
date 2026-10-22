@@ -19,6 +19,7 @@ import { useDashboardData } from "./DashboardData";
 import { AXIS_TICK, autoBucket, LEGEND_PROPS, resolveSeries, timeTickLabel, timeTicks, useSeriesDefaults } from "@/lib/seriesStyle";
 import { useWidth } from "@/lib/useWidth";
 import { StatusBitsWidget } from "./StatusBitsWidget";
+import { AlarmListWidget } from "./AlarmListWidget";
 import { MeasurementPointWidget } from "./MeasurementPointWidget";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { renderSeriesChildren } from "@/components/trends/SeriesStyleEditor";
@@ -328,6 +329,8 @@ export function WidgetBody({ widget }: { widget: DashboardWidget }) {
       return <UnitCurveWidget config={widget.config as WidgetConfigMap["unitCurve"]} />;
     case "measurementPoint":
       return <MeasurementPointWidget config={widget.config as WidgetConfigMap["measurementPoint"]} />;
+    case "alarmList":
+      return <AlarmListWidget config={widget.config as WidgetConfigMap["alarmList"]} />;
     case "statusBits":
       return <StatusBitsWidget config={widget.config as WidgetConfigMap["statusBits"]} />;
     case "note":
@@ -359,6 +362,8 @@ export function defaultTitle(widget: DashboardWidget, labelFor: (id: string) => 
       return "Note";
     case "measurementPoint":
       return "Mittauspiste";
+    case "alarmList":
+      return "Hälytyslista";
     case "statusBits":
       return `Status · ${(widget.config as WidgetConfigMap["statusBits"]).variableKey ?? "word"}`;
   }
