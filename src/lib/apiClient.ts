@@ -524,10 +524,16 @@ export interface PidValues {
   HGain: number; HTi: number; HTd: number; HCyc: number;
   CGain: number; CTi: number; CTd: number; CCyc: number;
 }
-export interface PidStatus { key: string; pointId: string; at: string | null; values: Partial<PidValues> | null }
+export interface PidStatus {
+  key: string; pointId: string; alarmPointId: string; at: string | null; values: Partial<PidValues> | null;
+  /** active PID alarm keys from the backend evaluator (EI_AUTO, PID_VIKA, ERRORBITS, OPCUA, SATUROITUNUT) */
+  active: string[]; intended: boolean;
+  trend?: { t: number; pv?: number; sp?: number; out?: number }[];
+  commands: { alarm: string; at: string }[];
+}
 export type PidCommand = { ManualEnable?: boolean; ManualValue?: number; Mode?: 0 | 3 | 4; ModeActivate?: true; ErrorAck?: true };
-export async function getPid(key: string) {
-  return requestJson<PidStatus>(`/api/pid/${encodeURIComponent(key)}`);
+export async function getPid(key: string, trend = false) {
+  return requestJson<PidStatus>(`/api/pid/${encodeURIComponent(key)}${trend ? "?trend=1" : ""}`);
 }
 export async function sendPidCommand(key: string, cmd: PidCommand) {
   return requestJson<{ id: string; results?: Record<string, unknown>; error?: string }>(`/api/pid/${encodeURIComponent(key)}/cmd`, {

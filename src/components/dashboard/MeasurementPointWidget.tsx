@@ -98,7 +98,7 @@ export function MeasurementPointWidget({ config }: { config: WidgetConfigMap["me
   const [evTick, setEvTick] = useState(0);
   const id = config.pointId;
   const pidKey = id ? PID_KEY_BY_POINT[id] : undefined;
-  const pid = usePid(pidKey, open ? 2000 : 5000);
+  const pid = usePid(pidKey, open ? 2000 : 5000, open);
 
   const applyControls = async (patch: AlarmControlsPatch): Promise<boolean> => {
     if (!id) return false;
@@ -139,7 +139,7 @@ export function MeasurementPointWidget({ config }: { config: WidgetConfigMap["me
   if (err) return <div className="text-xs text-destructive">{err}</div>;
   if (!point) return <div className="text-xs text-muted-foreground italic">Loading…</div>;
 
-  const pidAbn = pidKey ? pidAbnormal(pid.v, pid.stale) : [];
+  const pidAbn = pidKey ? pidAbnormal(pid) : [];
   const baseLevel = pointLevel(point);
   const level: PointLevel = pidAbn.some((a) => a.level === "alarm") ? "alarm" : pidAbn.length && (baseLevel === "ok" || baseLevel === "unknown") ? "warn" : baseLevel;
   const disabled = alarmsDisabled(point);
@@ -296,7 +296,7 @@ export function MeasurementPointWidget({ config }: { config: WidgetConfigMap["me
               {pidKey && (
                 <>
                   <TabsPrimitive.Content value="saato" className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3 text-sm">
-                    <PidControlTab pidKey={pidKey} v={pid.v} unit={point.unit} refresh={pid.refresh}
+                    <PidControlTab pidKey={pidKey} pid={pid} unit={point.unit}
                       onSetpoint={(sp) => applyControls({ setpoint: sp })} />
                     {point.controls && (
                       <>

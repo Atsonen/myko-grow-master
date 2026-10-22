@@ -3,6 +3,7 @@ import dotenv from "dotenv";
 import express from "express";
 import mqtt from "mqtt";
 import { query, withConnection } from "./db.js";
+import { PID_BY_POINT, registerPidRoutes } from "./pid.js";
 import { normalizeOrigins, registerTraceRoutes, writeOrigins } from "./trace.js";
 
 dotenv.config();
@@ -903,79 +904,8 @@ function publishRetained(topic, message) {
     });
   });
 }
-// ---- OPC UA PID faceplates (opcua-bridge: Sensors/PLC_2/<key>_PID state, Myko/Cmd/<key>_PID commands, .../ack) ----
-const PID_POINTS = { F1: "ColdStorage1" };
-const PID_BY_POINT = Object.fromEntries(Object.entries(PID_POINTS).map(([k, v]) => [v, k]));
-const pidState = {}; // key -> { at, values }
-const pidAcks = new Map(); // cmd id -> resolve
-let pidSubscribed = false;
-function pidSubscribe() {
-  if (pidSubscribed) return;
-  pidSubscribed = true;
-  const c = mqttPublisher();
-  const topics = Object.keys(PID_POINTS).flatMap((k) => [`Sensors/PLC_2/${k}_PID`, `Myko/Cmd/${k}_PID/ack`]);
-  c.on("connect", () => c.subscribe(topics, { qos: 0 }));
-  c.on("message", (topic, buf) => {
-    let d;
-    try { d = JSON.parse(buf.toString()); } catch { return; }
-    const m = /^Sensors\/PLC_2\/(\w+)_PID$/.exec(topic);
-    if (m) { pidState[m[1]] = { at: new Date().toISOString(), values: { ...(pidState[m[1]]?.values ?? {}), ...d } }; return; }
-    if (topic.endsWith("/ack") && d?.id && pidAcks.has(d.id)) { pidAcks.get(d.id)(d); pidAcks.delete(d.id); }
-  });
-}
-pidSubscribe();
-const PID_CMD_KEYS = ["Setpoint", "ManualEnable", "ManualValue", "Mode", "ModeActivate", "ErrorAck"];
-async function pidCommand(key, cmd, by) {
-  const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-  const ackP = new Promise((resolve) => {
-    pidAcks.set(id, resolve);
-    setTimeout(() => { if (pidAcks.delete(id)) resolve(null); }, 6000);
-  });
-  const c = mqttPublisher();
-  await new Promise((res, rej) => c.publish(`Myko/Cmd/${key}_PID`, JSON.stringify({ id, by, ...cmd }), { qos: 1, retain: false }, (e) => (e ? rej(e) : res())));
-  const ack = await ackP;
-  if (!ack) return { id, error: "no ack from opcua-bridge (6 s)" };
-  const failed = Object.entries(ack.results ?? {}).filter(([, v]) => typeof v === "string");
-  return { id, results: ack.results, error: failed.length ? failed.map(([k, v]) => `${k}: ${v}`).join("; ") : undefined };
-}
-app.get(
-  "/api/pid/:key",
-  asyncRoute(async (req, res) => {
-    const key = req.params.key;
-    if (!PID_POINTS[key]) return res.status(404).json({ error: "Unknown PID" });
-    res.json({ key, pointId: PID_POINTS[key], at: pidState[key]?.at ?? null, values: pidState[key]?.values ?? null });
-  }),
-);
-// POST /api/pid/:key/cmd  {ManualEnable?:bool, ManualValue?:-100..100, Mode?:0|3|4, ModeActivate?:true, ErrorAck?:true}
-// Setpoint goes through PUT /api/alarms/:pointId/controls (keeps the status-word SP bits in sync).
-app.post(
-  "/api/pid/:key/cmd",
-  asyncRoute(async (req, res) => {
-    const key = req.params.key;
-    const pointId = PID_POINTS[key];
-    if (!pointId) return res.status(404).json({ error: "Unknown PID" });
-    const b = req.body ?? {};
-    const bad = (m) => res.status(400).json({ error: m });
-    const cmd = {};
-    for (const [k, v] of Object.entries(b)) {
-      if (!PID_CMD_KEYS.includes(k) || k === "Setpoint") return bad(`${k} not allowed here`);
-      if (["ManualEnable", "ModeActivate", "ErrorAck"].includes(k) && typeof v !== "boolean") return bad(`${k} must be true/false`);
-      if ((k === "ModeActivate" || k === "ErrorAck") && v !== true) return bad(`${k} is a pulse (true)`);
-      if (k === "ManualValue" && !(typeof v === "number" && v >= -100 && v <= 100)) return bad("ManualValue must be -100..100 %");
-      if (k === "Mode" && ![0, 3, 4].includes(v)) return bad("Mode must be 0, 3 or 4");
-      cmd[k] = v;
-    }
-    if ("Mode" in cmd !== "ModeActivate" in cmd) return bad("Mode and ModeActivate go together");
-    if (!Object.keys(cmd).length) return bad("empty command");
-    const r = await pidCommand(key, cmd, "dashboard");
-    const label = `PID ${Object.entries(cmd).map(([k, v]) => `${k}=${v}`).join(", ")}${r.error ? " (VIRHE)" : ""}`.slice(0, 80);
-    await query(
-      "INSERT INTO alarm_events (point_id, alarm, bit, event, at, value, status_word) VALUES (?, ?, NULL, 'control', UTC_TIMESTAMP(3), NULL, NULL)",
-      [pointId, label],
-    ).catch((e) => console.error("[pid] event log", e.message));
-    res.status(r.error ? 502 : 200).json(r);
-  }),
-);
+// ---- OPC UA PID faceplates + PID alarm points: see pid.js ----
+const { pidCommand } = registerPidRoutes(app, { mqttClient: mqttPublisher, query, asyncRoute });
 
 app.get(
   "/api/alarms/:pointId/controls",
@@ -1041,7 +971,19 @@ app.put(
         changes.push(["DIS", 1, `Hälytykset pois päältä klo ${helTime(until)} asti`]);
       }
     }
-    if (changes.length === 0) return res.json({ controls: prev, word: null, published: false });
+    if (changes.length === 0) {
+      // nothing changed in Myko, but "Aseta" on a PID point still (re)writes the setpoint to the PLC
+      const pk = PID_BY_POINT[pointId];
+      if (pk && "setpoint" in b) {
+        const opcua = await pidCommand(pk, { Setpoint: next.setpoint }, "dashboard").catch((e) => ({ error: e.message }));
+        await query(
+          "INSERT INTO alarm_events (point_id, alarm, bit, event, at, value, status_word) VALUES (?, ?, NULL, 'control', UTC_TIMESTAMP(3), ?, NULL)",
+          [pointId, `SP ${next.setpoint} → PLC (OPC UA)${opcua.error ? " VIRHE" : ""}`, next.setpoint],
+        );
+        return res.json({ controls: prev, word: null, published: !opcua.error, publishError: opcua.error ? `OPC UA: ${opcua.error}` : undefined, opcua });
+      }
+      return res.json({ controls: prev, word: null, published: false });
+    }
     const disabled = Boolean(disabledUntil);
     // "disabled" only mutes WhatsApp in the checker; alarm bits stay as they are
     const alarmBits = pt.last_status === null ? 0 : Number(pt.last_status) & 0x7f;
@@ -1090,7 +1032,7 @@ app.put(
     // New route: points with an OPC UA PID also get the exact setpoint written to PID_Temp.Setpoint via the bridge.
     let opcua;
     const pidKey = PID_BY_POINT[pointId];
-    if (pidKey && next.setpoint != null) { // always write: PLC value may differ from DB (e.g. after download)
+    if (pidKey && "setpoint" in b) { // always write on Aseta (PLC may differ from DB, e.g. after download); not on ON/HEAT/COOL toggles
       opcua = await pidCommand(pidKey, { Setpoint: next.setpoint }, "dashboard").catch((e) => ({ error: e.message }));
       if (opcua.error) { published = false; publishError = `OPC UA: ${opcua.error}`; }
     }

@@ -4,6 +4,8 @@ opcua:
   username: null
   password: null
   publishing_interval_ms: 1000
+  # Siemens server interfaces root (ns resolved from the URI at connect, not hardcoded)
+  interfaces_root: {uri: "http://www.siemens.com/simatic-s7-opcua", id: ServerInterfaces}
 mqtt:
   host: 192.168.1.51
   port: 1883
@@ -13,58 +15,61 @@ publish:
   mode: on_change         # publish whole topic object when any of its nodes changes
   min_interval_s: 1.0     # throttle per topic
   heartbeat_s: 60         # republish last values even without change
+# Node addressing: "@<Interface>/<path>" = browse path under ServerInterfaces by browse names
+# ("*" as interface = search all interfaces for the next segment), or a plain node id "ns=..;i=..".
+# Paths are resolved at every connect, so renamed interfaces / changed ns indexes / added nodes do not break.
 topics:
   Sensors/PLC_2:
-    LVL: ns=4;i=5
-    Temp: ns=4;i=4
-    G_Temp_Mid: ns=4;i=10
-    G_Temp_Top: ns=4;i=11
-    G_Temp_PF1: ns=4;i=12
-    DWC_Air_Temp_TT: ns=4;i=7
-    DWC_ppm: ns=4;i=8
-    DWC_Level: ns=4;i=9
-    DWC_Water_Temp: ns=4;i=13
-    F1_Temp: ns=4;i=14
-    # F1_Word: ns=4;i=?     <- not exposed yet in server interface
-    # StatusWord: ns=4;i=?  <- not exposed yet
-  Sensors/PLC_2/F1_PID:         # PID_Temp_F1 instance DB (OPC UA interface F1)
-    SP: ns=5;i=3
-    PV: ns=5;i=4
-    Dist: ns=5;i=6
-    ManEn: ns=5;i=7
-    ManVal: ns=5;i=8
-    ScPV: ns=5;i=12
-    OutHeat: ns=5;i=13
-    OutCool: ns=5;i=14
-    SPLimH: ns=5;i=19
-    SPLimL: ns=5;i=20
-    PVWarnH: ns=5;i=21
-    PVWarnL: ns=5;i=22
-    State: ns=5;i=23
-    Err: ns=5;i=24
-    ErrBits: ns=5;i=25
-    Mode: ns=5;i=26
-    Warn: ns=5;i=38
-    CSP: ns=5;i=41
-    OutSum: ns=5;i=44
-    DisCool: ns=5;i=49
-    InHi: ns=5;i=62
-    InLo: ns=5;i=63
-    ActCool: ns=5;i=68
-    HGain: ns=5;i=191
-    HTi: ns=5;i=192
-    HTd: ns=5;i=193
-    HCyc: ns=5;i=197
-    CGain: ns=5;i=201
-    CTi: ns=5;i=202
-    CTd: ns=5;i=203
-    CCyc: ns=5;i=207
-# Write path (whitelist). Bridge subscribes to topic, writes OPC UA, acks to <topic>/ack.
-commands:
-  Myko/Cmd/F1_PID:
-    Setpoint:     {node: "ns=5;i=3",  type: Float,   clamp_to: [InLo, InHi], state_topic: Sensors/PLC_2/F1_PID}
-    ManualEnable: {node: "ns=5;i=7",  type: Boolean}
-    ManualValue:  {node: "ns=5;i=8",  type: Float,   min: -100, max: 100}
-    Mode:         {node: "ns=5;i=26", type: Int16,   allowed: [0, 3, 4]}
-    ModeActivate: {node: "ns=5;i=11", type: Boolean, pulse: true}
-    ErrorAck:     {node: "ns=5;i=9",  type: Boolean, pulse: true}
+    LVL: "@*/Sensors_DB/Input/LVL"
+    Temp: "@*/Sensors_DB/Input/Temp"
+    G_Temp_Mid: "@*/Sensors_DB/Output/G_Temp_Mid"
+    G_Temp_Top: "@*/Sensors_DB/Output/G_Temp_Top"
+    G_Temp_PF1: "@*/Sensors_DB/Output/G_Temp_PF-1"
+    DWC_Air_Temp_TT: "@*/Sensors_DB/Output/DWC_Air_Temp_TT"
+    DWC_ppm: "@*/Sensors_DB/Output/DWC_ppm"
+    DWC_Level: "@*/Sensors_DB/Output/DWC_Level"
+    DWC_Water_Temp: "@*/Sensors_DB/Output/DWC_Water_Temp"
+    F1_Temp: "@*/Sensors_DB/Output/F1_Temp"
+# PID_Temp instances: state -> Sensors/PLC_2/<key>_PID, commands <- Myko/Cmd/<key>_PID (ack on .../ack)
+pids:
+  F1: {instance: PID_Temp_F1}          # Kylmäsäilytystila 1
+  T1: {instance: Terrarium_1_Temp}     # Terrario 1
+pid_nodes:   # short key -> path inside the instance DB
+  SP: Setpoint
+  PV: Input
+  Dist: Disturbance
+  ManEn: ManualEnable
+  ManVal: ManualValue
+  ScPV: ScaledInput
+  OutHeat: OutputHeat
+  OutCool: OutputCool
+  SPLimH: SetpointLimit_H
+  SPLimL: SetpointLimit_L
+  PVWarnH: InputWarning_H
+  PVWarnL: InputWarning_L
+  State: State
+  Err: Error
+  ErrBits: ErrorBits
+  Mode: Mode
+  Warn: Warning
+  CSP: CurrentSetpoint
+  OutSum: PidOutputSum
+  DisCool: DisableCooling
+  InHi: Config/InputUpperLimit
+  InLo: Config/InputLowerLimit
+  ActCool: Config/ActivateCooling
+  HGain: Retain/CtrlParams/Heat/Gain
+  HTi: Retain/CtrlParams/Heat/Ti
+  HTd: Retain/CtrlParams/Heat/Td
+  HCyc: Retain/CtrlParams/Heat/Cycle
+  CGain: Retain/CtrlParams/Cool/Gain
+  CTi: Retain/CtrlParams/Cool/Ti
+  CTd: Retain/CtrlParams/Cool/Td
+  CCyc: Retain/CtrlParams/Cool/Cycle
+pid_commands:  # write whitelist (same for every PID); tuning params are NOT writable
+  Setpoint:     {path: Setpoint,     type: Float,   clamp_to: [InLo, InHi]}
+  ManualEnable: {path: ManualEnable, type: Boolean}
+  ManualValue:  {path: ManualValue,  type: Float,   min: -100, max: 100}
+  Mode:         {path: Mode,         type: Int16,   allowed: [0, 3, 4]}
+  ModeActivate: {path: ModeActivate, type: Boolean, pulse: true}
+  ErrorAck:     {path: ErrorAck,     type: Boolean, pulse: true}
