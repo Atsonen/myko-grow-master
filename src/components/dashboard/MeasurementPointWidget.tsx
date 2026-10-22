@@ -5,7 +5,7 @@ import * as TabsPrimitive from "@radix-ui/react-tabs";
 import { getAlarmEvents, getAlarmPoints, setAlarmControls, type AlarmControls, type AlarmControlsPatch, type AlarmEvent, type AlarmLimits, type AlarmPoint } from "@/lib/apiClient";
 import { toast } from "sonner";
 import { useDashboardData } from "./DashboardData";
-import { PID_KEY_BY_POINT, PidCompact, PidControlTab, PidParamsTab, PidStateTab, pidAbnormal, usePid } from "./PidFaceplate";
+import { PID_KEY_BY_POINT, PidCompact, PidControlTab, PidParamsTab, PidStateTab, PidModeBanner, pidAbnormal, pidModeIndication, usePid } from "./PidFaceplate";
 import type { WidgetConfigMap } from "./types";
 
 const HEL: Intl.DateTimeFormatOptions = { timeZone: "Europe/Helsinki", day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" };
@@ -140,6 +140,7 @@ export function MeasurementPointWidget({ config }: { config: WidgetConfigMap["me
   if (!point) return <div className="text-xs text-muted-foreground italic">Loading…</div>;
 
   const pidAbn = pidKey ? pidAbnormal(pid) : [];
+  const modeInd = pidKey ? pidModeIndication(pid) : null;
   const baseLevel = pointLevel(point);
   const level: PointLevel = pidAbn.some((a) => a.level === "alarm") ? "alarm" : pidAbn.length && (baseLevel === "ok" || baseLevel === "unknown") ? "warn" : baseLevel;
   const disabled = alarmsDisabled(point);
@@ -150,7 +151,8 @@ export function MeasurementPointWidget({ config }: { config: WidgetConfigMap["me
 
   const TAB = "min-h-11 flex-1 whitespace-nowrap rounded-md px-1.5 text-[13px] min-[400px]:px-3 min-[400px]:text-sm font-semibold text-muted-foreground data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow";
   return (
-    <div className={`@container h-full px-3 py-2.5 ${LEVEL_STYLE[level]} ${disabled && (level === "ok" || level === "unknown") ? LEVEL_STYLE.disabled : ""}`} data-testid="measurement-point" data-level={level}>
+    <div className={`@container h-full px-3 py-2.5 ${LEVEL_STYLE[level]} ${disabled && (level === "ok" || level === "unknown") && !modeInd ? LEVEL_STYLE.disabled : ""} ${modeInd?.outline ?? ""}`} data-testid="measurement-point" data-level={level}>
+      <PidModeBanner ind={modeInd} className="mb-1.5" />
       <div className="flex w-full items-start gap-2">
         <div className="min-w-0 flex-1 overflow-hidden">
           <div className="truncate text-[15px] font-medium leading-6 text-muted-foreground" data-testid="mp-name">{config.name || point.name}</div>
@@ -214,6 +216,7 @@ export function MeasurementPointWidget({ config }: { config: WidgetConfigMap["me
           >
             <div className={`flex items-center gap-3 border-b border-border p-3 ${LEVEL_STYLE[level]}`}>
               <div className="min-w-0 flex-1">
+                <PidModeBanner ind={modeInd} className="mb-1" />
                 <DialogPrimitive.Title className="truncate text-lg font-semibold">{config.name || point.name}</DialogPrimitive.Title>
                 <div className="text-sm text-muted-foreground tabular-nums">
                   {value === null || value === undefined ? "—" : value.toFixed(1)} {point.unit}

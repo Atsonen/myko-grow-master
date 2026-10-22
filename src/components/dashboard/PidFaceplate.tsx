@@ -35,7 +35,7 @@ export function usePid(key: string | undefined, intervalMs = 2000, trend = false
     return () => { stop = true; clearInterval(t); };
   }, [key, intervalMs, n, trend]);
   const at = s?.at ?? null;
-  const stale = !at || Date.now() - new Date(at).getTime() > 90_000;
+  const stale = !at || Date.now() - new Date(at).getTime() > 60_000;
   return { v: s?.values ?? null, at, stale, s, refresh: () => setN((x) => x + 1) };
 }
 
@@ -67,6 +67,27 @@ export function OutputBar({ v }: { v: Partial<PidValues> }) {
         <span className={heat > 0 ? TINT.heat : ""}>H<span className="hidden @[13rem]:inline">EAT</span> {f1(heat, 0)}%</span>
       </div>
     </div>
+  );
+}
+
+/** ISA-101 mode indication when State != 3: outline colour (edge, so alarm rings stay visible inside) + full-width banner.
+ * cyan = operator modes (manual/inactive), violet = tuning, red = substitute output / error, grey = no OPC UA data. */
+export type PidModeInd = { text: string; outline: string; banner: string } | null;
+export function pidModeIndication(p: Pid): PidModeInd {
+  const v = p.v;
+  if (p.stale || !v) return { text: "EI YHTEYTTÄ", outline: "outline outline-[3px] -outline-offset-[3px] outline-zinc-400", banner: "bg-zinc-600 text-zinc-50" };
+  const s = v.State;
+  if (s === 3 || s === undefined) return null;
+  const pct = (x: number | undefined) => `${f1(x, 0)} %`;
+  const err = s === 5 || (s === 0 && v.Err === true);
+  const cls = err ? ["outline-red-500", "bg-red-600 text-white"] : s === 1 || s === 2 ? ["outline-violet-400", "bg-violet-600 text-white"] : ["outline-cyan-400", "bg-cyan-600 text-white"];
+  const text = s === 0 ? (v.Err ? "INAKTIIVI (VIKA)" : "INAKTIIVI") : s === 1 ? `ESIVIRITYS ${pct(v.Prog)}` : s === 2 ? `HIENOVIRITYS ${pct(v.Prog)}` : s === 4 ? `MANUAALI ${pct(v.ManVal)}` : s === 5 ? "KORVAAVA ARVO" : `TILA ${s}`;
+  return { text, outline: `outline outline-[3px] -outline-offset-[3px] ${cls[0]}`, banner: cls[1] };
+}
+export function PidModeBanner({ ind, className = "" }: { ind: PidModeInd; className?: string }) {
+  if (!ind) return null;
+  return (
+    <div role="status" data-testid="pid-mode-banner" className={`w-full truncate rounded-sm px-2 py-1 text-center text-base font-bold uppercase tracking-wide tabular-nums ${ind.banner} ${className}`}>{ind.text}</div>
   );
 }
 
