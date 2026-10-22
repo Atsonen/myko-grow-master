@@ -792,7 +792,8 @@ app.get(
     const points = await query("SELECT id, name, unit, bits_json FROM alarm_points");
     const meta = new Map(points.map((p) => [p.id, { name: p.name, unit: p.unit, bits: jsonCol(p.bits_json, []) ?? [] }]));
     const ev = await query(
-      `SELECT id, point_id, alarm, bit, event, DATE_FORMAT(at, '%Y-%m-%dT%H:%i:%s.%fZ') AS at_iso, value
+      `SELECT id, point_id, alarm, bit, event, DATE_FORMAT(at, '%Y-%m-%dT%H:%i:%s.%fZ') AS at_iso, value,
+              DATE_FORMAT(acked_at, '%Y-%m-%dT%H:%i:%s.%fZ') AS acked_iso, acked_by
        FROM alarm_events WHERE event IN ('start','clear') ORDER BY at ASC, id ASC`,
     );
     const open = new Map();
@@ -808,6 +809,7 @@ app.get(
           alarm: e.alarm, bit: e.bit === null ? null : Number(e.bit), priority: level === "alarm" ? 1 : 2,
           start: e.at_iso.replace(/\.(\d{3})\d*Z$/, ".$1Z"), end: null, active: true,
           value: e.value === null ? null : Number(e.value), endValue: null,
+          acked: Boolean(e.acked_iso), ackedAt: e.acked_iso ? e.acked_iso.replace(/\.(\d{3})\d*Z$/, ".$1Z") : null, ackedBy: e.acked_by ?? null,
         };
         open.set(k, row);
         rows.push(row);
@@ -828,6 +830,51 @@ app.get(
       .sort((a, b) => b.start.localeCompare(a.start))
       .slice(0, limit);
     res.json({ hours, generatedAt: new Date().toISOString(), points: points.map((p) => ({ id: p.id, name: p.name })), rows: out });
+  }),
+);
+
+// ---- Alarm acknowledgment (Myko alarm list only; NOT PLC ErrorAck) ----
+// Ack state lives on the 'start' event row (acked_at/acked_by); every ack is audited as an alarm_events row
+// event='ack' (alarm = original code, bit/value copied). One shared function for single and bulk ack.
+async function ackAlarms(ids, by, dryRun) {
+  const clean = [...new Set(ids.map(Number).filter((n) => Number.isInteger(n) && n > 0))].slice(0, 2000);
+  if (!clean.length) return { requested: 0, acked: [], skipped: [] };
+  const rows = await query(
+    `SELECT id, point_id, alarm, bit, value, acked_at FROM alarm_events WHERE event = 'start' AND id IN (${clean.map(() => "?").join(",")})`, clean);
+  const todo = rows.filter((r) => !r.acked_at);
+  const found = new Set(rows.map((r) => Number(r.id)));
+  const skipped = [
+    ...clean.filter((i) => !found.has(i)).map((id) => ({ id, reason: "not found" })),
+    ...rows.filter((r) => r.acked_at).map((r) => ({ id: Number(r.id), reason: "already acknowledged" })),
+  ];
+  if (!dryRun) {
+    for (const r of todo) {
+      const u = await query("UPDATE alarm_events SET acked_at = UTC_TIMESTAMP(3), acked_by = ? WHERE id = ? AND acked_at IS NULL", [by, r.id]);
+      if (!u.affectedRows) { skipped.push({ id: Number(r.id), reason: "already acknowledged" }); continue; }
+      await query(
+        "INSERT INTO alarm_events (point_id, alarm, bit, event, at, value, status_word) VALUES (?, ?, ?, 'ack', UTC_TIMESTAMP(3), ?, NULL)",
+        [r.point_id, r.alarm, r.bit, r.value],
+      ).catch((e) => console.error("[ack] audit", e.message));
+    }
+  }
+  return { requested: clean.length, dryRun: Boolean(dryRun), acked: todo.map((r) => ({ id: Number(r.id), pointId: r.point_id, alarm: r.alarm })).filter((r) => !skipped.some((s) => s.id === r.id)), skipped };
+}
+// POST /api/alarms/events/:id/ack {by?}
+app.post(
+  "/api/alarms/events/:id/ack",
+  asyncRoute(async (req, res) => {
+    const r = await ackAlarms([req.params.id], String(req.body?.by ?? "dashboard").slice(0, 80), Boolean(req.body?.dryRun));
+    if (!r.acked.length && r.skipped[0]?.reason === "not found") return res.status(404).json(r);
+    res.json(r);
+  }),
+);
+// POST /api/alarms/ack {ids:[startEventId...], by?, dryRun?}  bulk ("Kuittaa kaikki"); client sends the ids visible by its filter
+app.post(
+  "/api/alarms/ack",
+  asyncRoute(async (req, res) => {
+    const ids = req.body?.ids;
+    if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: "ids[] required" });
+    res.json(await ackAlarms(ids, String(req.body?.by ?? "dashboard").slice(0, 80), Boolean(req.body?.dryRun)));
   }),
 );
 

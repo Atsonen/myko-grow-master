@@ -502,12 +502,20 @@ export interface AlarmSummaryRow {
   value: number | null;
   endValue: number | null;
   durationSec: number;
+  acked?: boolean;
+  ackedAt?: string | null;
+  ackedBy?: string | null;
 }
 export interface AlarmSummary {
   hours: number;
   generatedAt: string;
   points: { id: string; name: string }[];
   rows: AlarmSummaryRow[];
+}
+export type AlarmAckResult = { requested: number; dryRun?: boolean; acked: { id: number; pointId: string; alarm: string }[]; skipped: { id: number; reason: string }[] };
+/** Myko alarm-list acknowledgment (not PLC ErrorAck). */
+export async function ackAlarms(ids: number[], dryRun = false) {
+  return requestJson<AlarmAckResult>("/api/alarms/ack", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids, by: "dashboard", dryRun }) });
 }
 export async function getAlarmSummary(hours = 24, limit = 500) {
   return requestJson<AlarmSummary>(`/api/alarms/summary?hours=${hours}&limit=${limit}`);
