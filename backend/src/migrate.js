@@ -252,6 +252,8 @@ const alterStatements = [
   "ALTER TABLE datalogger_variables ADD COLUMN IF NOT EXISTS display_name VARCHAR(160) NULL AFTER name",
   // 2026-10-22: alarm limits relative to setpoint (editable) + timed alarm disable
   "ALTER TABLE alarm_point_controls ADD COLUMN IF NOT EXISTS warn_delta DECIMAL(4,1) NOT NULL DEFAULT 1.5 AFTER setpoint",
+  // exact (0.1 step) setpoint; `setpoint` keeps the rounded integer for the status word bits 10-14 and the checker
+  "ALTER TABLE alarm_point_controls ADD COLUMN IF NOT EXISTS setpoint_exact DECIMAL(4,1) NULL AFTER setpoint",
   "ALTER TABLE alarm_point_controls ADD COLUMN IF NOT EXISTS warn_min SMALLINT UNSIGNED NOT NULL DEFAULT 30 AFTER warn_delta",
   "ALTER TABLE alarm_point_controls ADD COLUMN IF NOT EXISTS warn_both TINYINT(1) NOT NULL DEFAULT 1 AFTER warn_min",
   "ALTER TABLE alarm_point_controls ADD COLUMN IF NOT EXISTS high_delta DECIMAL(4,1) NOT NULL DEFAULT 3.0 AFTER warn_both",

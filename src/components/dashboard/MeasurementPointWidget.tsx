@@ -5,6 +5,7 @@ import * as TabsPrimitive from "@radix-ui/react-tabs";
 import { getAlarmEvents, getAlarmPoints, setAlarmControls, type AlarmControls, type AlarmControlsPatch, type AlarmEvent, type AlarmLimits, type AlarmPoint } from "@/lib/apiClient";
 import { toast } from "sonner";
 import { useDashboardData } from "./DashboardData";
+import { PID_KEY_BY_POINT, PidCompact, PidControlTab, PidParamsTab, PidStateTab, pidAbnormal, usePid } from "./PidFaceplate";
 import type { WidgetConfigMap } from "./types";
 
 const HEL: Intl.DateTimeFormatOptions = { timeZone: "Europe/Helsinki", day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" };
@@ -96,6 +97,8 @@ export function MeasurementPointWidget({ config }: { config: WidgetConfigMap["me
   const [busy, setBusy] = useState(false);
   const [evTick, setEvTick] = useState(0);
   const id = config.pointId;
+  const pidKey = id ? PID_KEY_BY_POINT[id] : undefined;
+  const pid = usePid(pidKey, open ? 2000 : 5000);
 
   const applyControls = async (patch: AlarmControlsPatch): Promise<boolean> => {
     if (!id) return false;
@@ -136,7 +139,9 @@ export function MeasurementPointWidget({ config }: { config: WidgetConfigMap["me
   if (err) return <div className="text-xs text-destructive">{err}</div>;
   if (!point) return <div className="text-xs text-muted-foreground italic">Loading…</div>;
 
-  const level = pointLevel(point);
+  const pidAbn = pidKey ? pidAbnormal(pid.v, pid.stale) : [];
+  const baseLevel = pointLevel(point);
+  const level: PointLevel = pidAbn.some((a) => a.level === "alarm") ? "alarm" : pidAbn.length && (baseLevel === "ok" || baseLevel === "unknown") ? "warn" : baseLevel;
   const disabled = alarmsDisabled(point);
   const active = point.active; // disabling only mutes WhatsApp; state/colour stay live
   const bitLevel = (k: string) => point.bits.find((b) => b.key === k)?.level ?? "alarm";
@@ -167,6 +172,14 @@ export function MeasurementPointWidget({ config }: { config: WidgetConfigMap["me
               ))
             )}
           </div>
+          {pidKey && <PidCompact v={pid.v} stale={pid.stale} unit={point.unit} />}
+          {pidAbn.length > 0 && (
+            <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1" data-testid="pid-abn">
+              {pidAbn.map((a) => (
+                <span key={a.text} className={`inline-flex items-center gap-1.5 text-sm font-semibold ${CHIP[a.level]}`}><AlarmIndicator level={a.level} />{a.text}</span>
+              ))}
+            </div>
+          )}
           {disabled && (
             <div className={MUTED} data-testid="mp-disabled">WhatsApp-hälytykset pois {hm(point.controls!.alarmsDisabledUntil!)} asti</div>
           )}
@@ -175,7 +188,7 @@ export function MeasurementPointWidget({ config }: { config: WidgetConfigMap["me
               <span className={point.controls.on ? CTRL_TINT.on : ""} data-testid="mp-on">{point.controls.on ? "ON" : "OFF"}</span>
               {point.controls.heat && <span className={CTRL_TINT.heat}>HEAT</span>}
               {point.controls.cool && <span className={CTRL_TINT.cool}>COOL</span>}
-              <span>SP {point.controls.setpoint} {point.unit}</span>
+              {!pidKey && <span>SP {point.controls.setpoint} {point.unit}</span>}
               {checkedAgeMin > 5 && <span title="Alarm checker has not reported recently">checker {fmt(point.checked)}</span>}
             </div>
           )}
@@ -213,11 +226,22 @@ export function MeasurementPointWidget({ config }: { config: WidgetConfigMap["me
                 <X className="h-5 w-5" />
               </DialogPrimitive.Close>
             </div>
-            <TabsPrimitive.Root defaultValue="tila" className="flex min-h-0 flex-1 flex-col">
+            <TabsPrimitive.Root defaultValue={pidKey ? "saato" : "tila"} className="flex min-h-0 flex-1 flex-col">
               <TabsPrimitive.List className="m-3 mb-0 flex gap-1 overflow-x-auto rounded-lg bg-muted p-1" data-testid="mp-tabs">
-                <TabsPrimitive.Trigger value="tila" className={TAB}>Tila</TabsPrimitive.Trigger>
-                <TabsPrimitive.Trigger value="ohjaus" className={TAB}>Ohjaus</TabsPrimitive.Trigger>
-                <TabsPrimitive.Trigger value="rajat" className={TAB}>Hälytysrajat</TabsPrimitive.Trigger>
+                {pidKey ? (
+                  <>
+                    <TabsPrimitive.Trigger value="saato" className={TAB}>Säätö</TabsPrimitive.Trigger>
+                    <TabsPrimitive.Trigger value="pidtila" className={TAB}>Tila</TabsPrimitive.Trigger>
+                    <TabsPrimitive.Trigger value="param" className={TAB}>Parametrit</TabsPrimitive.Trigger>
+                    <TabsPrimitive.Trigger value="tila" className={TAB}>Hälytykset</TabsPrimitive.Trigger>
+                  </>
+                ) : (
+                  <>
+                    <TabsPrimitive.Trigger value="tila" className={TAB}>Tila</TabsPrimitive.Trigger>
+                    <TabsPrimitive.Trigger value="ohjaus" className={TAB}>Ohjaus</TabsPrimitive.Trigger>
+                  </>
+                )}
+                <TabsPrimitive.Trigger value="rajat" className={TAB}>{pidKey ? "Rajat" : "Hälytysrajat"}</TabsPrimitive.Trigger>
                 <TabsPrimitive.Trigger value="tapahtumat" className={TAB}>Tapahtumat</TabsPrimitive.Trigger>
               </TabsPrimitive.List>
               <TabsPrimitive.Content value="tila" className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3 text-sm" data-testid="mp-details">
@@ -269,6 +293,26 @@ export function MeasurementPointWidget({ config }: { config: WidgetConfigMap["me
                   Reading {fmt(point.current?.timestamp ?? point.lastReading)} · checked {fmt(point.checked)}
                 </div>
               </TabsPrimitive.Content>
+              {pidKey && (
+                <>
+                  <TabsPrimitive.Content value="saato" className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3 text-sm">
+                    <PidControlTab pidKey={pidKey} v={pid.v} unit={point.unit} refresh={pid.refresh}
+                      onSetpoint={(sp) => applyControls({ setpoint: sp })} />
+                    {point.controls && (
+                      <>
+                        <ControlsEditor controls={point.controls} unit={point.unit} busy={busy} onChange={applyControls} hideSetpoint />
+                        <AlarmDisable controls={point.controls} busy={busy} onChange={applyControls} />
+                      </>
+                    )}
+                  </TabsPrimitive.Content>
+                  <TabsPrimitive.Content value="pidtila" className="min-h-0 flex-1 overflow-y-auto p-3 text-sm">
+                    <PidStateTab v={pid.v} at={pid.at} unit={point.unit} />
+                  </TabsPrimitive.Content>
+                  <TabsPrimitive.Content value="param" className="min-h-0 flex-1 overflow-y-auto p-3 text-sm">
+                    <PidParamsTab v={pid.v} />
+                  </TabsPrimitive.Content>
+                </>
+              )}
               <TabsPrimitive.Content value="ohjaus" className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3 text-sm">
                 {point.controls ? (
                   <>
@@ -328,11 +372,13 @@ function ControlsEditor({
   unit,
   busy,
   onChange,
+  hideSetpoint = false,
 }: {
   controls: AlarmControls;
   unit: string;
   busy: boolean;
   onChange: (patch: AlarmControlsPatch) => void;
+  hideSetpoint?: boolean;
 }) {
   const [sp, setSp] = useState(controls.setpoint);
   useEffect(() => setSp(controls.setpoint), [controls.setpoint]);
@@ -352,7 +398,7 @@ function ControlsEditor({
     </button>
   );
   const commitSp = (v: number) => {
-    const n = Math.max(0, Math.min(30, Math.round(v)));
+    const n = Math.max(0, Math.min(30, Math.round(v * 10) / 10));
     setSp(n);
     if (n !== controls.setpoint) onChange({ setpoint: n });
   };
@@ -364,7 +410,7 @@ function ControlsEditor({
         {toggle("heat", "HEAT", CTRL_TOGGLE.heat)}
         {toggle("cool", "COOL", CTRL_TOGGLE.cool)}
       </div>
-      <div className="flex items-center gap-2">
+      {!hideSetpoint && <div className="flex items-center gap-2">
         <span className="text-sm">Setpoint</span>
         <button
           type="button"
@@ -381,7 +427,7 @@ function ControlsEditor({
           inputMode="numeric"
           min={0}
           max={30}
-          step={1}
+          step={0.1}
           value={sp}
           disabled={busy}
           onChange={(e) => setSp(Number(e.target.value))}
@@ -399,7 +445,7 @@ function ControlsEditor({
           +
         </button>
         <span className="text-sm text-muted-foreground">{unit}</span>
-      </div>
+      </div>}
       {controls.updatedAt && (
         <div className="text-[11px] text-muted-foreground">
           changed {fmt(controls.updatedAt)}{controls.updatedBy ? ` · ${controls.updatedBy}` : ""}

@@ -844,14 +844,14 @@ const PLC_TOPIC = "Sensors/Mykovalvomo/Ctrl";
 const PLC_KEYS = { ColdStorage1: "F1", Terrario1: "T1" };
 const PLC_ORDER = Object.keys(PLC_KEYS);
 function controlWord(c) {
-  return ((c.on ? 1 : 0) << 7) | ((c.heat ? 1 : 0) << 8) | ((c.cool ? 1 : 0) << 9) | ((c.setpoint & 0x1f) << CTRL_SP_SHIFT);
+  return ((c.on ? 1 : 0) << 7) | ((c.heat ? 1 : 0) << 8) | ((c.cool ? 1 : 0) << 9) | ((Math.round(c.setpoint) & 0x1f) << CTRL_SP_SHIFT);
 }
 function mapControls(r) {
   return {
     on: Boolean(r.on_state),
     heat: Boolean(r.heat),
     cool: Boolean(r.cool),
-    setpoint: Number(r.setpoint),
+    setpoint: r.setpoint_exact !== null && r.setpoint_exact !== undefined ? Number(r.setpoint_exact) : Number(r.setpoint),
     limits: {
       warnDelta: Number(r.warn_delta),
       warnMin: Number(r.warn_min),
@@ -867,7 +867,7 @@ function mapControls(r) {
   };
 }
 const CONTROL_COLS =
-  "point_id, on_state, heat, cool, setpoint, warn_delta, warn_min, warn_both, high_delta, high_min, low_delta, low_min, " +
+  "point_id, on_state, heat, cool, setpoint, setpoint_exact, warn_delta, warn_min, warn_both, high_delta, high_min, low_delta, low_min, " +
   "DATE_FORMAT(alarms_disabled_until, '%Y-%m-%dT%H:%i:%sZ') AS disabled_iso, updated_by, DATE_FORMAT(updated_at, '%Y-%m-%dT%H:%i:%sZ') AS updated_iso";
 const LIMIT_FIELDS = [
   ["warnDelta", "warn_delta", "WARN Δ", "delta"],
@@ -903,6 +903,80 @@ function publishRetained(topic, message) {
     });
   });
 }
+// ---- OPC UA PID faceplates (opcua-bridge: Sensors/PLC_2/<key>_PID state, Myko/Cmd/<key>_PID commands, .../ack) ----
+const PID_POINTS = { F1: "ColdStorage1" };
+const PID_BY_POINT = Object.fromEntries(Object.entries(PID_POINTS).map(([k, v]) => [v, k]));
+const pidState = {}; // key -> { at, values }
+const pidAcks = new Map(); // cmd id -> resolve
+let pidSubscribed = false;
+function pidSubscribe() {
+  if (pidSubscribed) return;
+  pidSubscribed = true;
+  const c = mqttPublisher();
+  const topics = Object.keys(PID_POINTS).flatMap((k) => [`Sensors/PLC_2/${k}_PID`, `Myko/Cmd/${k}_PID/ack`]);
+  c.on("connect", () => c.subscribe(topics, { qos: 0 }));
+  c.on("message", (topic, buf) => {
+    let d;
+    try { d = JSON.parse(buf.toString()); } catch { return; }
+    const m = /^Sensors\/PLC_2\/(\w+)_PID$/.exec(topic);
+    if (m) { pidState[m[1]] = { at: new Date().toISOString(), values: { ...(pidState[m[1]]?.values ?? {}), ...d } }; return; }
+    if (topic.endsWith("/ack") && d?.id && pidAcks.has(d.id)) { pidAcks.get(d.id)(d); pidAcks.delete(d.id); }
+  });
+}
+pidSubscribe();
+const PID_CMD_KEYS = ["Setpoint", "ManualEnable", "ManualValue", "Mode", "ModeActivate", "ErrorAck"];
+async function pidCommand(key, cmd, by) {
+  const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  const ackP = new Promise((resolve) => {
+    pidAcks.set(id, resolve);
+    setTimeout(() => { if (pidAcks.delete(id)) resolve(null); }, 6000);
+  });
+  const c = mqttPublisher();
+  await new Promise((res, rej) => c.publish(`Myko/Cmd/${key}_PID`, JSON.stringify({ id, by, ...cmd }), { qos: 1, retain: false }, (e) => (e ? rej(e) : res())));
+  const ack = await ackP;
+  if (!ack) return { id, error: "no ack from opcua-bridge (6 s)" };
+  const failed = Object.entries(ack.results ?? {}).filter(([, v]) => typeof v === "string");
+  return { id, results: ack.results, error: failed.length ? failed.map(([k, v]) => `${k}: ${v}`).join("; ") : undefined };
+}
+app.get(
+  "/api/pid/:key",
+  asyncRoute(async (req, res) => {
+    const key = req.params.key;
+    if (!PID_POINTS[key]) return res.status(404).json({ error: "Unknown PID" });
+    res.json({ key, pointId: PID_POINTS[key], at: pidState[key]?.at ?? null, values: pidState[key]?.values ?? null });
+  }),
+);
+// POST /api/pid/:key/cmd  {ManualEnable?:bool, ManualValue?:-100..100, Mode?:0|3|4, ModeActivate?:true, ErrorAck?:true}
+// Setpoint goes through PUT /api/alarms/:pointId/controls (keeps the status-word SP bits in sync).
+app.post(
+  "/api/pid/:key/cmd",
+  asyncRoute(async (req, res) => {
+    const key = req.params.key;
+    const pointId = PID_POINTS[key];
+    if (!pointId) return res.status(404).json({ error: "Unknown PID" });
+    const b = req.body ?? {};
+    const bad = (m) => res.status(400).json({ error: m });
+    const cmd = {};
+    for (const [k, v] of Object.entries(b)) {
+      if (!PID_CMD_KEYS.includes(k) || k === "Setpoint") return bad(`${k} not allowed here`);
+      if (["ManualEnable", "ModeActivate", "ErrorAck"].includes(k) && typeof v !== "boolean") return bad(`${k} must be true/false`);
+      if ((k === "ModeActivate" || k === "ErrorAck") && v !== true) return bad(`${k} is a pulse (true)`);
+      if (k === "ManualValue" && !(typeof v === "number" && v >= -100 && v <= 100)) return bad("ManualValue must be -100..100 %");
+      if (k === "Mode" && ![0, 3, 4].includes(v)) return bad("Mode must be 0, 3 or 4");
+      cmd[k] = v;
+    }
+    if ("Mode" in cmd !== "ModeActivate" in cmd) return bad("Mode and ModeActivate go together");
+    if (!Object.keys(cmd).length) return bad("empty command");
+    const r = await pidCommand(key, cmd, "dashboard");
+    const label = `PID ${Object.entries(cmd).map(([k, v]) => `${k}=${v}`).join(", ")}${r.error ? " (VIRHE)" : ""}`.slice(0, 80);
+    await query(
+      "INSERT INTO alarm_events (point_id, alarm, bit, event, at, value, status_word) VALUES (?, ?, NULL, 'control', UTC_TIMESTAMP(3), NULL, NULL)",
+      [pointId, label],
+    ).catch((e) => console.error("[pid] event log", e.message));
+    res.status(r.error ? 502 : 200).json(r);
+  }),
+);
+
 app.get(
   "/api/alarms/:pointId/controls",
   asyncRoute(async (req, res) => {
@@ -918,8 +992,9 @@ app.put(
     const b = req.body ?? {};
     const bad = (m) => res.status(400).json({ error: m });
     for (const k of ["on", "heat", "cool"]) if (k in b && typeof b[k] !== "boolean") return bad(`${k} must be true/false`);
-    if ("setpoint" in b && !(Number.isInteger(b.setpoint) && b.setpoint >= 0 && b.setpoint <= 30))
-      return bad("setpoint must be an integer 0..30");
+    if ("setpoint" in b && !(typeof b.setpoint === "number" && b.setpoint >= 0 && b.setpoint <= 30 && Math.abs(b.setpoint * 10 - Math.round(b.setpoint * 10)) < 1e-9))
+      return bad("setpoint must be 0..30 (0.1 steps)");
+    if ("setpoint" in b) b.setpoint = Math.round(b.setpoint * 10) / 10;
     // disableMinutes: 1..1440 disables alarms for that long; 0 re-enables now
     if ("disableMinutes" in b && !(Number.isInteger(b.disableMinutes) && b.disableMinutes >= 0 && b.disableMinutes <= 1440))
       return bad("disableMinutes must be an integer 0..1440 (max 24 h)");
@@ -972,10 +1047,10 @@ app.put(
     const alarmBits = pt.last_status === null ? 0 : Number(pt.last_status) & 0x7f;
     const word = alarmBits | controlWord(next) | (disabled ? 0x8000 : 0); // bit15 = WhatsApp alarms disabled
     await query(
-      `UPDATE alarm_point_controls SET on_state = ?, heat = ?, cool = ?, setpoint = ?, warn_delta = ?, warn_min = ?, warn_both = ?,
+      `UPDATE alarm_point_controls SET on_state = ?, heat = ?, cool = ?, setpoint = ?, setpoint_exact = ?, warn_delta = ?, warn_min = ?, warn_both = ?,
          high_delta = ?, high_min = ?, low_delta = ?, low_min = ?, alarms_disabled_until = ?, updated_by = ? WHERE point_id = ?`,
       [
-        next.on ? 1 : 0, next.heat ? 1 : 0, next.cool ? 1 : 0, next.setpoint,
+        next.on ? 1 : 0, next.heat ? 1 : 0, next.cool ? 1 : 0, Math.round(next.setpoint), next.setpoint,
         nextLim.warnDelta, nextLim.warnMin, nextLim.warnBoth ? 1 : 0, nextLim.highDelta, nextLim.highMin, nextLim.lowDelta, nextLim.lowMin,
         disabledUntil ? disabledUntil.replace("T", " ").replace("Z", "") : null, "dashboard", pointId,
       ],
@@ -1012,8 +1087,15 @@ app.put(
       published = false;
       publishError = e.message;
     }
+    // New route: points with an OPC UA PID also get the exact setpoint written to PID_Temp.Setpoint via the bridge.
+    let opcua;
+    const pidKey = PID_BY_POINT[pointId];
+    if (pidKey && next.setpoint !== prev.setpoint) {
+      opcua = await pidCommand(pidKey, { Setpoint: next.setpoint }, "dashboard").catch((e) => ({ error: e.message }));
+      if (opcua.error) { published = false; publishError = `OPC UA: ${opcua.error}`; }
+    }
     const [r] = await query(`SELECT ${CONTROL_COLS} FROM alarm_point_controls WHERE point_id = ?`, [pointId]);
-    res.json({ controls: mapControls(r), word, published, publishError });
+    res.json({ controls: mapControls(r), word, published, publishError, opcua });
   }),
 );
 

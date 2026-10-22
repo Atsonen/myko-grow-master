@@ -512,3 +512,25 @@ export interface AlarmSummary {
 export async function getAlarmSummary(hours = 24, limit = 500) {
   return requestJson<AlarmSummary>(`/api/alarms/summary?hours=${hours}&limit=${limit}`);
 }
+
+/** OPC UA PID (PID_Temp) state from opcua-bridge (MQTT Sensors/PLC_2/<key>_PID), short keys. */
+export interface PidValues {
+  SP: number; PV: number; CSP: number; Dist: number; ScPV: number;
+  OutHeat: number; OutCool: number; OutSum: number;
+  ManEn: boolean; ManVal: number; State: number; Mode: number;
+  Err: boolean; ErrBits: number; Warn: number;
+  SPLimH: boolean; SPLimL: boolean; PVWarnH: boolean; PVWarnL: boolean;
+  DisCool: boolean; ActCool: boolean; InHi: number; InLo: number;
+  HGain: number; HTi: number; HTd: number; HCyc: number;
+  CGain: number; CTi: number; CTd: number; CCyc: number;
+}
+export interface PidStatus { key: string; pointId: string; at: string | null; values: Partial<PidValues> | null }
+export type PidCommand = { ManualEnable?: boolean; ManualValue?: number; Mode?: 0 | 3 | 4; ModeActivate?: true; ErrorAck?: true };
+export async function getPid(key: string) {
+  return requestJson<PidStatus>(`/api/pid/${encodeURIComponent(key)}`);
+}
+export async function sendPidCommand(key: string, cmd: PidCommand) {
+  return requestJson<{ id: string; results?: Record<string, unknown>; error?: string }>(`/api/pid/${encodeURIComponent(key)}/cmd`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(cmd),
+  });
+}
