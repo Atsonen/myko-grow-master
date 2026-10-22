@@ -1090,7 +1090,7 @@ app.put(
     // New route: points with an OPC UA PID also get the exact setpoint written to PID_Temp.Setpoint via the bridge.
     let opcua;
     const pidKey = PID_BY_POINT[pointId];
-    if (pidKey && next.setpoint !== prev.setpoint) {
+    if (pidKey && next.setpoint != null) { // always write: PLC value may differ from DB (e.g. after download)
       opcua = await pidCommand(pidKey, { Setpoint: next.setpoint }, "dashboard").catch((e) => ({ error: e.message }));
       if (opcua.error) { published = false; publishError = `OPC UA: ${opcua.error}`; }
     }
