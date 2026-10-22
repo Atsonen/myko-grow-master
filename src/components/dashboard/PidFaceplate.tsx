@@ -108,7 +108,7 @@ export function PidCompact({ v, stale, unit }: { v: Partial<PidValues> | null; s
 /** Inline two-step confirm used for every write. */
 function Confirm({ text, busy, onOk, onCancel }: { text: string; busy: boolean; onOk: () => void; onCancel: () => void }) {
   return (
-    <div className="flex flex-wrap items-center gap-2 rounded-md border border-zinc-400 bg-zinc-800/60 p-2" data-testid="pid-confirm">
+    <div ref={(el) => el?.scrollIntoView({ block: "center", behavior: "smooth" })} className="flex flex-wrap items-center gap-2 rounded-md border border-zinc-400 bg-zinc-800/60 p-2" data-testid="pid-confirm">
       <span className="flex-1 text-sm font-semibold">{text}</span>
       <button type="button" disabled={busy} onClick={onOk} className="min-h-11 rounded-md border border-zinc-300 bg-zinc-200 px-4 text-sm font-semibold text-zinc-900 disabled:opacity-50">Vahvista</button>
       <button type="button" disabled={busy} onClick={onCancel} className="min-h-11 rounded-md border border-border px-4 text-sm">Peruuta</button>
@@ -199,7 +199,7 @@ export function PidControlTab({
       <Section title="Virheet" testid="pid-ack">
         <div className="flex flex-wrap items-center gap-2">
           <span className={`text-sm ${v.Err ? "font-semibold text-red-400" : v.ErrBits ? "font-semibold text-amber-300" : "text-muted-foreground"}`}>ErrorBits {hex(v.ErrBits)}</span>
-          <button type="button" disabled={busy} className={`${BTN} ${BTN_OFF}`}
+          <button type="button" disabled={busy} className={`${BTN} ${v.ErrBits || v.Warn ? "border-amber-400 bg-amber-400/15 text-amber-200" : BTN_OFF}`}
             onClick={() => setPending({ text: "Kuittaa PID-virheet (ErrorAck)?", run: cmd({ ErrorAck: true }) })}>Kuittaa (ErrorAck)</button>
         </div>
       </Section>
