@@ -66,10 +66,21 @@ pid_nodes:   # short key -> path inside the instance DB
   CTi: Retain/CtrlParams/Cool/Ti
   CTd: Retain/CtrlParams/Cool/Td
   CCyc: Retain/CtrlParams/Cool/Cycle
+  HDZ: Retain/CtrlParams/Heat/DeadZone      # read only (no write in whitelist)
+  CDZ: Retain/CtrlParams/Cool/DeadZone
+  Prog: Progress                           # tuning progress %
+  HEnTune: Heat/EnableTuning
+  CEnTune: Cool/EnableTuning
+  SUTSt: PIDSelfTune/SUT/State             # pretuning phase
+  TIRSt: PIDSelfTune/TIR/State             # fine tuning phase
+  SUTHOk: PIDSelfTune/SUT/ProcParHeatOk
+  SUTCOk: PIDSelfTune/SUT/ProcParCoolOk
 pid_commands:  # write whitelist (same for every PID); tuning params are NOT writable
   Setpoint:     {path: Setpoint,     type: Float,   clamp_to: [InLo, InHi]}
   ManualEnable: {path: ManualEnable, type: Boolean}
   ManualValue:  {path: ManualValue,  type: Float,   min: -100, max: 100}
-  Mode:         {path: Mode,         type: Int16,   allowed: [0, 3, 4]}
+  Mode:         {path: Mode,         type: Int16,   allowed: [0, 1, 2, 3, 4]}  # 1 pretuning, 2 fine tuning
   ModeActivate: {path: ModeActivate, type: Boolean, pulse: true}
   ErrorAck:     {path: ErrorAck,     type: Boolean, pulse: true}
+  HeatEnableTuning: {path: Heat/EnableTuning, type: Boolean}   # tuning target selection (written before Mode/ModeActivate)
+  CoolEnableTuning: {path: Cool/EnableTuning, type: Boolean}

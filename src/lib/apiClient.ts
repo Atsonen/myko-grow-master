@@ -523,15 +523,17 @@ export interface PidValues {
   DisCool: boolean; ActCool: boolean; InHi: number; InLo: number;
   HGain: number; HTi: number; HTd: number; HCyc: number;
   CGain: number; CTi: number; CTd: number; CCyc: number;
+  HDZ: number; CDZ: number; Prog: number; HEnTune: boolean; CEnTune: boolean;
+  SUTSt: number; TIRSt: number; SUTHOk: boolean; SUTCOk: boolean;
 }
 export interface PidStatus {
   key: string; pointId: string; alarmPointId: string; at: string | null; values: Partial<PidValues> | null;
   /** active PID alarm keys from the backend evaluator (EI_AUTO, PID_VIKA, ERRORBITS, OPCUA, SATUROITUNUT) */
-  active: string[]; intended: boolean;
+  active: string[]; intended: boolean; tuning?: boolean;
   trend?: { t: number; pv?: number; sp?: number; out?: number }[];
   commands: { alarm: string; at: string }[];
 }
-export type PidCommand = { ManualEnable?: boolean; ManualValue?: number; Mode?: 0 | 3 | 4; ModeActivate?: true; ErrorAck?: true };
+export type PidCommand = { ManualEnable?: boolean; ManualValue?: number; Mode?: 0 | 1 | 2 | 3 | 4; ModeActivate?: true; ErrorAck?: true; HeatEnableTuning?: boolean; CoolEnableTuning?: boolean };
 export async function getPid(key: string, trend = false) {
   return requestJson<PidStatus>(`/api/pid/${encodeURIComponent(key)}${trend ? "?trend=1" : ""}`);
 }

@@ -12,11 +12,11 @@ import { fileURLToPath } from "node:url";
 
 export const PID_POINTS = { F1: "ColdStorage1", T1: "Terrario1" }; // pid key -> parent measurement point
 export const PID_BY_POINT = Object.fromEntries(Object.entries(PID_POINTS).map(([k, v]) => [v, k]));
-const CMD_KEYS = ["Setpoint", "ManualEnable", "ManualValue", "Mode", "ModeActivate", "ErrorAck"];
+const CMD_KEYS = ["Setpoint", "ManualEnable", "ManualValue", "Mode", "ModeActivate", "ErrorAck", "HeatEnableTuning", "CoolEnableTuning"];
 
 // Alarm bits of the <key>_PID alarm points (ISA-18.2 style: few, actionable, debounced).
 export const PID_ALARM_BITS = [
-  { bit: 0, key: "EI_AUTO", level: "alarm", rule: "Säädin poistunut automaatilta (State≠3) yli 10 s ilman dashboard-komentoa" },
+  { bit: 0, key: "EI_AUTO", level: "alarm", rule: "Säädin poistunut automaatilta (State≠3) yli 10 s ilman dashboard-komentoa (dashboardista käynnistetty viritys State 1/2 ei hälytä; epäonnistunut viritys → hälyttää)" },
   { bit: 1, key: "PID_VIKA", level: "alarm", rule: "PID Error=1 (vika päällä) yli 5 s" },
   { bit: 2, key: "ERRORBITS", level: "warn", rule: "ErrorBits≠0 yli 10 s (kuittaamaton vika, ErrorAck)" },
   { bit: 3, key: "OPCUA", level: "warn", rule: "Ei PID-dataa OPC UA:sta yli 60 s" },
@@ -56,12 +56,20 @@ export function registerPidRoutes(app, { mqttClient, query, asyncRoute }) {
       const prevState = state[k]?.values?.State;
       state[k] = { at: Date.now(), values: { ...(state[k]?.values ?? {}), ...d } };
       const st = state[k].values.State;
+      const recent = intent[k]?.cmdAt && Date.now() - intent[k].cmdAt < INTENT_S * 1000;
       if (prevState === 3 && st !== 3 && st !== undefined) {
-        const recent = intent[k]?.cmdAt && Date.now() - intent[k].cmdAt < INTENT_S * 1000;
-        intent[k] = { ...(intent[k] ?? {}), intended: Boolean(recent), leftAt: Date.now() };
+        intent[k] = { ...(intent[k] ?? {}), intended: Boolean(recent), tuning: Boolean(recent && intent[k]?.tuneCmd && (st === 1 || st === 2)), leftAt: Date.now() };
         saveIntent();
-      } else if (st === 3 && intent[k]?.intended) {
-        intent[k] = { ...intent[k], intended: false };
+      } else if ((st === 1 || st === 2) && prevState !== undefined && prevState !== st && recent && intent[k]?.tuneCmd) {
+        // tuning started from a non-auto state (e.g. manual/inactive) or pretuning -> fine tuning
+        intent[k] = { ...(intent[k] ?? {}), intended: true, tuning: true, leftAt: Date.now() };
+        saveIntent();
+      } else if (st === 3 && (intent[k]?.intended || intent[k]?.tuning)) {
+        intent[k] = { ...intent[k], intended: false, tuning: false };
+        saveIntent();
+      } else if (intent[k]?.tuning && st !== undefined && st !== 1 && st !== 2 && st !== 3 && !recent) {
+        // tuning ended somewhere other than automatic (error -> inactive/substitute/manual): alarm again
+        intent[k] = { ...intent[k], intended: false, tuning: false, tuneFailedAt: Date.now() };
         saveIntent();
       }
       return;
@@ -82,7 +90,7 @@ export function registerPidRoutes(app, { mqttClient, query, asyncRoute }) {
 
   async function pidCommand(key, cmd, by) {
     const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-    if ("Mode" in cmd || "ManualEnable" in cmd) { intent[key] = { ...(intent[key] ?? {}), cmdAt: Date.now() }; saveIntent(); }
+    if ("Mode" in cmd || "ManualEnable" in cmd) { intent[key] = { ...(intent[key] ?? {}), cmdAt: Date.now(), tuneCmd: cmd.Mode === 1 || cmd.Mode === 2 }; saveIntent(); }
     const ackP = new Promise((resolve) => {
       acks.set(id, resolve);
       setTimeout(() => { if (acks.delete(id)) resolve(null); }, 6000);
@@ -133,7 +141,7 @@ export function registerPidRoutes(app, { mqttClient, query, asyncRoute }) {
       last_reading: s ? new Date(s.at).toISOString() : null,
       checked: new Date(now).toISOString(),
       since: { ...si },
-      pid: { State: v.State, Mode: v.Mode, Err: v.Err, ErrBits: v.ErrBits, Warn: v.Warn, OutSum: v.OutSum, SP: v.SP, intended: Boolean(intent[k]?.intended) },
+      pid: { State: v.State, Mode: v.Mode, Err: v.Err, ErrBits: v.ErrBits, Warn: v.Warn, OutSum: v.OutSum, SP: v.SP, intended: Boolean(intent[k]?.intended), tuning: Boolean(intent[k]?.tuning) },
       source: "myko-backend pid.js",
     };
     lastPub[k] = now;
@@ -158,6 +166,7 @@ export function registerPidRoutes(app, { mqttClient, query, asyncRoute }) {
         values: state[key]?.values ?? null,
         active: [...(active[key] ?? [])],
         intended: Boolean(intent[key]?.intended),
+        tuning: Boolean(intent[key]?.tuning),
         trend: req.query.trend === "1" ? trend[key] ?? [] : undefined,
         commands,
       });
@@ -175,14 +184,18 @@ export function registerPidRoutes(app, { mqttClient, query, asyncRoute }) {
       const cmd = {};
       for (const [k, v] of Object.entries(b)) {
         if (!CMD_KEYS.includes(k) || k === "Setpoint") return bad(`${k} not allowed here`);
-        if (["ManualEnable", "ModeActivate", "ErrorAck"].includes(k) && typeof v !== "boolean") return bad(`${k} must be true/false`);
+        if (["ManualEnable", "ModeActivate", "ErrorAck", "HeatEnableTuning", "CoolEnableTuning"].includes(k) && typeof v !== "boolean") return bad(`${k} must be true/false`);
         if ((k === "ModeActivate" || k === "ErrorAck") && v !== true) return bad(`${k} is a pulse (true)`);
         if (k === "ManualValue" && !(typeof v === "number" && v >= -100 && v <= 100)) return bad("ManualValue must be -100..100 %");
-        if (k === "Mode" && ![0, 3, 4].includes(v)) return bad("Mode must be 0, 3 or 4");
+        if (k === "Mode" && ![0, 1, 2, 3, 4].includes(v)) return bad("Mode must be 0..4");
         cmd[k] = v;
       }
       if ("Mode" in cmd !== "ModeActivate" in cmd) return bad("Mode and ModeActivate go together");
       if (!Object.keys(cmd).length) return bad("empty command");
+      if (cmd.Mode === 1 || cmd.Mode === 2) {
+        if (typeof cmd.HeatEnableTuning !== "boolean" || typeof cmd.CoolEnableTuning !== "boolean" || cmd.HeatEnableTuning === cmd.CoolEnableTuning)
+          return bad("tuning needs exactly one of HeatEnableTuning / CoolEnableTuning = true");
+      } else if ("HeatEnableTuning" in cmd || "CoolEnableTuning" in cmd) return bad("EnableTuning only together with Mode 1/2");
       const r = await pidCommand(key, cmd, "dashboard");
       const label = `PID ${Object.entries(cmd).map(([k, v]) => `${k}=${v}`).join(", ")}${r.error ? " (VIRHE)" : ""}`.slice(0, 80);
       await query(

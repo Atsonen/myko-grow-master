@@ -298,6 +298,7 @@ export function PidControlTab({
             onClick={() => setPending({ text: "Aseta säädin EI AKTIIVINEN -tilaan?", detail: "Lähdöt 0 %. Lämmitys ja jäähdytys pysähtyvät.", run: cmd({ Mode: 0, ModeActivate: true }) })}>Inaktiivi</button>
         </div>
       </Section>
+      <TuningSection pidKey={pidKey} v={v} busy={busy} tuning={Boolean(pid.s?.tuning)} setPending={setPending} />
       <Section title="Käsiarvo (−100…100 %)" testid="pid-manval">
         <div className="flex flex-wrap items-center gap-2">
           <input aria-label="Käsiarvo" inputMode="decimal" value={mv} disabled={busy} onChange={(e) => setMv(e.target.value)}
@@ -324,6 +325,55 @@ export function PidControlTab({
         </Section>
       ) : null}
     </div>
+  );
+}
+
+/** Tuning (PID_Temp Mode 1 = pretuning, 2 = fine tuning; Mode 3 + ModeActivate cancels -> automatic).
+ * Heat.EnableTuning / Cool.EnableTuning select what is tuned; exactly one is set true (fine tuning requires it). */
+function TuningSection({ pidKey, v, busy, tuning, setPending }: {
+  pidKey: string; v: Partial<PidValues>; busy: boolean; tuning: boolean; setPending: (p: Pending) => void;
+}) {
+  const [target, setTarget] = useState<"heat" | "cool">(v.CEnTune && !v.HEnTune ? "cool" : "heat");
+  const running = v.State === 1 || v.State === 2;
+  const coolOk = v.ActCool !== false;
+  const WARN = "Viritys heiluttaa lämpötilaa tarkoituksella (askel-/värähtelykoe) ja voi kestää tunteja. Älä muuta asetusarvoa virityksen aikana. EI_AUTO-hälytys vaimennetaan virityksen ajaksi; jos viritys päättyy virheeseen, hälytys tulee.";
+  const start = (mode: 1 | 2) => {
+    const name = mode === 1 ? "ESIVIRITYS" : "HIENOVIRITYS";
+    const tgt = target === "heat" ? "lämmitys" : "jäähdytys";
+    const pre = mode === 1 ? (target === "heat" ? "Esiviritys vaatii PV:n selvästi SP:n alapuolelle ja jäähdytyksen pois päältä. " : "Jäähdytyksen esiviritys vaatii onnistuneen lämmityksen esivirityksen ja PV:n lähellä SP:tä. ") : "Hienoviritys tehdään asetusarvon ympärillä. ";
+    setPending({
+      text: `Käynnistä ${name} (${tgt}) säätimelle ${pidKey}?`,
+      detail: `${pre}${WARN} Kirjoitetaan Heat.EnableTuning=${target === "heat" ? 1 : 0}, Cool.EnableTuning=${target === "cool" ? 1 : 0}, Mode=${mode} + ModeActivate.`,
+      run: () => sendPidCommand(pidKey, { HeatEnableTuning: target === "heat", CoolEnableTuning: target === "cool", Mode: mode, ModeActivate: true }),
+    });
+  };
+  return (
+    <Section title="Viritys" testid="pid-tuning">
+      <div className="text-sm">
+        {running ? <span className="font-semibold text-amber-300">{v.State === 1 ? "Esiviritys" : "Hienoviritys"} käynnissä · {f1(v.Prog, 0)} %</span> : <span className="text-muted-foreground">Ei viritystä käynnissä</span>}
+        {running && tuning ? <span className="text-muted-foreground"> · käynnistetty dashboardista</span> : null}
+      </div>
+      {running && (
+        <div className="h-2 w-full bg-zinc-700/60" aria-label="Virityksen edistyminen" data-testid="pid-tune-progress">
+          <div className="h-full bg-amber-300/70" style={{ width: `${Math.max(0, Math.min(100, v.Prog ?? 0))}%` }} />
+        </div>
+      )}
+      <div className="text-[11px] text-muted-foreground">
+        Kohde PLC:ssä: Heat.EnableTuning {v.HEnTune ? 1 : 0} · Cool.EnableTuning {v.CEnTune ? 1 : 0} · SUT.State {v.SUTSt ?? "—"} · TIR.State {v.TIRSt ?? "—"} · ProcPar OK H {v.SUTHOk ? 1 : 0}/C {v.SUTCOk ? 1 : 0}
+      </div>
+      <div className="flex flex-wrap items-center gap-2" role="radiogroup" aria-label="Viritettävä">
+        <span className="text-sm text-muted-foreground">Viritettävä:</span>
+        <button type="button" role="radio" aria-checked={target === "heat"} disabled={busy || running} onClick={() => setTarget("heat")} className={`${BTN} ${target === "heat" ? BTN_ON : BTN_OFF}`}>Lämmitys</button>
+        <button type="button" role="radio" aria-checked={target === "cool"} disabled={busy || running || !coolOk} onClick={() => setTarget("cool")} className={`${BTN} ${target === "cool" ? BTN_ON : BTN_OFF}`}>Jäähdytys</button>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <button type="button" disabled={busy || running || v.ManEn} className={`${BTN} ${BTN_OFF}`} onClick={() => start(1)} data-testid="pid-tune-pre">Esiviritys…</button>
+        <button type="button" disabled={busy || running || v.ManEn} className={`${BTN} ${BTN_OFF}`} onClick={() => start(2)} data-testid="pid-tune-fine">Hienoviritys…</button>
+        <button type="button" disabled={busy || !running} className={`${BTN} ${running ? "border-amber-400 bg-amber-400/15 text-amber-200" : BTN_OFF}`} data-testid="pid-tune-cancel"
+          onClick={() => setPending({ text: "Peru viritys ja palaa AUTOMAATTIIN?", detail: "Mode=3 + ModeActivate. Vanhat PID-parametrit säilyvät.", run: () => sendPidCommand(pidKey, { Mode: 3, ModeActivate: true }) })}>Peru viritys</button>
+      </div>
+      {v.ManEn ? <div className="text-[11px] text-amber-300">ManualEnable=1 estää tilanvaihdon – palaa ensin Autolle.</div> : null}
+    </Section>
   );
 }
 
@@ -378,7 +428,8 @@ export function PidParamsTab({ v }: { v: Partial<PidValues> | null }) {
           ))}
         </tbody>
       </table>
-      <div className="text-[11px] text-muted-foreground">Vain luku (Retain.CtrlParams). Viritys TIA Portalissa.</div>
+      <div className="text-[11px] text-muted-foreground">Kuollut alue (DeadZone): lämmitys {f1(v.HDZ, 2)} · jäähdytys {f1(v.CDZ, 2)}</div>
+      <div className="text-[11px] text-muted-foreground">Vain luku (Retain.CtrlParams). Viritys Säätö-välilehdeltä (Esi-/Hienoviritys).</div>
     </div>
   );
 }
