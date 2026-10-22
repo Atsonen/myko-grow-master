@@ -227,7 +227,7 @@ function DashboardInner() {
       )}
 
       {isMobile ? (
-        <div className="flex flex-col gap-3" data-testid="dashboard-mobile">
+        <div className="grid grid-cols-1 gap-3 min-[600px]:grid-cols-2" data-testid="dashboard-mobile">
           {[...layout.widgets]
             .sort((a, b) => a.y - b.y || a.x - b.x)
             .map((w) => {
@@ -235,11 +235,11 @@ function DashboardInner() {
               return (
                 w.type === "measurementPoint" ? (
                   // self-framed widget: single frame, its own name header (ISA-101 style)
-                  <Card key={w.id} className="overflow-hidden bg-card border-border" data-widget={w.type}>
+                  <Card key={w.id} className="min-w-0 overflow-hidden bg-card border-border" data-widget={w.type}>
                     <WidgetBody widget={w} />
                   </Card>
                 ) : (
-                <Card key={w.id} className="flex flex-col bg-card border-border" style={h ? { height: h } : undefined} data-widget={w.type}>
+                <Card key={w.id} className={`flex min-w-0 flex-col bg-card border-border ${w.type === "statusBits" ? "" : "min-[600px]:col-span-2"}`} style={h ? { height: h } : undefined} data-widget={w.type}>
                   <div className="px-3 pt-2.5 pb-1">
                     <h2 className="text-base font-medium leading-6 text-foreground truncate">{w.title || defaultTitle(w, labelFor)}</h2>
                   </div>

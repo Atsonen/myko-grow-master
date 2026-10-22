@@ -143,14 +143,14 @@ export function MeasurementPointWidget({ config }: { config: WidgetConfigMap["me
   const value = point.current?.value ?? point.alarmValue;
   const checkedAgeMin = point.checked ? (Date.now() - new Date(point.checked).getTime()) / 60_000 : Infinity;
 
-  const TAB = "min-h-11 flex-1 rounded-md px-3 text-sm font-semibold text-muted-foreground data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow";
+  const TAB = "min-h-11 flex-1 whitespace-nowrap rounded-md px-1.5 text-[13px] min-[400px]:px-3 min-[400px]:text-sm font-semibold text-muted-foreground data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow";
   return (
-    <div className={`h-full px-3 py-2.5 ${LEVEL_STYLE[level]} ${disabled && (level === "ok" || level === "unknown") ? LEVEL_STYLE.disabled : ""}`} data-testid="measurement-point" data-level={level}>
+    <div className={`@container h-full px-3 py-2.5 ${LEVEL_STYLE[level]} ${disabled && (level === "ok" || level === "unknown") ? LEVEL_STYLE.disabled : ""}`} data-testid="measurement-point" data-level={level}>
       <div className="flex w-full items-start gap-2">
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 overflow-hidden">
           <div className="truncate text-[15px] font-medium leading-6 text-muted-foreground" data-testid="mp-name">{config.name || point.name}</div>
           <div className="flex items-baseline gap-1">
-            <span className="text-4xl font-semibold tabular-nums text-foreground" data-testid="mp-value">
+            <span className="text-3xl font-semibold tabular-nums text-foreground @[11rem]:text-4xl" data-testid="mp-value">
               {value === null || value === undefined ? "—" : value.toFixed(1)}
             </span>
             <span className="text-base text-muted-foreground">{point.unit}</span>
@@ -185,7 +185,7 @@ export function MeasurementPointWidget({ config }: { config: WidgetConfigMap["me
           onClick={() => setOpen(true)}
           aria-label={`${point.name}: asetukset`}
           data-testid="mp-gear"
-          className="-mr-2 -mt-1 flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-muted-foreground/70 hover:bg-secondary/60 hover:text-foreground"
+          className="-mt-1 flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-muted-foreground/70 hover:bg-secondary/60 hover:text-foreground"
         >
           <Settings className="h-[18px] w-[18px]" />
         </button>
@@ -197,7 +197,7 @@ export function MeasurementPointWidget({ config }: { config: WidgetConfigMap["me
           <DialogPrimitive.Content
             data-testid="mp-dialog"
             aria-describedby={undefined}
-            className="fixed z-50 flex flex-col border bg-background shadow-lg inset-0 md:inset-auto md:left-1/2 md:top-1/2 md:h-[min(85vh,760px)] md:w-[min(92vw,720px)] md:-translate-x-1/2 md:-translate-y-1/2 md:rounded-lg"
+            className="fixed z-50 flex flex-col border bg-background shadow-lg inset-0 overscroll-contain md:inset-auto md:left-1/2 md:top-1/2 md:h-[min(85vh,760px)] md:w-[min(92vw,720px)] md:-translate-x-1/2 md:-translate-y-1/2 md:rounded-lg [@media(max-height:560px)]:inset-0 [@media(max-height:560px)]:h-auto [@media(max-height:560px)]:w-auto [@media(max-height:560px)]:translate-x-0 [@media(max-height:560px)]:translate-y-0 [@media(max-height:560px)]:rounded-none"
           >
             <div className={`flex items-center gap-3 border-b border-border p-3 ${LEVEL_STYLE[level]}`}>
               <div className="min-w-0 flex-1">
