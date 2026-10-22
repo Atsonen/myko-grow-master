@@ -312,8 +312,8 @@ export function PidControlTab({
       <Section title="Virheet" testid="pid-ack" right={<CodeInfo v={v} focus="err" />}>
         <div className="flex flex-wrap items-center gap-2">
           <span className={`text-sm ${v.Err ? "font-semibold text-red-400" : v.ErrBits ? "font-semibold text-amber-300" : "text-muted-foreground"}`}>ErrorBits {hex(v.ErrBits)}</span>
-          <span className="text-sm text-muted-foreground">Warning {hex(v.Warn)}</span>
-          <button type="button" disabled={busy} className={`${BTN} ${v.ErrBits || v.Warn ? "border-amber-400 bg-amber-400/15 text-amber-200" : BTN_OFF}`}
+          <span className="text-sm text-muted-foreground">Warning {hex(v.Warn)}{v.Warn ? " (info)" : ""}</span>
+          <button type="button" disabled={busy} className={`${BTN} ${v.ErrBits || v.Err ? "border-amber-400 bg-amber-400/15 text-amber-200" : BTN_OFF}`}
             onClick={() => setPending({ text: "Kuittaa PID-virheet (ErrorAck)?", detail: "Nollaa ErrorBitsit ja kuitattavat varoitukset. Jos vika on yhä päällä (Error=1), bitti palaa.", run: cmd({ ErrorAck: true }) })}>Kuittaa (ErrorAck)</button>
         </div>
       </Section>
@@ -333,7 +333,7 @@ export function PidControlTab({
 function TuningSection({ pidKey, v, busy, tuning, setPending }: {
   pidKey: string; v: Partial<PidValues>; busy: boolean; tuning: boolean; setPending: (p: Pending) => void;
 }) {
-  const [target, setTarget] = useState<"heat" | "cool">(v.CEnTune && !v.HEnTune ? "cool" : "heat");
+  const [target, setTarget] = useState<"heat" | "cool">("heat");
   const running = v.State === 1 || v.State === 2;
   const coolOk = v.ActCool !== false;
   const WARN = "Viritys heiluttaa lämpötilaa tarkoituksella (askel-/värähtelykoe) ja voi kestää tunteja. Älä muuta asetusarvoa virityksen aikana. EI_AUTO-hälytys vaimennetaan virityksen ajaksi; jos viritys päättyy virheeseen, hälytys tulee.";
@@ -343,7 +343,7 @@ function TuningSection({ pidKey, v, busy, tuning, setPending }: {
     const pre = mode === 1 ? (target === "heat" ? "Esiviritys vaatii PV:n selvästi SP:n alapuolelle ja jäähdytyksen pois päältä. " : "Jäähdytyksen esiviritys vaatii onnistuneen lämmityksen esivirityksen ja PV:n lähellä SP:tä. ") : "Hienoviritys tehdään asetusarvon ympärillä. ";
     setPending({
       text: `Käynnistä ${name} (${tgt}) säätimelle ${pidKey}?`,
-      detail: `${pre}${WARN} Kirjoitetaan Heat.EnableTuning=${target === "heat" ? 1 : 0}, Cool.EnableTuning=${target === "cool" ? 1 : 0}, Mode=${mode} + ModeActivate.`,
+      detail: `${target === "cool" ? "⚠ Jäähdytys on kompressori – viritystä ei suositella, voi käynnistellä kompuraa tiheään. " : ""}${pre}${WARN} Kirjoitetaan Heat.EnableTuning=${target === "heat" ? 1 : 0}, Cool.EnableTuning=${target === "cool" ? 1 : 0}, Mode=${mode} + ModeActivate.`,
       run: () => sendPidCommand(pidKey, { HeatEnableTuning: target === "heat", CoolEnableTuning: target === "cool", Mode: mode, ModeActivate: true }),
     });
   };
