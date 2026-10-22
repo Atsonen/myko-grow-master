@@ -837,7 +837,7 @@ app.get(
 // PUT  /api/alarms/:pointId/controls  {on?, heat?, cool?, setpoint?}  -> stores, logs to alarm_events
 //      (event 'control'), and publishes immediately (retained): <prefix>/json and Sensors/Mykovalvomo/Ctrl (all words).
 const CTRL_SP_SHIFT = 10;
-// Sensors/Mykovalvomo/Ctrl: one retained flat JSON for the PLC, e.g. {"F1":25984,"T1":0,"F1dis":0,"T1dis":0,"Heartbeat":123}
+// Sensors/Mykovalvomo/Ctrl: one retained flat JSON for the PLC, exactly {"Heartbeat":123,"F1":25984,"T1":0} (Heartbeat first: PLC parser)
 // (<key>dis = WhatsApp alarms disabled, also bit15 of the word: 0-6 alarms, 7-9 ON/HEAT/COOL, 10-14 SP, 15 WA_DISABLED)
 // (point id -> short key; the checker uses the same map).
 const PLC_TOPIC = "Sensors/Mykovalvomo/Ctrl";
@@ -1003,16 +1003,10 @@ app.put(
       await publishRetained(`${pt.topic_prefix}/json`, JSON.stringify(js));
       // PLC topic: {"F1":word,"T1":word,"Heartbeat":counter}
       const others = await query(`SELECT id, last_status, last_payload FROM alarm_points WHERE id IN (${PLC_ORDER.map(() => "?").join(",")})`, PLC_ORDER);
-      const disRows = await query(
-        `SELECT point_id FROM alarm_point_controls WHERE alarms_disabled_until > UTC_TIMESTAMP() AND point_id IN (${PLC_ORDER.map(() => "?").join(",")})`,
-        PLC_ORDER,
-      );
-      const disSet = new Set(disRows.map((d) => d.point_id));
       const byId = new Map(others.map((o) => [o.id, o]));
-      const plc = {};
+      // key order matters: Heartbeat first
+      const plc = { Heartbeat: Number(jsonCol(byId.get(PLC_ORDER[0])?.last_payload, {})?.heartbeat?.counter ?? 0) };
       for (const id of PLC_ORDER) plc[PLC_KEYS[id]] = id === pointId ? word : Number(byId.get(id)?.last_status ?? 0);
-      for (const id of PLC_ORDER) plc[`${PLC_KEYS[id]}dis`] = disSet.has(id) ? 1 : 0;
-      plc.Heartbeat = Number(jsonCol(byId.get(PLC_ORDER[0])?.last_payload, {})?.heartbeat?.counter ?? 0);
       await publishRetained(PLC_TOPIC, JSON.stringify(plc));
     } catch (e) {
       published = false;
