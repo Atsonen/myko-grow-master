@@ -5,6 +5,7 @@
 // Images: DeepSeek has no vision input -> server extracts EXIF (exiftool), QR/1D codes (zbarimg; QR first, then barcodes),
 // OCR fallback (tesseract fin+eng) and passes the text to the model.
 // Labels: /api/labels (PNG / ZIP / PDF, 203 dpi NIIMBOT sizes) and /api/labels.csv|.xlsx-compatible CSV for the NIIMBOT app batch import.
+import { processContext } from "./processDoc.js";
 import { execFile } from "node:child_process";
 import { mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -46,7 +47,8 @@ Säännöt:
 2. Ennen uusien luontia varmista KAIKKI: määrä, tyyppi/substraatti, päivämäärä (tunnuksen YYMMDD), kanta (strain, #koodi) TAI alkuperä (emäyksikkö / itiöt / ostettu), sijainti, tila (oletus ACTIVE). Kysy puuttuvat yhdellä viestillä numeroituna listana; ehdota oletuksia ("tänään 261023?"). Tarkista sijainnit, kannat ja substraatit get_reference-työkalulla – älä keksi arvoja.
 3. Siirroissa tunnista yksiköt tunnuksista (QR/viivakoodi/OCR) ja varmista find_units-työkalulla, että ne ovat olemassa. Jos kuvan tekstistä ei saa varmaa tunnusta, kysy käyttäjältä. Käytä kuvan EXIF-aikaa siirtoaikana, jos käyttäjä ei muuta sano.
 4. Kuvia et näe; saat niistä vain EXIF-, QR-, viivakoodi- ja OCR-tekstin.
-5. Kun ehdotus on tehty, kerro lyhyesti mitä vahvistuskortissa on ja pyydä vahvistamaan kortista.`;
+5. Kun ehdotus on tehty, kerro lyhyesti mitä vahvistuskortissa on ja pyydä vahvistamaan kortista.
+Prosessikuvaus alla on taustatietoa kasvamon olosuhteista (lämpötilat, laitteet); käytä sitä vain, jos kysytään olosuhteista.` + processContext("summary");
 
 export function registerAssistant(app, { query, asyncRoute }) {
   mkdirSync(UP_DIR, { recursive: true });

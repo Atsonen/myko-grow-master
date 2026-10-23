@@ -1,6 +1,7 @@
 // DeepSeek anomaly monitor: every 15 min, READ-ONLY. Summarises PID + sensor data, stores findings (llm_findings),
 // logs them as events (alarm_events point LLM_Advisor), severity high -> WhatsApp via the normal wa_alert.send path.
 // It may RECOMMEND a sensor 5 V reset (recommend_reset) but never executes one.
+import { processContext } from "./processDoc.js";
 import { execFile } from "node:child_process";
 import { deepseekChat } from "./deepseek.js";
 
@@ -47,7 +48,7 @@ export function registerAnomaly(app, { query, asyncRoute, pidState, PID_POINTS }
       const sys = `Olet sienikasvamon automaation valvoja (Siemens PID_Temp + anturit). Etsi poikkeamat datasta: jäätyneet anturit (frozen=true; PID-säädön PV-anturit: F1=dl02, T1=dl00, G_Air=dl31 DS4 – näiden jäätyminen on high: sama arvo koko tunnin, esim. DS4 jumissa 8.89), vanhentunut data (stale), saturoitunut lähtö (100 % pitkään), SP:n ja PV:n pysyvä ero, epätavallinen lähtö ulkolämpötilaan nähden, anturien ristiriidat. Älä raportoi normaalia toimintaa. Tiedossa: Warning 16#0020 jatkuvasti päällä (ei raportoida).
 Vastaa VAIN JSON: {"findings":[{"severity":"info|low|medium|high","point":"F1|T1|G_Air|<anturin key>|SYSTEM","category":"frozen_sensor|stale_data|saturation|sp_deviation|output|sensor_conflict|other","finding":"lyhyesti suomeksi","suggestion":"toimenpide suomeksi","recommend_reset":false}]}
 high vain, jos säätö on vaarassa tai tuote vaarassa (esim. PID:n PV jäätynyt -> säätö sokea). recommend_reset=true vain jäätyneelle/puuttuvalle anturille (5 V reset katkaisee SensorBlock 1+2 syötön n. 8 s; et suorita sitä itse).`;
-      const b = await deepseekChat({ messages: [{ role: "system", content: sys }, { role: "user", content: `Aika UTC ${new Date().toISOString()}\n${JSON.stringify(data)}` }], response_format: { type: "json_object" }, max_tokens: 1200 }, 90_000);
+      const b = await deepseekChat({ messages: [{ role: "system", content: sys + processContext("full") }, { role: "user", content: `Aika UTC ${new Date().toISOString()}\n${JSON.stringify(data)}` }], response_format: { type: "json_object" }, max_tokens: 1200 }, 90_000);
       let resp; try { resp = JSON.parse(b.choices?.[0]?.message?.content ?? ""); } catch { throw new Error("DeepSeek: vastaus ei ollut JSONia"); }
       const u = b.usage ?? {}; const runId = `an-${Date.now().toString(36)}`;
       const out = [];

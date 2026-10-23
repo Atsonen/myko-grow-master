@@ -3,6 +3,7 @@
 // - Params are read/written by deploy/opcua-bridge/read_pid_params.py (one-shot OPC UA session, Read service only;
 //   writes go CtrlParamsBackUp + LoadBackUp as Siemens requires in Automatic mode, then read back).
 // - Analysis never writes. Writes happen only from POST .../ai-apply or .../ai-restore (user button + confirm).
+import { processContext } from "./processDoc.js";
 import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
 
@@ -90,7 +91,7 @@ Säännöt: proposed_params vain jos muutos on perusteltu; muuten {}. Sallitut a
     const r = await fetch("https://api.deepseek.com/chat/completions", {
       method: "POST", signal: AbortSignal.timeout(120_000),
       headers: { Authorization: `Bearer ${k}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "deepseek-chat", messages: [{ role: "system", content: sys }, { role: "user", content: user }], response_format: { type: "json_object" }, max_tokens: 1500, temperature: 0.2 }),
+      body: JSON.stringify({ model: "deepseek-chat", messages: [{ role: "system", content: sys + processContext("full") }, { role: "user", content: user }], response_format: { type: "json_object" }, max_tokens: 1500, temperature: 0.2 }),
     });
     const b = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(`DeepSeek HTTP ${r.status}: ${JSON.stringify(b).slice(0, 200)}`);

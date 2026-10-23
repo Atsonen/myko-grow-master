@@ -291,6 +291,10 @@ const statements = [
     action VARCHAR(40) NULL, payload_json JSON NULL, result_json JSON NULL, operation_id VARCHAR(64) NULL, prompt_tokens INT NULL, completion_tokens INT NULL,
     INDEX idx_assistant_log_session (session_id, id)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+  // AI process description (processDoc.js), one row per saved version
+  `CREATE TABLE IF NOT EXISTS ai_process_doc (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY, at DATETIME NOT NULL, by_user VARCHAR(40) NULL, content MEDIUMTEXT NOT NULL
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
   // PID_Temp H/C via output limits (pid.js): stored "ON" limits per PID + mode ('bits' = legacy Ctrl word bit8/9, 'limits' = Myko writes
   // Config.Output.Heat.PidUpperLimit / Config.Output.Cool.PidLowerLimit; Ctrl bits 8/9 then constant 1)
   `CREATE TABLE IF NOT EXISTS pid_output_limits (

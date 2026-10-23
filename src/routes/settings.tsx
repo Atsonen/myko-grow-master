@@ -13,6 +13,7 @@ import {
 import { BIT_OFF_DEFAULT, BIT_ON_DEFAULT, reloadDataloggerVariables, useDataloggerVariables } from "@/lib/statusBits";
 import { SERIES_COLORS, useSeriesDefaults } from "@/lib/seriesStyle";
 import { MykoPlcSettings } from "@/components/settings/MykoPlcSettings";
+import { AiProcessSettings } from "@/components/settings/AiProcessSettings";
 
 export const Route = createFileRoute("/settings")({
   head: () => ({ meta: [{ title: "Settings — Myko Valvomo" }] }),
@@ -34,6 +35,7 @@ function SettingsPage() {
         </p>
       </div>
       <MykoPlcSettings />
+      <AiProcessSettings />
       <Card className="p-0 overflow-x-auto">
         <table className="w-full text-xs" data-testid="dl-settings">
           <thead className="text-[10px] uppercase text-muted-foreground font-mono">
