@@ -34,7 +34,7 @@ topics:
 pids:
   F1: {instance: PID_Temp_F1, limits: [-30, 50]}   # Kylmäsäilytystila 1 (fallback = last read InLo/InHi)
   T1: {instance: Terrarium_1_Temp, limits: [5, 45]}  # Terrario 1 (fallback = PV feed range)
-  G_Air: {instance: G_Air, limits: [0, 50], monitor: false, nodes: [SP, PV, State, Err, ErrBits, Mode, CSP, OutSum]}  # Kasvamo ilma, PF-1. monitor:false = commands only: adding G_Air items makes the S7-1200 reject F1/T1 subscriptions too (0x80DB0000)
+  G_Air: {instance: G_Air, limits: [0, 50], monitor: poll, poll_s: 5, nodes: [SP, PV, State, Err, ErrBits, Warn, Mode, CSP, OutSum]}  # Kasvamo ilma, PF-1. monitor:poll = Read service every poll_s (no monitored items): adding G_Air items makes the S7-1200 reject F1/T1 subscriptions too (0x80DB0000)
 pid_nodes:   # short key -> path inside the instance DB
   SP: Setpoint
   PV: Input

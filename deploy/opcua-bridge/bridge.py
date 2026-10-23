@@ -20,8 +20,13 @@ m = cfg["mqtt"]; pub = cfg.get("publish", {})
 # topic -> {key: address}
 TOPICS = {t: dict(mp) for t, mp in (cfg.get("topics") or {}).items()}
 PIDS = cfg.get("pids") or {}
+POLL = {}  # topic -> ({key: address}, interval_s)
 for k, p in PIDS.items():
     if p.get("monitor") is False: continue  # commands only (no monitored items)
+    if p.get("monitor") == "poll":  # cyclic Read service instead of monitored items (S7-1200 monitored-item limit)
+        POLL[f"Sensors/PLC_2/{k}_PID"] = ({sk: f"@*/{p['instance']}/{path}" for sk, path in (cfg.get("pid_nodes") or {}).items()
+                                           if not p.get("nodes") or sk in p["nodes"]}, float(p.get("poll_s", 5)))
+        continue
     # optional per-PID "nodes" subset: the S7-1200 OPC UA server rejects the whole subscription above its monitored-item limit
     TOPICS[f"Sensors/PLC_2/{k}_PID"] = {sk: f"@*/{p['instance']}/{path}" for sk, path in (cfg.get("pid_nodes") or {}).items()
                                         if not p.get("nodes") or sk in p["nodes"]}
@@ -38,7 +43,7 @@ def on_message(cl, ud, msg):
 mq.on_connect = on_connect; mq.on_message = on_message
 mq.reconnect_delay_set(1, 30); mq.connect_async(m["host"], m.get("port", 1883)); mq.loop_start()
 
-values = {t: {} for t in TOPICS}
+values = {t: {} for t in list(TOPICS) + list(POLL)}
 node2 = {}  # nodeid str -> (topic, key), rebuilt per session
 last_pub = {t: 0.0 for t in values}; dirty = set()
 
@@ -113,6 +118,13 @@ async def session():
                     n = await R.resolve(addr); node2[n.nodeid.to_string()] = (t, k); nodes.append(n); ok += 1
                 except Exception as e: log.warning("resolve failed %s %s: %s", t, k, e)
             log.info("topic %s: %d/%d nodes resolved", t, ok, len(mp))
+        polled = {}  # topic -> (keys, nodes, interval, last)
+        for t, (mp, iv) in POLL.items():
+            ks, ns = [], []
+            for k, addr in mp.items():
+                try: ns.append(await R.resolve(addr)); ks.append(k)
+                except Exception as e: log.warning("resolve failed %s %s: %s", t, k, e)
+            polled[t] = [ks, ns, iv, 0.0]; log.info("poll topic %s: %d/%d nodes, every %.0fs", t, len(ns), len(mp), iv)
         cmd_nodes = {}  # pid key -> {cmd: node}
         for k, p in PIDS.items():
             cmd_nodes[k] = {}
@@ -128,6 +140,12 @@ async def session():
             try: item = await asyncio.wait_for(cmdq.get(), 1.0)
             except asyncio.TimeoutError: item = None
             if item: await handle_cmd(cmd_nodes, *item)
+            for t, pl in polled.items():
+                if pl[1] and time.time() - pl[3] >= pl[2]:
+                    pl[3] = time.time()
+                    for k, dv in zip(pl[0], await c.read_attributes(pl[1], ua.AttributeIds.Value)):
+                        if dv.StatusCode.is_good(): values[t][k] = clean(dv.Value.Value)
+                    dirty.add(t)
             if time.time() - last_chk > 5: await c.check_connection(); last_chk = time.time()
 
 VT = {"Float": ua.VariantType.Float, "Boolean": ua.VariantType.Boolean, "Int16": ua.VariantType.Int16}

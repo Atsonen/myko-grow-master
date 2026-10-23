@@ -213,5 +213,43 @@ export function registerPidRoutes(app, { mqttClient, query, asyncRoute }) {
       res.status(r.error ? 502 : 200).json(r);
     }),
   );
+  // ---- Setpoint sync: Myko SP (alarm_point_controls) is authoritative for every PID ----
+  // Monitored PIDs: every 15 s compare the PLC Setpoint (fresh bridge data only) with Myko's SP; if |Δ| > 0.05 rewrite
+  // Myko's value (whitelisted Setpoint command) and log 'SP palautettu old→new'. Covers PLC restart/download and bridge
+  // reconnect (state becomes fresh again -> next tick). Command-only PIDs (no monitored data, e.g. G_Air): rewrite every
+  // 60 s blindly. Rate limit: >= 30 s between writes per PID. Never writes when Myko SP is unknown.
+  const SYNC_TOL = 0.05, SYNC_MIN_GAP_S = 30, BLIND_EVERY_S = 60;
+  const syncAt = {};
+  const COMMAND_ONLY = new Set(["G_Air"]); // bridge monitor:false (PLC monitored-item limit)
+  async function spSync() {
+    const rows = await query("SELECT point_id, setpoint, setpoint_exact FROM alarm_point_controls").catch(() => []);
+    const sp = new Map(rows.map((r) => [r.point_id, r.setpoint_exact ?? r.setpoint]));
+    for (const [k, pointId] of Object.entries(PID_POINTS)) {
+      const raw = sp.get(pointId);
+      const want = raw === null || raw === undefined ? NaN : Math.round(Number(raw) * 10) / 10;
+      if (!Number.isFinite(want)) continue;
+      const now = Date.now();
+      if (now - (syncAt[k] ?? 0) < SYNC_MIN_GAP_S * 1000) continue;
+      const s = state[k], fresh = s && now - s.at <= STALE_S * 1000;
+      const plc = fresh ? Number(s.values.SP) : NaN;
+      let label;
+      if (fresh && Number.isFinite(plc)) {
+        if (Math.abs(plc - want) <= SYNC_TOL) continue;
+        label = `SP palautettu ${plc}→${want} (PLC poikkesi Myko-arvosta)`;
+      } else if (COMMAND_ONLY.has(k)) {
+        if (now - (syncAt[k] ?? 0) < BLIND_EVERY_S * 1000) continue;
+        label = syncAt[k] ? null : `SP synkronointi ${want} → PLC (ei OPC UA -seurantaa)`; // log first blind write only
+      } else continue; // monitored PID but stale data: wait for the bridge
+      syncAt[k] = now;
+      const r = await pidCommand(k, { Setpoint: want }, "sp-sync").catch((e) => ({ error: e.message }));
+      if (r.error) console.error(`[sp-sync] ${k} ${want}: ${r.error}`);
+      else if (label) console.log(`[sp-sync] ${k} ${label}`);
+      if (label || r.error)
+        await query("INSERT INTO alarm_events (point_id, alarm, bit, event, at, value, status_word) VALUES (?, ?, NULL, 'control', UTC_TIMESTAMP(3), ?, NULL)",
+          [pointId, `${label ?? `SP ${want} → PLC`}${r.error ? " VIRHE" : ""}`.slice(0, 80), want]).catch(() => undefined);
+    }
+  }
+  setTimeout(() => { spSync().catch(() => undefined); setInterval(() => spSync().catch((e) => console.error("[sp-sync]", e.message)), 15_000).unref(); }, 20_000).unref();
+
   return { pidCommand, pidState: (k) => state[k] ?? null, setFeedAlarms: (f) => { hooks.feedAlarms = f; } };
 }
