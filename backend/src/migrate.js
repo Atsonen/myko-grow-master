@@ -268,6 +268,29 @@ const statements = [
     analysis_id BIGINT UNSIGNED NULL, params_json JSON NOT NULL, result_json JSON NULL,
     INDEX idx_pid_param_hist (pid_key, id)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+  // Myko settings (JSON per key): db_myko (Safe_Output, watchdog, freeze; written to DB_Myko only when enabled), anomaly_last
+  `CREATE TABLE IF NOT EXISTS myko_settings (
+    k VARCHAR(40) PRIMARY KEY, v JSON NOT NULL, updated_by VARCHAR(40) NULL,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+  // Sensor 5 V reset requests (sent / rejected), basis for the 5 min lockout + 3 / 24 h cap
+  `CREATE TABLE IF NOT EXISTS sensor_reset_log (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY, at DATETIME NOT NULL, by_user VARCHAR(40) NULL, source VARCHAR(16) NOT NULL,
+    result VARCHAR(16) NOT NULL, detail VARCHAR(500) NULL, INDEX idx_sensor_reset_at (at)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+  // DeepSeek anomaly monitor findings (read-only advisor)
+  `CREATE TABLE IF NOT EXISTS llm_findings (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY, at DATETIME NOT NULL, run_id VARCHAR(32) NOT NULL, \`trigger\` VARCHAR(16) NOT NULL,
+    severity VARCHAR(8) NOT NULL, point VARCHAR(40) NOT NULL, category VARCHAR(40) NOT NULL, finding TEXT NULL, suggestion TEXT NULL,
+    recommend_reset TINYINT(1) NOT NULL DEFAULT 0, duplicate TINYINT(1) NOT NULL DEFAULT 0, whatsapp TINYINT(1) NULL,
+    prompt_tokens INT NULL, completion_tokens INT NULL, INDEX idx_llm_findings_at (at), INDEX idx_llm_findings_pc (point, category, at)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+  // Ledger assistant: every proposed / confirmed / rejected action (source=assistant)
+  `CREATE TABLE IF NOT EXISTS assistant_log (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY, at DATETIME NOT NULL, session_id VARCHAR(40) NOT NULL, kind VARCHAR(16) NOT NULL,
+    action VARCHAR(40) NULL, payload_json JSON NULL, result_json JSON NULL, operation_id VARCHAR(64) NULL, prompt_tokens INT NULL, completion_tokens INT NULL,
+    INDEX idx_assistant_log_session (session_id, id)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
   // met.no Locationforecast (compact), one row per 30-min fetch: entry nearest the fetch time.
   `CREATE TABLE IF NOT EXISTS weather_metno (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -298,7 +321,9 @@ const alterStatements = [
   "ALTER TABLE alarm_point_controls ADD COLUMN IF NOT EXISTS low_delta DECIMAL(4,1) NOT NULL DEFAULT 3.0 AFTER high_min",
   "ALTER TABLE alarm_point_controls ADD COLUMN IF NOT EXISTS low_min SMALLINT UNSIGNED NOT NULL DEFAULT 10 AFTER low_delta",
   "ALTER TABLE alarm_point_controls ADD COLUMN IF NOT EXISTS alarms_disabled_until DATETIME NULL AFTER low_min",
-  "ALTER TABLE alarm_events MODIFY alarm VARCHAR(80) NOT NULL",
+  "ALTER TABLE alarm_events MODIFY alarm VARCHAR(255) NOT NULL",
+  // hidden alarm point that owns DeepSeek monitor events (enabled=0: not shown as a point, not evaluated)
+  "INSERT IGNORE INTO alarm_points (id, name, topic_prefix, enabled, sort_order) VALUES ('LLM_Advisor', 'DeepSeek-valvoja', 'Myko/LLM_Advisor', 0, 99)",
   "ALTER TABLE datalogger_variables ADD COLUMN IF NOT EXISTS var_type VARCHAR(16) NOT NULL DEFAULT 'analog' AFTER visible",
   "ALTER TABLE datalogger_variables ADD COLUMN IF NOT EXISTS bits_json JSON NULL AFTER var_type",
 ];

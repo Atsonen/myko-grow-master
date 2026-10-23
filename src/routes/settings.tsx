@@ -12,6 +12,7 @@ import {
 } from "@/lib/apiClient";
 import { BIT_OFF_DEFAULT, BIT_ON_DEFAULT, reloadDataloggerVariables, useDataloggerVariables } from "@/lib/statusBits";
 import { SERIES_COLORS, useSeriesDefaults } from "@/lib/seriesStyle";
+import { MykoPlcSettings } from "@/components/settings/MykoPlcSettings";
 
 export const Route = createFileRoute("/settings")({
   head: () => ({ meta: [{ title: "Settings — Myko Valvomo" }] }),
@@ -32,6 +33,7 @@ function SettingsPage() {
           are hidden everywhere. Default color applies to every trend view unless a view overrides it.
         </p>
       </div>
+      <MykoPlcSettings />
       <Card className="p-0 overflow-x-auto">
         <table className="w-full text-xs" data-testid="dl-settings">
           <thead className="text-[10px] uppercase text-muted-foreground font-mono">
