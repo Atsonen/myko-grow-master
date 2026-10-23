@@ -86,3 +86,7 @@ pid_commands:  # write whitelist (same for every PID); tuning params are NOT wri
   ErrorAck:     {path: ErrorAck,     type: Boolean, pulse: true}
   HeatEnableTuning: {path: Heat/EnableTuning, type: Boolean}   # tuning target selection (written before Mode/ModeActivate)
   CoolEnableTuning: {path: Cool/EnableTuning, type: Boolean}
+  # H/C switching via PID_Temp output limits (Myko pid.js, replaces Ctrl word HEAT bit8 / COOL bit9). Heat+cool active:
+  # PidOutputSum high limit = Config.Output.Heat.PidUpperLimit, low limit = Config.Output.Cool.PidLowerLimit. Read back after write.
+  HeatUpperLimit: {path: Config/Output/Heat/PidUpperLimit, type: Float, min: 0, max: 100, readback: true}
+  CoolLowerLimit: {path: Config/Output/Cool/PidLowerLimit, type: Float, min: -100, max: 0, readback: true}

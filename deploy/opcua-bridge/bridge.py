@@ -159,6 +159,15 @@ async def handle_cmd(cmd_nodes, topic, payload):
     except Exception: log.warning("CMD %s bad json %r", topic, payload[:200]); return
     if not isinstance(req, dict): return
     cid = req.pop("id", None); src = req.pop("by", None); res = {}
+    rd = req.pop("_read", None)  # read-only request: {"_read": [<whitelisted cmd names>]} -> res["_read"] = {name: value}
+    if isinstance(rd, list):
+        out = {}
+        for k in rd:
+            node = cmd_nodes.get(pk, {}).get(k) if k in WL else None
+            if node is None: out[k] = None; continue
+            try: out[k] = clean(await node.read_value())
+            except Exception as e: out[k] = None; log.warning("CMD read fail %s %s: %r", topic, k, e)
+        res["_read"] = out
     state = values.get(f"Sensors/PLC_2/{pk}_PID", {})
     for k in sorted(req, key=lambda k: k == "ModeActivate"):  # ModeActivate after Mode
         v = req[k]; w = WL.get(k); node = cmd_nodes.get(pk, {}).get(k)
@@ -185,10 +194,12 @@ async def handle_cmd(cmd_nodes, topic, payload):
                 await node.write_value(ua.DataValue(ua.Variant(False, VT[t]))); r = "ok (pulse)"
             else:
                 await node.write_value(ua.DataValue(ua.Variant(v, VT[t]))); r = "ok"
+                if w.get("readback"): rb = clean(await node.read_value())
             n_ = WCOUNT[(pk, k)] = WCOUNT.get((pk, k), 0) + 1
             if n_ % w.get("log_every", 1) == 1 or w.get("log_every", 1) == 1:  # high-rate keys (Input) logged every Nth write
                 log.info("CMD write %s %s=%r node=%s by=%s id=%s (n=%d)", topic, k, v, node.nodeid.to_string(), src, cid, n_)
             res[k] = {"result": r, "value": v}
+            if w.get("readback") and not w.get("pulse"): res[k]["read"] = rb
         except Exception as e:
             res[k] = f"error: {e}"; log.error("CMD fail %s %s=%r: %r", topic, k, v, e)
     ack(topic, {"id": cid, "ts": time.time(), "results": res})
