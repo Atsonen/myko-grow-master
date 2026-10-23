@@ -8,6 +8,7 @@ import { startWeather } from "./weather.js";
 import { registerPidAi } from "./pidAi.js";
 import { registerMykoDb } from "./mykoDb.js";
 import { registerAnomaly } from "./anomaly.js";
+import { registerAssistant } from "./assistant.js";
 import { registerPvFeed } from "./pvfeed.js";
 import { normalizeOrigins, registerTraceRoutes, writeOrigins } from "./trace.js";
 
@@ -996,6 +997,7 @@ startWeather({ query });
 registerPidAi(app, { query, asyncRoute, pidState, PID_POINTS });
 registerMykoDb(app, { query, asyncRoute });
 registerAnomaly(app, { query, asyncRoute, pidState, PID_POINTS });
+registerAssistant(app, { query, asyncRoute });
 const pvFeed = registerPvFeed(app, { pidCommand, pidState, query, asyncRoute, pidPoints: PID_POINTS, mqttUrl: process.env.MQTT_URL || "mqtt://192.168.1.51:1883" });
 setFeedAlarms(pvFeed.feedAlarms);
 

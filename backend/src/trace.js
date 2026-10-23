@@ -153,8 +153,8 @@ async function assertUnits(conn, codes) {
   const have = new Set(rows.map((r) => r.code)); const missing = codes.filter((c) => !have.has(c));
   if (missing.length) throw new Error(`Unknown units: ${missing.join(", ")}`);
 }
-const SOURCES = ["ui", "chat", "api", "script"];
-// audit actor = source of the request (ui | chat | api | script)
+const SOURCES = ["ui", "chat", "api", "script", "assistant"];
+// audit actor = source of the request (ui | chat | api | script | assistant)
 const actorOf = (b) => { const s = String(b?.source || "api").toLowerCase(); if (!SOURCES.includes(s)) throw new Error(`source must be one of ${SOURCES.join(", ")}`); return s; };
 const isDry = (req) => req.body?.dryRun === true || req.query.dryRun === "true" || req.query.dryRun === "1";
 
