@@ -25,6 +25,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as UnitsUnitCodeRouteImport } from './routes/units.$unitCode'
 import { Route as TransfersNewRouteImport } from './routes/transfers.new'
 import { Route as PlantsTrendsRouteImport } from './routes/plants.trends'
+import { Route as PlantsDashboardRouteImport } from './routes/plants.dashboard'
 import { Route as LineageGraphRouteImport } from './routes/lineage.graph'
 import { Route as EventsNewRouteImport } from './routes/events.new'
 import { Route as UnitsUnitCodeEditRouteImport } from './routes/units.$unitCode.edit'
@@ -112,6 +113,11 @@ const PlantsTrendsRoute = PlantsTrendsRouteImport.update({
   path: '/trends',
   getParentRoute: () => PlantsRoute,
 } as any)
+const PlantsDashboardRoute = PlantsDashboardRouteImport.update({
+  id: '/dashboard',
+  path: '/dashboard',
+  getParentRoute: () => PlantsRoute,
+} as any)
 const LineageGraphRoute = LineageGraphRouteImport.update({
   id: '/graph',
   path: '/graph',
@@ -159,6 +165,7 @@ export interface FileRoutesByFullPath {
   '/units': typeof UnitsRouteWithChildren
   '/events/new': typeof EventsNewRoute
   '/lineage/graph': typeof LineageGraphRoute
+  '/plants/dashboard': typeof PlantsDashboardRoute
   '/plants/trends': typeof PlantsTrendsRoute
   '/transfers/new': typeof TransfersNewRoute
   '/units/$unitCode': typeof UnitsUnitCodeRouteWithChildren
@@ -183,6 +190,7 @@ export interface FileRoutesByTo {
   '/units': typeof UnitsRouteWithChildren
   '/events/new': typeof EventsNewRoute
   '/lineage/graph': typeof LineageGraphRoute
+  '/plants/dashboard': typeof PlantsDashboardRoute
   '/plants/trends': typeof PlantsTrendsRoute
   '/transfers/new': typeof TransfersNewRoute
   '/units/$unitCode': typeof UnitsUnitCodeRouteWithChildren
@@ -208,6 +216,7 @@ export interface FileRoutesById {
   '/units': typeof UnitsRouteWithChildren
   '/events/new': typeof EventsNewRoute
   '/lineage/graph': typeof LineageGraphRoute
+  '/plants/dashboard': typeof PlantsDashboardRoute
   '/plants/trends': typeof PlantsTrendsRoute
   '/transfers/new': typeof TransfersNewRoute
   '/units/$unitCode': typeof UnitsUnitCodeRouteWithChildren
@@ -234,6 +243,7 @@ export interface FileRouteTypes {
     | '/units'
     | '/events/new'
     | '/lineage/graph'
+    | '/plants/dashboard'
     | '/plants/trends'
     | '/transfers/new'
     | '/units/$unitCode'
@@ -258,6 +268,7 @@ export interface FileRouteTypes {
     | '/units'
     | '/events/new'
     | '/lineage/graph'
+    | '/plants/dashboard'
     | '/plants/trends'
     | '/transfers/new'
     | '/units/$unitCode'
@@ -282,6 +293,7 @@ export interface FileRouteTypes {
     | '/units'
     | '/events/new'
     | '/lineage/graph'
+    | '/plants/dashboard'
     | '/plants/trends'
     | '/transfers/new'
     | '/units/$unitCode'
@@ -421,6 +433,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PlantsTrendsRouteImport
       parentRoute: typeof PlantsRoute
     }
+    '/plants/dashboard': {
+      id: '/plants/dashboard'
+      path: '/dashboard'
+      fullPath: '/plants/dashboard'
+      preLoaderRoute: typeof PlantsDashboardRouteImport
+      parentRoute: typeof PlantsRoute
+    }
     '/lineage/graph': {
       id: '/lineage/graph'
       path: '/graph'
@@ -491,10 +510,12 @@ const LineageRouteWithChildren =
   LineageRoute._addFileChildren(LineageRouteChildren)
 
 interface PlantsRouteChildren {
+  PlantsDashboardRoute: typeof PlantsDashboardRoute
   PlantsTrendsRoute: typeof PlantsTrendsRoute
 }
 
 const PlantsRouteChildren: PlantsRouteChildren = {
+  PlantsDashboardRoute: PlantsDashboardRoute,
   PlantsTrendsRoute: PlantsTrendsRoute,
 }
 

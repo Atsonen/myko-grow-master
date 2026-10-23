@@ -1,6 +1,7 @@
 import { Link, useRouterState } from "@tanstack/react-router";
 import {
   LayoutDashboard,
+  Gauge,
   Boxes,
   Activity,
   FlaskConical,
@@ -35,6 +36,7 @@ const main = [
 
 const plants = [
   { title: "Plants", url: "/plants", icon: Sprout },
+  { title: "Dashboard", url: "/plants/dashboard", icon: Gauge },
   { title: "Plant trends", url: "/plants/trends", icon: TrendingUp },
 ];
 
