@@ -154,6 +154,8 @@ async def handle_cmd(cmd_nodes, topic, payload):
                 v = float(v); lo, hi = w.get("min"), w.get("max")
                 if w.get("clamp_to"):
                     lo, hi = state.get(w["clamp_to"][0]), state.get(w["clamp_to"][1])
+                    fb = (PIDS.get(pk) or {}).get("limits")  # static fallback when Config limits are not OPC UA readable
+                    if (lo is None or hi is None) and fb: lo, hi = fb
                     if lo is None or hi is None: raise ValueError("limits unknown")
                 if lo is not None and v < lo: v = float(lo)
                 if hi is not None and v > hi: v = float(hi)
