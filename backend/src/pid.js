@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 
 export const PID_POINTS = { F1: "ColdStorage1", T1: "Terrario1" }; // pid key -> parent measurement point
 export const PID_BY_POINT = Object.fromEntries(Object.entries(PID_POINTS).map(([k, v]) => [v, k]));
-const CMD_KEYS = ["Setpoint", "ManualEnable", "ManualValue", "Mode", "ModeActivate", "ErrorAck", "HeatEnableTuning", "CoolEnableTuning"];
+const CMD_KEYS = ["Input", "Setpoint", "ManualEnable", "ManualValue", "Mode", "ModeActivate", "ErrorAck", "HeatEnableTuning", "CoolEnableTuning"];
 
 // Alarm bits of the <key>_PID alarm points (ISA-18.2 style: few, actionable, debounced).
 export const PID_ALARM_BITS = [
@@ -21,8 +21,11 @@ export const PID_ALARM_BITS = [
   { bit: 2, key: "ERRORBITS", level: "warn", rule: "ErrorBits≠0 yli 10 s (kuittaamaton vika, ErrorAck)" },
   { bit: 3, key: "OPCUA", level: "warn", rule: "Ei PID-dataa OPC UA:sta yli 60 s" },
   { bit: 4, key: "SATUROITUNUT", level: "warn", rule: "Lähtö ±100 % yli 30 min (vain loki, ei WhatsAppia)" },
+  { bit: 5, key: "SENSOR_VIKA", level: "alarm", rule: "Myko PV-syöttö päällä: ei hyväksyttyä anturiarvoa 30 s (ESP-virhekoodi/epäuskottava/piikki) yli 10 s" },
+  { bit: 7, key: "ANTURIVIKA_ALASAJO", level: "alarm", rule: "P1: anturivika/ei päivity yli alasajoajan (oletus 5 min) -> Myko asetti ON pois (lämmitys+jäähdytys seis). Ei automaattista uudelleenkäynnistystä." },
+  { bit: 6, key: "INPUT_STALE", level: "alarm", rule: "Myko PV-syöttö päällä: Input-kirjoitus PLC:lle ei onnistunut yli 60 s" },
 ];
-const DEB = { EI_AUTO: 10, PID_VIKA: 5, ERRORBITS: 10, SATUROITUNUT: 1800 }; // seconds
+const DEB = { ANTURIVIKA_ALASAJO: 0, SENSOR_VIKA: 10, INPUT_STALE: 10, EI_AUTO: 10, PID_VIKA: 5, ERRORBITS: 10, SATUROITUNUT: 1800 }; // seconds
 const STALE_S = 60;
 const INTENT_S = 60; // a Mode/ManualEnable command within this window makes a State change "intended"
 
@@ -41,6 +44,7 @@ export function registerPidRoutes(app, { mqttClient, query, asyncRoute }) {
   try { intent = JSON.parse(fs.readFileSync(INTENT_FILE, "utf8")); } catch { intent = {}; }
   const saveIntent = () => fs.writeFile(INTENT_FILE, JSON.stringify(intent), () => undefined);
   const started = Date.now();
+  const hooks = {}; // feedAlarms(k) from pvfeed.js
 
   const c = mqttClient();
   const topics = Object.keys(PID_POINTS).flatMap((k) => [`Sensors/PLC_2/${k}_PID`, `Myko/Cmd/${k}_PID/ack`]);
@@ -126,6 +130,10 @@ export function registerPidRoutes(app, { mqttClient, query, asyncRoute }) {
       hold("ERRORBITS", (v.ErrBits ?? 0) !== 0 && v.Err !== true);
       hold("SATUROITUNUT", v.State === 3 && Math.abs(v.OutSum ?? 0) >= 99.5);
     }
+    const fa = hooks.feedAlarms?.(k) ?? {};
+    hold("SENSOR_VIKA", fa.SENSOR_VIKA === true);
+    hold("INPUT_STALE", fa.INPUT_STALE === true);
+    hold("ANTURIVIKA_ALASAJO", fa.ANTURIVIKA_ALASAJO === true);
     const si = (sinceIso[k] ??= {});
     for (const n of act) if (!prevActive.has(n)) si[n] = new Date(cs[n] ?? now).toISOString();
     for (const n of Object.keys(si)) if (!act.has(n)) delete si[n];
@@ -183,7 +191,7 @@ export function registerPidRoutes(app, { mqttClient, query, asyncRoute }) {
       const bad = (m) => res.status(400).json({ error: m });
       const cmd = {};
       for (const [k, v] of Object.entries(b)) {
-        if (!CMD_KEYS.includes(k) || k === "Setpoint") return bad(`${k} not allowed here`);
+        if (!CMD_KEYS.includes(k) || k === "Setpoint" || k === "Input") return bad(`${k} not allowed here`);
         if (["ManualEnable", "ModeActivate", "ErrorAck", "HeatEnableTuning", "CoolEnableTuning"].includes(k) && typeof v !== "boolean") return bad(`${k} must be true/false`);
         if ((k === "ModeActivate" || k === "ErrorAck") && v !== true) return bad(`${k} is a pulse (true)`);
         if (k === "ManualValue" && !(typeof v === "number" && v >= -100 && v <= 100)) return bad("ManualValue must be -100..100 %");
@@ -205,5 +213,5 @@ export function registerPidRoutes(app, { mqttClient, query, asyncRoute }) {
       res.status(r.error ? 502 : 200).json(r);
     }),
   );
-  return { pidCommand, pidState: (k) => state[k] ?? null };
+  return { pidCommand, pidState: (k) => state[k] ?? null, setFeedAlarms: (f) => { hooks.feedAlarms = f; } };
 }

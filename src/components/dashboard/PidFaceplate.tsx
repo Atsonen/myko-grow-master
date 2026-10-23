@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { Info, X } from "lucide-react";
-import { getPid, sendPidCommand, type PidCommand, type PidStatus, type PidValues } from "@/lib/apiClient";
+import { getPid, getPvFeed, sendPidCommand, setPvFeed, type PvFeedResponse, type PidCommand, type PidStatus, type PidValues } from "@/lib/apiClient";
 import { toast } from "sonner";
 import { ERROR_BITS, STATES, WARNING_BITS, activeCodes, hex, unknownBits, type Code } from "./pidCodes";
 
@@ -18,6 +18,9 @@ const PID_ALARM: Record<string, { level: "alarm" | "warn"; text: string }> = {
   ERRORBITS: { level: "warn", text: "ErrorBits" },
   OPCUA: { level: "warn", text: "Ei PID-dataa" },
   SATUROITUNUT: { level: "warn", text: "Lähtö saturoitunut" },
+  SENSOR_VIKA: { level: "alarm", text: "Anturivika (PV-syöttö)" },
+  INPUT_STALE: { level: "alarm", text: "Mittaus ei päivity PLC:lle" },
+  ANTURIVIKA_ALASAJO: { level: "alarm", text: "P1 ANTURIVIKA – ajettu alas (ON pois)" },
 };
 
 export type Pid = { v: Partial<PidValues> | null; at: string | null; stale: boolean; s: PidStatus | null; refresh: () => void };
@@ -256,6 +259,86 @@ const BTN_ON = "border-zinc-300 bg-zinc-200 text-zinc-900";
 
 type Pending = { text: string; detail?: string; run: () => Promise<unknown> } | null;
 
+const ago = (t: number | null) => (t ? `${Math.max(0, Math.round((Date.now() - t) / 1000))} s sitten` : "—");
+/** Mittauslähde: Myko reads a selectable MQTT sensor field, filters it and (only when switched ON) writes PID_Temp.Input. */
+function FeedSection({ pidKey, unit }: { pidKey: string; unit: string }) {
+  const [d, setD] = useState<PvFeedResponse | null>(null);
+  const [pending, setPending] = useState<Pending>(null);
+  const [busy, setBusy] = useState(false);
+  const [sel, setSel] = useState("");
+  const load = () => getPvFeed(pidKey).then(setD).catch(() => undefined);
+  useEffect(() => { load(); const t = setInterval(load, 3000); return () => clearInterval(t); }, [pidKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const f = d?.feed;
+  const cur = f?.topic && f.field ? `${f.topic}|${f.field}` : "";
+  useEffect(() => { if (!pending) setSel(cur); }, [cur]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!f) return null;
+  const go = async () => {
+    if (!pending) return;
+    setBusy(true);
+    try { await pending.run(); toast.success("Tallennettu"); await load(); }
+    catch (e) { toast.error((e as Error).message); }
+    finally { setBusy(false); setPending(null); }
+  };
+  const srcs = (d?.sources ?? []).filter((s) => !s.topic.startsWith("Sensors/PLC_2"));
+  if (cur && !srcs.some((s) => `${s.topic}|${s.field}` === cur)) srcs.unshift({ topic: f.topic!, field: f.field!, value: NaN, at: "" });
+  const label = (t: string | null, fl: string | null) => (t && fl ? `${t.replace(/^Sensors\//, "")} · ${fl}` : "ei valittu");
+  const val = (x: number) => (d?.codes?.[String(x)] ? `${x} (${d.codes[String(x)]})` : f1(x, 2));
+  const alarm = f.alarms?.SENSOR_VIKA || f.alarms?.INPUT_STALE;
+  return (
+    <Section title="Mittauslähde (Myko → PID Input)" testid="pid-feed">
+      <ConfirmDialog pending={pending} busy={busy} onOk={go} onCancel={() => { setPending(null); setSel(cur); }} />
+      <label className="block text-[11px] text-muted-foreground">Lähde (MQTT-aihe · kenttä)</label>
+      <select aria-label="Mittauslähde" value={sel} disabled={busy} data-testid="pid-feed-src"
+        onChange={(e) => {
+          const nv = e.target.value; setSel(nv);
+          if (nv === cur) return;
+          const [t, fl] = nv ? nv.split("|") : [null, null];
+          setPending({
+            text: `Vaihda ${pidKey}:n mittauslähde: ${label(f.topic, f.field)} → ${label(t, fl)}?`,
+            detail: f.enabled ? "Syöttö on PÄÄLLÄ: PLC:n PID-mittaus vaihtuu heti uuteen anturiin." : "Syöttö on pois päältä – PLC:lle ei kirjoiteta ennen kuin kytket syötön päälle.",
+            run: () => setPvFeed(pidKey, { topic: t, field: fl }),
+          });
+        }}
+        className="h-11 w-full rounded-md border border-input bg-background px-2 text-sm">
+        <option value="">— ei valittu —</option>
+        {srcs.map((s) => (
+          <option key={`${s.topic}|${s.field}`} value={`${s.topic}|${s.field}`}>
+            {label(s.topic, s.field)}{Number.isFinite(s.value) ? ` = ${val(s.value)}` : ""}
+          </option>
+        ))}
+      </select>
+      <div className="flex flex-wrap items-center gap-2">
+        <button type="button" role="switch" aria-checked={f.enabled} data-testid="pid-feed-switch" disabled={busy || (!f.enabled && !cur)}
+          onClick={() => setPending(f.enabled
+            ? { text: "Lopeta Myko syöttää mittauksen?", detail: `PID_Temp_${pidKey}.Input jää viimeiseen kirjoitettuun arvoon (${f1(f.wrote ?? undefined, 2)} ${unit}) kunnes PLC tai Myko kirjoittaa sen.`, run: () => setPvFeed(pidKey, { enabled: false }) }
+            : { text: `Kytke päälle: Myko syöttää mittauksen ${pidKey}:lle?`, detail: `Lähde ${label(f.topic, f.field)}. Hyväksytyt arvot kirjoitetaan PID_Temp_${pidKey}.Input (OPC UA, max 1/s, rajattu InLo…InHi). Varmista että PLC:n oma kirjoitus Inputiin on poistettu.`, run: () => setPvFeed(pidKey, { enabled: true }) })}
+          className={`${BTN} ${f.enabled ? "border-emerald-500/60 bg-emerald-500/15 text-emerald-200" : BTN_OFF}`}>
+          Myko syöttää mittauksen: {f.enabled ? "PÄÄLLÄ" : "POIS"}
+        </button>
+        <label className="flex items-center gap-1 text-xs text-muted-foreground">Alasajo viasta
+          <select aria-label="Alasajoviive" value={f.shutdownMin} disabled={busy} data-testid="pid-feed-shutdown"
+            onChange={(e) => { const m = Number(e.target.value); setPending({ text: `Alasajoviive ${f.shutdownMin} → ${m} min?`, detail: "Jos anturivika tai Input-kirjoituksen katko kestää näin kauan (syöttö päällä), Myko kytkee pisteen ON pois (lämmitys ja jäähdytys seis), hälyttää P1 ANTURIVIKA_ALASAJO eikä käynnistä uudelleen automaattisesti.", run: () => setPvFeed(pidKey, { shutdownMin: m }) }); }}
+            className="h-9 rounded-md border border-input bg-background px-1 text-sm">
+            {[...new Set([1, 2, 5, 10, 15, 30, 60, f.shutdownMin])].sort((a, b) => a - b).map((m) => <option key={m} value={m}>{m} min</option>)}
+          </select>
+        </label>
+        {f.shutdown && <span className="rounded border border-red-500 bg-red-600/30 px-2 py-0.5 text-xs font-semibold text-red-100">AJETTU ALAS – kytke ON käsin</span>}
+        {alarm && <span className="rounded border border-red-500/60 bg-red-500/15 px-2 py-0.5 text-xs text-red-200">{f.alarms.SENSOR_VIKA ? "ANTURIVIKA" : "EI PÄIVITY"}</span>}
+      </div>
+      <div className="grid grid-cols-2 gap-x-3 text-[11px] text-muted-foreground tabular-nums" data-testid="pid-feed-status">
+        <span>Raaka: {f.lastRaw === null ? "—" : val(f.lastRaw)} ({ago(f.rawAt)})</span>
+        <span>Hyväksytty: {f1(f.lastGood ?? undefined, 2)} {unit} ({ago(f.goodAt)})</span>
+        <span>Kirjoitettu: {f.enabled ? `${f1(f.wrote ?? undefined, 2)} (${ago(f.wroteAt)}), ${f.writes} kpl` : "ei (syöttö pois)"}</span>
+        <span>PLC Input: {f1(f.plcInput ?? undefined, 2)} {unit}</span>
+        {f.faultSince && !f.shutdown && <span className="col-span-2 text-amber-300">Vika jatkunut {ago(f.faultSince).replace(" sitten", "")} – alasajo {f.shutdownMin} min kohdalla</span>}
+        {f.reject && <span className="col-span-2">Viimeksi hylätty: {f.reject} ({ago(f.rejectAt)})</span>}
+        {f.writeErr && <span className="col-span-2 text-red-300">Kirjoitusvirhe: {f.writeErr}</span>}
+        <span className="col-span-2">Suodatus: ESP-koodit −127…−119, NaN, alue {f1(f.min)}…{f1(f.max)}, piikki &gt; {f1(f.maxStep)} {unit}/näyte (hyväksytään {f.confirmN} peräkkäisellä). Hälytys: anturivika {f.faultS} s, ei kirjoitusta {f.staleS} s.</span>
+      </div>
+    </Section>
+  );
+}
+
 /** Säätö tab: setpoint (controls route -> status word + OPC UA), Auto/Manual, manual value, ErrorAck, mini trend, last commands. */
 export function PidControlTab({
   pidKey, pid, unit, onSetpoint,
@@ -308,6 +391,7 @@ export function PidControlTab({
         </div>
         {pid.s?.trend && <MiniTrend data={pid.s.trend} unit={unit} />}
       </Section>
+      <FeedSection pidKey={pidKey} unit={unit} />
       <Section title="Toimintatila" testid="pid-mode-ctl" right={<CodeInfo v={v} focus="state" />}>
         <div className="text-sm">Tila: <span className="font-semibold">{PID_STATE[v.State ?? -1] ?? v.State}</span> · ManualEnable {v.ManEn ? "1" : "0"}{pid.s?.intended ? " · tahallinen (dashboard)" : ""}</div>
         <div className="flex flex-wrap gap-2">

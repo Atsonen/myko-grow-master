@@ -24,6 +24,7 @@ for k, p in PIDS.items():
     TOPICS[f"Sensors/PLC_2/{k}_PID"] = {sk: f"@*/{p['instance']}/{path}" for sk, path in (cfg.get("pid_nodes") or {}).items()}
 CMD_TOPICS = {f"Myko/Cmd/{k}_PID": k for k in PIDS}
 WL = cfg.get("pid_commands") or {}
+WCOUNT = {}
 
 mq = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=m.get("client_id", "opcua-bridge"))
 cmdq = None; loop = None
@@ -161,7 +162,9 @@ async def handle_cmd(cmd_nodes, topic, payload):
                 await node.write_value(ua.DataValue(ua.Variant(False, VT[t]))); r = "ok (pulse)"
             else:
                 await node.write_value(ua.DataValue(ua.Variant(v, VT[t]))); r = "ok"
-            log.info("CMD write %s %s=%r node=%s by=%s id=%s", topic, k, v, node.nodeid.to_string(), src, cid)
+            n_ = WCOUNT[(pk, k)] = WCOUNT.get((pk, k), 0) + 1
+            if n_ % w.get("log_every", 1) == 1 or w.get("log_every", 1) == 1:  # high-rate keys (Input) logged every Nth write
+                log.info("CMD write %s %s=%r node=%s by=%s id=%s (n=%d)", topic, k, v, node.nodeid.to_string(), src, cid, n_)
             res[k] = {"result": r, "value": v}
         except Exception as e:
             res[k] = f"error: {e}"; log.error("CMD fail %s %s=%r: %r", topic, k, v, e)

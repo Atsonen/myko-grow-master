@@ -558,3 +558,19 @@ export async function sendPidCommand(key: string, cmd: PidCommand) {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(cmd),
   });
 }
+
+export type PvFeed = {
+  topic: string | null; field: string | null; enabled: boolean; min: number; max: number; maxStep: number; confirmN: number; faultS: number; staleS: number;
+  lastRaw: number | null; rawAt: number | null; lastGood: number | null; goodAt: number | null; reject: string | null; rejectAt: number | null;
+  wrote: number | null; wroteAt: number | null; writes: number; writeErr: string | null; plcInput: number | null; alarms: { SENSOR_VIKA?: boolean; INPUT_STALE?: boolean; ANTURIVIKA_ALASAJO?: boolean };
+  shutdownMin: number; faultSince: number | null; shutdown: boolean; onState: boolean | null;
+};
+export type PvFeedResponse = { key: string; feed: PvFeed; codes?: Record<string, string>; sources?: { topic: string; field: string; value: number; at: string }[] };
+export async function getPvFeed(key: string) {
+  return requestJson<PvFeedResponse>(`/api/pid/${encodeURIComponent(key)}/feed`);
+}
+export async function setPvFeed(key: string, body: Partial<Pick<PvFeed, "topic" | "field" | "enabled" | "min" | "max" | "shutdownMin">>) {
+  return requestJson<PvFeedResponse>(`/api/pid/${encodeURIComponent(key)}/feed`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+}

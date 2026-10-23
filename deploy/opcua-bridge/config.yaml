@@ -77,6 +77,7 @@ pid_nodes:   # short key -> path inside the instance DB
   SUTCOk: PIDSelfTune/SUT/ProcParCoolOk
 pid_commands:  # write whitelist (same for every PID); tuning params are NOT writable
   Setpoint:     {path: Setpoint,     type: Float,   clamp_to: [InLo, InHi]}
+  Input:        {path: Input,        type: Float,   clamp_to: [InLo, InHi], log_every: 60}  # Myko PV feed (backend pvfeed.js, switch default OFF)
   ManualEnable: {path: ManualEnable, type: Boolean}
   ManualValue:  {path: ManualValue,  type: Float,   min: -100, max: 100}
   Mode:         {path: Mode,         type: Int16,   allowed: [0, 1, 2, 3, 4]}  # 1 pretuning, 2 fine tuning
