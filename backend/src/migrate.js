@@ -241,6 +241,18 @@ const statements = [
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     CONSTRAINT fk_alarm_point_controls_point FOREIGN KEY (point_id) REFERENCES alarm_points(id) ON DELETE CASCADE
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+  // 1-min PID snapshots + outdoor temperature for ML training (safe-state / feed-forward output vs outdoor temp).
+  `CREATE TABLE IF NOT EXISTS pid_training_log (
+    at DATETIME NOT NULL,               -- UTC, truncated to the minute
+    pid_key VARCHAR(16) NOT NULL,       -- F1 / T1 / G_Air
+    sp DECIMAL(7,2) NULL, csp DECIMAL(7,2) NULL, pv DECIMAL(7,2) NULL,
+    out_heat DECIMAL(7,2) NULL, out_cool DECIMAL(7,2) NULL, out_sum DECIMAL(7,2) NULL,
+    state TINYINT NULL, mode TINYINT NULL, man_en TINYINT(1) NULL, err_bits INT NULL,
+    outdoor_temp DECIMAL(6,2) NULL,     -- datalogger, see outdoor_tag
+    outdoor_tag VARCHAR(16) NULL,
+    pv_age_s INT NULL,                  -- age of the PID state snapshot when logged
+    PRIMARY KEY (pid_key, at), INDEX idx_pid_training_at (at)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 ];
 
 const alterStatements = [

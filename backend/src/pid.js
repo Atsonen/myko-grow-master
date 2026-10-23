@@ -251,5 +251,29 @@ export function registerPidRoutes(app, { mqttClient, query, asyncRoute }) {
   }
   setTimeout(() => { spSync().catch(() => undefined); setInterval(() => spSync().catch((e) => console.error("[sp-sync]", e.message)), 15_000).unref(); }, 20_000).unref();
 
+  // ---- ML training log: one row per PID per minute (fresh state only) + outdoor temperature from the datalogger ----
+  // Outdoor tag: env OUTDOOR_TEMP_TAG (default dl05 "WaterTemp", diurnal profile -> outdoor probe; to be confirmed).
+  const OUTDOOR_TAG = process.env.OUTDOOR_TEMP_TAG || "dl05";
+  const num = (v) => (v === null || v === undefined || v === "" || !Number.isFinite(Number(v)) ? null : Number(v));
+  const bool = (v) => (v === null || v === undefined ? null : v ? 1 : 0);
+  async function trainingLog() {
+    const now = Date.now();
+    const [od] = await query(
+      "SELECT numeric_value v FROM datalogger_values WHERE source_id = 'src-datalogger' AND variable_key = ? AND timestamp > UTC_TIMESTAMP() - INTERVAL 5 MINUTE AND numeric_value > -100 ORDER BY timestamp DESC LIMIT 1",
+      [OUTDOOR_TAG]).catch(() => []);
+    const outdoor = od ? num(od.v) : null;
+    for (const k of Object.keys(PID_POINTS)) {
+      const s = state[k];
+      if (!s || now - s.at > STALE_S * 1000) continue;
+      const v = s.values;
+      await query(
+        `INSERT IGNORE INTO pid_training_log (at, pid_key, sp, csp, pv, out_heat, out_cool, out_sum, state, mode, man_en, err_bits, outdoor_temp, outdoor_tag, pv_age_s)
+         VALUES (DATE_FORMAT(UTC_TIMESTAMP(), '%Y-%m-%d %H:%i:00'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [k, num(v.SP), num(v.CSP), num(v.PV), num(v.OutHeat), num(v.OutCool), num(v.OutSum), num(v.State), num(v.Mode),
+         bool(v.ManEn), num(v.ErrBits), outdoor, OUTDOOR_TAG, Math.round((now - s.at) / 1000)]).catch((e) => console.error("[pid-log]", e.message));
+    }
+  }
+  setInterval(() => trainingLog().catch(() => undefined), 60_000).unref();
+
   return { pidCommand, pidState: (k) => state[k] ?? null, setFeedAlarms: (f) => { hooks.feedAlarms = f; } };
 }
