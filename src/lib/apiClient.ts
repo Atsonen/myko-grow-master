@@ -574,3 +574,19 @@ export async function setPvFeed(key: string, body: Partial<Pick<PvFeed, "topic" 
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
   });
 }
+
+// ---- DeepSeek PID advisor ----
+export type PidAiResponse = { assessment?: string; issues?: string[]; proposed_params?: Record<string, number>; rationale?: string; risk?: string; confidence?: number; dropped_params?: string[] };
+export type PidAiAnalysis = { id: number; at: string; trigger: string; model: string; status: string; tokens: { prompt: number | null; completion: number | null }; params: Record<string, number | string | boolean> | null; response: PidAiResponse | null };
+export type PidParamHist = { id: number; at: string; kind: string; by_user: string | null; reason: string | null; params: Record<string, number> | null; result: { results?: Record<string, { before: number; read: number; ok: boolean }> } | null };
+export type PidAiState = { key: string; analyses: PidAiAnalysis[]; history: PidParamHist[]; hasNew: boolean; canRestore: boolean; limits: Record<string, [number, number]>; maxRelChange: number; rateMin: number };
+export type PidAiJob = { id: string; status: "running" | "done" | "error"; error?: string; result?: { id?: number; ok?: boolean; results?: Record<string, { before: number; wrote: number; read: number; ok: boolean }> } };
+const aiUrl = (key: string, p: string) => `/api/pid/${encodeURIComponent(key)}/${p}`;
+const post = (body?: unknown): RequestInit => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body ?? {}) });
+export const getPidAi = (key: string) => requestJson<PidAiState>(aiUrl(key, "ai-analysis"));
+export const startPidAiAnalyze = (key: string) => requestJson<PidAiJob>(aiUrl(key, "ai-analyze"), post());
+export const getPidAiJob = (key: string, id: string) => requestJson<PidAiJob>(aiUrl(key, `ai-job/${id}`));
+export const markPidAiSeen = (key: string) => requestJson<{ ok: boolean }>(aiUrl(key, "ai-seen"), post());
+export const startPidAiApply = (key: string, analysisId: number, params: Record<string, number>, confirmLarge: boolean) =>
+  requestJson<PidAiJob>(aiUrl(key, "ai-apply"), post({ analysisId, params, confirmLarge }));
+export const startPidAiRestore = (key: string) => requestJson<PidAiJob>(aiUrl(key, "ai-restore"), post());

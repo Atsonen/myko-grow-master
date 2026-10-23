@@ -6,6 +6,7 @@ import { getAlarmEvents, getAlarmPoints, setAlarmControls, type AlarmControls, t
 import { toast } from "sonner";
 import { useDashboardData } from "./DashboardData";
 import { PID_KEY_BY_POINT, PidCompact, PidControlTab, PidParamsTab, PidStateTab, PidModeBanner, pidAbnormal, pidModeIndication, usePid } from "./PidFaceplate";
+import { PidAiTab, usePidAiBadge } from "./PidAiTab";
 import type { WidgetConfigMap } from "./types";
 
 const HEL: Intl.DateTimeFormatOptions = { timeZone: "Europe/Helsinki", day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" };
@@ -107,6 +108,7 @@ export function MeasurementPointWidget({ config, open: openProp, onOpenChange, d
   const id = config.pointId;
   const pidKey = id ? PID_KEY_BY_POINT[id] : undefined;
   const pid = usePid(pidKey, open ? 2000 : 5000, open);
+  const [aiNew, clearAiNew] = usePidAiBadge(pidKey);
 
   const applyControls = async (patch: AlarmControlsPatch): Promise<boolean> => {
     if (!id) return false;
@@ -183,6 +185,7 @@ export function MeasurementPointWidget({ config, open: openProp, onOpenChange, d
             )}
           </div>
           {pidKey && <PidCompact v={pid.v} stale={pid.stale} unit={point.unit} />}
+          {pidKey && aiNew && <div className="mt-1 inline-block rounded bg-amber-900/60 px-1.5 py-0.5 text-[11px] font-semibold text-amber-200" data-testid="pid-ai-badge">AI-ehdotus</div>}
           {pidAbn.length > 0 && (
             <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1" data-testid="pid-abn">
               {pidAbn.map((a) => (
@@ -244,6 +247,7 @@ export function MeasurementPointWidget({ config, open: openProp, onOpenChange, d
                     <TabsPrimitive.Trigger value="saato" className={TAB}>Säätö</TabsPrimitive.Trigger>
                     <TabsPrimitive.Trigger value="pidtila" className={TAB}>Tila</TabsPrimitive.Trigger>
                     <TabsPrimitive.Trigger value="param" className={TAB}>Parametrit</TabsPrimitive.Trigger>
+                    <TabsPrimitive.Trigger value="ai" className={TAB} data-testid="tab-ai">AI-analyysi{aiNew && <span className="ml-1 inline-block h-2 w-2 rounded-full bg-amber-400 align-middle" aria-label="uusi ehdotus" />}</TabsPrimitive.Trigger>
                     <TabsPrimitive.Trigger value="tila" className={TAB}>Hälytykset</TabsPrimitive.Trigger>
                   </>
                 ) : (
@@ -321,6 +325,9 @@ export function MeasurementPointWidget({ config, open: openProp, onOpenChange, d
                   </TabsPrimitive.Content>
                   <TabsPrimitive.Content value="param" className="min-h-0 flex-1 overflow-y-auto p-3 text-sm">
                     <PidParamsTab v={pid.v} />
+                  </TabsPrimitive.Content>
+                  <TabsPrimitive.Content value="ai" className="min-h-0 flex-1 overflow-y-auto p-3 text-sm">
+                    <PidAiTab pidKey={pidKey} onSeen={clearAiNew} />
                   </TabsPrimitive.Content>
                 </>
               )}

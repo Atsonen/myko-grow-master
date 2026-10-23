@@ -253,6 +253,21 @@ const statements = [
     pv_age_s INT NULL,                  -- age of the PID state snapshot when logged
     PRIMARY KEY (pid_key, at), INDEX idx_pid_training_at (at)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+  // DeepSeek PID advisor: one row per analysis (never writes to PLC by itself).
+  `CREATE TABLE IF NOT EXISTS pid_ai_analysis (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    at DATETIME NOT NULL, pid_key VARCHAR(16) NOT NULL, \`trigger\` VARCHAR(16) NOT NULL, model VARCHAR(40) NULL,
+    params_json JSON NULL, input_summary JSON NULL, response_json JSON NULL,
+    prompt_tokens INT NULL, completion_tokens INT NULL, duration_ms INT NULL, status VARCHAR(16) NOT NULL DEFAULT 'new',
+    INDEX idx_pid_ai_pid (pid_key, id)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+  // PID_Temp parameter snapshots (before every apply) and applied/restored sets with read-back results.
+  `CREATE TABLE IF NOT EXISTS pid_param_history (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    at DATETIME NOT NULL, pid_key VARCHAR(16) NOT NULL, kind VARCHAR(16) NOT NULL, by_user VARCHAR(40) NULL, reason VARCHAR(120) NULL,
+    analysis_id BIGINT UNSIGNED NULL, params_json JSON NOT NULL, result_json JSON NULL,
+    INDEX idx_pid_param_hist (pid_key, id)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
   // met.no Locationforecast (compact), one row per 30-min fetch: entry nearest the fetch time.
   `CREATE TABLE IF NOT EXISTS weather_metno (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
