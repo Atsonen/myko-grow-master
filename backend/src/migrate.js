@@ -291,6 +291,12 @@ const statements = [
     action VARCHAR(40) NULL, payload_json JSON NULL, result_json JSON NULL, operation_id VARCHAR(64) NULL, prompt_tokens INT NULL, completion_tokens INT NULL,
     INDEX idx_assistant_log_session (session_id, id)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+  // PID_Temp H/C via output limits (pid.js): stored "ON" limits per PID + mode ('bits' = legacy Ctrl word bit8/9, 'limits' = Myko writes
+  // Config.Output.Heat.PidUpperLimit / Config.Output.Cool.PidLowerLimit; Ctrl bits 8/9 then constant 1)
+  `CREATE TABLE IF NOT EXISTS pid_output_limits (
+    pid_key VARCHAR(16) NOT NULL PRIMARY KEY, heat_on DECIMAL(6,2) NOT NULL DEFAULT 100, cool_on DECIMAL(6,2) NOT NULL DEFAULT -100,
+    mode VARCHAR(8) NOT NULL DEFAULT 'bits', updated_at DATETIME NULL
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
   // met.no Locationforecast (compact), one row per 30-min fetch: entry nearest the fetch time.
   `CREATE TABLE IF NOT EXISTS weather_metno (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,

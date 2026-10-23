@@ -931,8 +931,12 @@ const CTRL_SP_SHIFT = 10;
 const PLC_TOPIC = "Sensors/Mykovalvomo/Ctrl";
 const PLC_KEYS = { ColdStorage1: "F1", Terrario1: "T1" };
 const PLC_ORDER = Object.keys(PLC_KEYS);
-function controlWord(c) {
-  return ((c.on ? 1 : 0) << 7) | ((c.heat ? 1 : 0) << 8) | ((c.cool ? 1 : 0) << 9) | ((Math.round(c.setpoint) & 0x1f) << CTRL_SP_SHIFT);
+// HEAT bit8 / COOL bit9: for a PID in 'limits' mode (pid.js, PID_Temp output limits) they are constant 1 -> the PLC never sees
+// them off; H/C is done by Heat.PidUpperLimit / Cool.PidLowerLimit instead. PLC logic should stop using bits 8/9 (backlog).
+function controlWord(c, pointId) {
+  const lim = pointId && PID_BY_POINT[pointId] && hcMode(PID_BY_POINT[pointId]) === "limits";
+  const heat = lim || c.heat, cool = lim || c.cool;
+  return ((c.on ? 1 : 0) << 7) | ((heat ? 1 : 0) << 8) | ((cool ? 1 : 0) << 9) | ((Math.round(c.setpoint) & 0x1f) << CTRL_SP_SHIFT);
 }
 function mapControls(r) {
   return {
@@ -992,7 +996,7 @@ function publishRetained(topic, message) {
   });
 }
 // ---- OPC UA PID faceplates + PID alarm points: see pid.js ----
-const { pidCommand, pidState, setFeedAlarms } = registerPidRoutes(app, { mqttClient: mqttPublisher, query, asyncRoute });
+const { pidCommand, pidState, setFeedAlarms, setHC, hcMode } = registerPidRoutes(app, { mqttClient: mqttPublisher, query, asyncRoute });
 startWeather({ query });
 registerPidAi(app, { query, asyncRoute, pidState, PID_POINTS });
 registerMykoDb(app, { query, asyncRoute });
@@ -1081,7 +1085,14 @@ app.put(
     const disabled = Boolean(disabledUntil);
     // "disabled" only mutes WhatsApp in the checker; alarm bits stay as they are
     const alarmBits = pt.last_status === null ? 0 : Number(pt.last_status) & 0x7f;
-    const word = alarmBits | controlWord(next) | (disabled ? 0x8000 : 0); // bit15 = WhatsApp alarms disabled
+    // H/C toggles on a PID in 'limits' mode: write the PLC output limits first (readback-verified); on failure nothing is saved
+    const hcKey = PID_BY_POINT[pointId];
+    let hcRes;
+    if (hcKey && hcMode(hcKey) === "limits" && (next.heat !== prev.heat || next.cool !== prev.cool)) {
+      hcRes = await setHC(hcKey, { heat: next.heat, cool: next.cool }, "dashboard");
+      if (!hcRes.ok) return res.status(502).json({ error: `PID-rajan kirjoitus epäonnistui: ${hcRes.error}`, hc: hcRes });
+    }
+    const word = alarmBits | controlWord(next, pointId) | (disabled ? 0x8000 : 0); // bit15 = WhatsApp alarms disabled
     await query(
       `UPDATE alarm_point_controls SET on_state = ?, heat = ?, cool = ?, setpoint = ?, setpoint_exact = ?, warn_delta = ?, warn_min = ?, warn_both = ?,
          high_delta = ?, high_min = ?, low_delta = ?, low_min = ?, alarms_disabled_until = ?, updated_by = ? WHERE point_id = ?`,
@@ -1131,7 +1142,7 @@ app.put(
       if (opcua.error) { published = false; publishError = `OPC UA: ${opcua.error}`; }
     }
     const [r] = await query(`SELECT ${CONTROL_COLS} FROM alarm_point_controls WHERE point_id = ?`, [pointId]);
-    res.json({ controls: mapControls(r), word, published, publishError, opcua });
+    res.json({ controls: mapControls(r), word, published, publishError, opcua, hc: hcRes });
   }),
 );
 
