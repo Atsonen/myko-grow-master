@@ -32,8 +32,8 @@ topics:
     F1_Temp: "@*/Sensors_DB/Output/F1_Temp"
 # PID_Temp instances: state -> Sensors/PLC_2/<key>_PID, commands <- Myko/Cmd/<key>_PID (ack on .../ack)
 pids:
-  F1: {instance: PID_Temp_F1}          # Kylmäsäilytystila 1
-  T1: {instance: Terrarium_1_Temp}     # Terrario 1
+  F1: {instance: PID_Temp_F1, limits: [-30, 50]}   # Kylmäsäilytystila 1 (fallback = last read InLo/InHi)
+  T1: {instance: Terrarium_1_Temp, limits: [5, 45]}  # Terrario 1 (fallback = PV feed range)
   G_Air: {instance: G_Air, limits: [0, 50]}   # Kasvamo ilma, poistopuhallin PF-1; Config/Input*Limit not OPC UA readable -> clamp fallback
 pid_nodes:   # short key -> path inside the instance DB
   SP: Setpoint
