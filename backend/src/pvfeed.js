@@ -23,6 +23,16 @@ const FILE = path.join(DIR, "..", "pv-feed.json");
 const DEFAULTS = {
   F1: { topic: "Sensors/SensorBlock_1", field: "DStemp1", enabled: false, min: -10, max: 30 },
   T1: { topic: null, field: null, enabled: false, min: 5, max: 45 },
+  G_Air: { topic: "Sensors/SensorBlock_2", field: "DStemp2", enabled: false, min: 0, max: 50 },
+};
+// Optional per-PID source whitelist (only these topic.field pairs may be selected). G_Air = kasvamon ilma (PF-1):
+// SensorBlock_2 DStemp2/3/4 = datalogger dl03 G Mid DS2 / dl30 G Katto DS3 / dl31 G Poistoilma DS4 (verified 23.10.2026).
+export const ALLOWED_SOURCES = {
+  G_Air: [
+    { topic: "Sensors/SensorBlock_2", field: "DStemp3", label: "Katto (G Katto DS3)", dl: "dl30" },
+    { topic: "Sensors/SensorBlock_2", field: "DStemp2", label: "Keskiosa (G Mid DS2)", dl: "dl03" },
+    { topic: "Sensors/SensorBlock_2", field: "DStemp4", label: "Poistoilma (G Poistoilma DS4)", dl: "dl31" },
+  ],
 };
 const COMMON = { maxStep: 2.0, confirmN: 3, minIntervalS: 1, faultS: 30, staleS: 60, shutdownMin: 5 };
 
@@ -118,7 +128,11 @@ export function registerPvFeed(app, { pidCommand, pidState, query, asyncRoute, p
   app.get("/api/pid/:key/feed", asyncRoute(async (req, res) => {
     const k = req.params.key; if (!cfg[k]) return res.status(404).json({ error: "Unknown PID" });
     const sources = [...catalog.entries()].sort().flatMap(([t, e]) => Object.entries(e.fields).map(([fl, val]) => ({ topic: t, field: fl, value: val, at: new Date(e.at).toISOString() })));
-    res.json({ key: k, feed: status(k), codes: ESP_CODES, sources });
+    const allowed = ALLOWED_SOURCES[k];
+    const list = allowed
+      ? allowed.map((a) => { const e = catalog.get(a.topic); return { topic: a.topic, field: a.field, label: a.label, dl: a.dl, value: e?.fields[a.field] ?? null, at: e ? new Date(e.at).toISOString() : null }; })
+      : sources;
+    res.json({ key: k, feed: status(k), codes: ESP_CODES, sources: list, restricted: Boolean(allowed) });
   }));
   // PUT {topic?, field?, enabled?, min?, max?}
   app.put("/api/pid/:key/feed", asyncRoute(async (req, res) => {
@@ -129,6 +143,7 @@ export function registerPvFeed(app, { pidCommand, pidState, query, asyncRoute, p
       else {
         if (typeof b.topic !== "string" || !/^Sensors\/[\w\-/]+$/.test(b.topic) || b.topic.startsWith("Sensors/PLC_2")) return res.status(400).json({ error: "bad topic" });
         if (typeof b.field !== "string" || !/^[\w\-]+$/.test(b.field)) return res.status(400).json({ error: "bad field" });
+        if (ALLOWED_SOURCES[k] && !ALLOWED_SOURCES[k].some((a) => a.topic === b.topic && a.field === b.field)) return res.status(400).json({ error: "lähde ei sallittu tälle säätimelle" });
         n.topic = b.topic; n.field = b.field;
       }
     }

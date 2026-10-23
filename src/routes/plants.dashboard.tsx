@@ -2,11 +2,18 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { Gauge } from "lucide-react";
 import { Card } from "@/components/ui/card";
-import { getDataloggerLatest, type DataloggerLatest } from "@/lib/apiClient";
+import { getDataloggerLatest, getPvFeed, type DataloggerLatest } from "@/lib/apiClient";
+import { DashboardDataProvider } from "@/components/dashboard/DashboardData";
+import { MeasurementPointWidget } from "@/components/dashboard/MeasurementPointWidget";
+import { usePid, PID_STATE } from "@/components/dashboard/PidFaceplate";
 
 export const Route = createFileRoute("/plants/dashboard")({
   head: () => ({ meta: [{ title: "Plants dashboard - Myko Valvomo" }] }),
-  component: PlantsDashboardPage,
+  component: () => (
+    <DashboardDataProvider>
+      <PlantsDashboardPage />
+    </DashboardDataProvider>
+  ),
 });
 
 // Signals identified by matching HMI screenshot values (23.10.2026 ~14:05) to datalogger values.
@@ -72,13 +79,23 @@ function fmt(v: number | null | undefined, d: number) {
   return v === null || v === undefined || !Number.isFinite(v) ? "—" : v.toFixed(d);
 }
 
-function ValueBox({ x, y, w = 92, label, value, unit, wired = true, title }: {
+const ACCENT = "#f59e0b";
+function ValueBox({ x, y, w = 92, label, value, unit, wired = true, title, onClick, selected = false }: {
   x: number; y: number; w?: number; label: string; value?: string; unit?: string; wired?: boolean; title?: string;
+  onClick?: () => void; selected?: boolean;
 }) {
   return (
-    <g transform={`translate(${x},${y})`} opacity={wired ? 1 : 0.55}>
-      <title>{title ?? label}</title>
-      <rect width={w} height={40} rx={6} fill={C.panel} stroke={wired ? C.stroke : C.na} strokeDasharray={wired ? undefined : "4 3"} />
+    <g transform={`translate(${x},${y})`} opacity={wired ? 1 : 0.55} onClick={onClick}
+      style={onClick ? { cursor: "pointer" } : undefined} role={onClick ? "button" : undefined}
+      data-testid={onClick ? `pd-click-${label}` : undefined}>
+      <title>{(title ?? label) + (onClick ? " – avaa G_Air-säädin" : "")}</title>
+      <rect width={w} height={40} rx={6} fill={C.panel} stroke={selected ? ACCENT : wired ? C.stroke : C.na} strokeWidth={selected ? 2.5 : 1} strokeDasharray={wired ? undefined : "4 3"} />
+      {selected && (
+        <g transform={`translate(${w - 26},-7)`}>
+          <rect width={26} height={14} rx={4} fill={ACCENT} />
+          <text x={13} y={10.5} textAnchor="middle" fontSize={9} fontWeight={700} fill="#111" fontFamily="monospace">PID</text>
+        </g>
+      )}
       <text x={8} y={14} fontSize={9} fill={C.muted} fontFamily="monospace">{label}</text>
       <text x={8} y={32} fontSize={wired ? 15 : 10} fill={wired ? C.text : C.muted} fontFamily="monospace" fontWeight={600}>
         {wired ? `${value ?? "—"}${unit ? ` ${unit}` : ""}` : "ei kytketty"}
@@ -167,6 +184,22 @@ function Pipe({ d, active = false }: { d: string; active?: boolean }) {
 
 function PlantsDashboardPage() {
   const { vals, err } = useLive();
+  const [fpOpen, setFpOpen] = useState(false);
+  const pid = usePid("G_Air", fpOpen ? 2000 : 5000);
+  const [pvDl, setPvDl] = useState<string | null>(null); // datalogger key of the selected G_Air PV source
+  useEffect(() => {
+    let alive = true;
+    const load = () => getPvFeed("G_Air").then((d) => {
+      if (!alive) return;
+      const f = d.feed;
+      setPvDl(d.sources?.find((s) => s.topic === f.topic && s.field === f.field)?.dl ?? null);
+    }).catch(() => undefined);
+    load();
+    const t = setInterval(load, 10_000);
+    return () => { alive = false; clearInterval(t); };
+  }, [fpOpen]);
+  const openFp = () => setFpOpen(true);
+  const pv = pid.v;
   const v = (k: TagName) => vals[k]?.value ?? null;
   const ts = vals.level?.timestamp ?? vals.ec?.timestamp;
   const fan = v("fan");
@@ -186,8 +219,8 @@ function PlantsDashboardPage() {
           {/* Air duct + fan */}
           <Pipe d="M 560 70 H 700" active={(fan ?? 0) > 0} />
           <Pipe d="M 780 70 H 870 Q 900 70 900 40" active={(fan ?? 0) > 0} />
-          <g transform="translate(740,70)">
-            <title>Tuuletin PF-1</title>
+          <g transform="translate(740,70)" onClick={openFp} style={{ cursor: "pointer" }} data-testid="pd-fan">
+            <title>Tuuletin PF-1 – avaa G_Air-säädin</title>
             <circle r={30} fill={C.panel} stroke={C.stroke} strokeWidth={3} />
             <g>
               {[0, 120, 240].map((a) => (
@@ -199,12 +232,26 @@ function PlantsDashboardPage() {
             </g>
             <circle r={4} fill={C.text} />
           </g>
-          <ValueBox x={694} y={108} label="Tuuletin PF-1" value={fmt(fan, 1)} unit="%" title={`${TAGS.fan} PF-1 %`} />
-          <ValueBox x={560} y={92} label="Poistoilma" value={fmt(v("ductTemp"), 1)} unit="°C" title={`${TAGS.ductTemp} G Poistoilma DS4`} />
+          <ValueBox x={694} y={108} label="Tuuletin PF-1" value={fmt(fan, 1)} unit="%" title={`${TAGS.fan} PF-1 %`} onClick={openFp} />
+          <ValueBox x={560} y={92} label="Poistoilma" value={fmt(v("ductTemp"), 1)} unit="°C" title={`${TAGS.ductTemp} G Poistoilma DS4`} onClick={openFp} selected={pvDl === TAGS.ductTemp} />
+
+          {/* G_Air PID summary (click -> faceplate) */}
+          <g transform="translate(560,160)" onClick={openFp} style={{ cursor: "pointer" }} data-testid="pd-gair">
+            <title>G_Air PID (PF-1) – avaa säädin</title>
+            <rect width={226} height={44} rx={6} fill={C.panel} stroke={ACCENT} strokeWidth={1.5} />
+            <rect x={6} y={6} width={30} height={14} rx={4} fill={ACCENT} />
+            <text x={21} y={16.5} textAnchor="middle" fontSize={9} fontWeight={700} fill="#111" fontFamily="monospace">PID</text>
+            <text x={42} y={17} fontSize={9} fill={C.muted} fontFamily="monospace">
+              G_Air · {pid.stale ? "ei dataa" : PID_STATE[pv?.State ?? -1] ?? `State ${pv?.State ?? "—"}`}{pv?.ErrBits ? ` · ErrBits 16#${pv.ErrBits.toString(16).toUpperCase().padStart(4, "0")}` : ""}
+            </text>
+            <text x={8} y={36} fontSize={13} fontWeight={600} fill={C.text} fontFamily="monospace">
+              PV {fmt(pv?.PV, 1)} · SP {fmt(pv?.SP, 1)} °C · {fmt(pv?.OutSum, 0)} %
+            </text>
+          </g>
 
           {/* Air temps */}
-          <ValueBox x={400} y={60} label="Katto" value={fmt(v("roofTemp"), 1)} unit="°C" title={`${TAGS.roofTemp} G Katto DS3`} />
-          <ValueBox x={400} y={110} label="Keskiosa" value={fmt(v("midTemp"), 1)} unit="°C" title={`${TAGS.midTemp} G Mid DS2`} />
+          <ValueBox x={400} y={60} label="Katto" value={fmt(v("roofTemp"), 1)} unit="°C" title={`${TAGS.roofTemp} G Katto DS3`} onClick={openFp} selected={pvDl === TAGS.roofTemp} />
+          <ValueBox x={400} y={110} label="Keskiosa" value={fmt(v("midTemp"), 1)} unit="°C" title={`${TAGS.midTemp} G Mid DS2`} onClick={openFp} selected={pvDl === TAGS.midTemp} />
           <Btn x={500} y={117} w={28} label="S" />
 
           {/* Top bar buttons (HMI) */}
@@ -218,9 +265,9 @@ function PlantsDashboardPage() {
           <g opacity={0.5}>
             <title>Tilapalkki: ei kytketty</title>
             <rect x={40} y={150} width={70} height={14} rx={3} fill={C.na} />
-            <rect x={620} y={150} width={70} height={14} rx={3} fill={C.na} />
+            <rect x={770} y={196} width={70} height={14} rx={3} fill={C.na} />
             <text x={75} y={180} textAnchor="middle" fontSize={9} fill={C.muted} fontFamily="monospace">ei kytketty</text>
-            <text x={655} y={180} textAnchor="middle" fontSize={9} fill={C.muted} fontFamily="monospace">ei kytketty</text>
+            <text x={805} y={224} textAnchor="middle" fontSize={9} fill={C.muted} fontFamily="monospace">ei kytketty</text>
           </g>
 
           {/* Pipes */}
@@ -264,6 +311,7 @@ function PlantsDashboardPage() {
           <Tank x={840} y={420} w={90} h={100} label="" sub="Säiliö 3" />
         </svg>
       </Card>
+      <MeasurementPointWidget config={{ pointId: "GardenAir", name: "Kasvamo ilma · G_Air (PF-1)" }} open={fpOpen} onOpenChange={setFpOpen} dialogOnly />
       <div className="text-[11px] font-mono text-muted-foreground leading-relaxed">
         Harmaat katkoviivalla merkityt elementit: <b>ei kytketty</b> – signaalia ei ole tunnistettu Myko-datasta varmasti
         (pumppujen/lämmittimien tilat, hälytykset, ajastin, painikkeet). Kytketyt arvot: Datalogger {Object.values(TAGS).join(", ")}.

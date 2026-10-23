@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { ERROR_BITS, STATES, WARNING_BITS, activeCodes, hex, unknownBits, type Code } from "./pidCodes";
 
 /** ISA-101 PID faceplate parts for S7 PID_Temp instances exposed via OPC UA (opcua-bridge). Gray when normal, colour only when abnormal. */
-export const PID_KEY_BY_POINT: Record<string, string> = { ColdStorage1: "F1", Terrario1: "T1" };
+export const PID_KEY_BY_POINT: Record<string, string> = { ColdStorage1: "F1", Terrario1: "T1", GardenAir: "G_Air" };
 export const PID_STATE: Record<number, string> = Object.fromEntries(STATES.map((s) => [s.v, s.title]));
 const STATE_SHORT: Record<number, string> = { 0: "INAKT", 1: "ESIVIR", 2: "HIENOVIR", 3: "AUTO", 4: "KÄSI", 5: "KORV" };
 const f1 = (x: number | undefined, d = 1) => (x === undefined || x === null || Number.isNaN(x) ? "—" : x.toFixed(d).replace(".", ","));
@@ -281,13 +281,14 @@ function FeedSection({ pidKey, unit }: { pidKey: string; unit: string }) {
   };
   const srcs = (d?.sources ?? []).filter((s) => !s.topic.startsWith("Sensors/PLC_2"));
   if (cur && !srcs.some((s) => `${s.topic}|${s.field}` === cur)) srcs.unshift({ topic: f.topic!, field: f.field!, value: NaN, at: "" });
-  const label = (t: string | null, fl: string | null) => (t && fl ? `${t.replace(/^Sensors\//, "")} · ${fl}` : "ei valittu");
+  const named = (t: string | null, fl: string | null) => srcs.find((s) => s.topic === t && s.field === fl)?.label;
+  const label = (t: string | null, fl: string | null) => (t && fl ? named(t, fl) ?? `${t.replace(/^Sensors\//, "")} · ${fl}` : "ei valittu");
   const val = (x: number) => (d?.codes?.[String(x)] ? `${x} (${d.codes[String(x)]})` : f1(x, 2));
   const alarm = f.alarms?.SENSOR_VIKA || f.alarms?.INPUT_STALE;
   return (
     <Section title="Mittauslähde (Myko → PID Input)" testid="pid-feed">
       <ConfirmDialog pending={pending} busy={busy} onOk={go} onCancel={() => { setPending(null); setSel(cur); }} />
-      <label className="block text-[11px] text-muted-foreground">Lähde (MQTT-aihe · kenttä)</label>
+      <label className="block text-[11px] text-muted-foreground">{d?.restricted ? "Lähde (sallitut mittauspisteet)" : "Lähde (MQTT-aihe · kenttä)"}</label>
       <select aria-label="Mittauslähde" value={sel} disabled={busy} data-testid="pid-feed-src"
         onChange={(e) => {
           const nv = e.target.value; setSel(nv);

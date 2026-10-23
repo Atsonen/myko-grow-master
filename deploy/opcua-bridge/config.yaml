@@ -34,6 +34,7 @@ topics:
 pids:
   F1: {instance: PID_Temp_F1}          # Kylmäsäilytystila 1
   T1: {instance: Terrarium_1_Temp}     # Terrario 1
+  G_Air: {instance: G_Air}             # Kasvamo ilma, poistopuhallin PF-1
 pid_nodes:   # short key -> path inside the instance DB
   SP: Setpoint
   PV: Input

@@ -88,11 +88,19 @@ const CTRL_TOGGLE = {
 } as const;
 
 /** "Mittauspiste": a measurement point with alarm status from an external checker. */
-export function MeasurementPointWidget({ config }: { config: WidgetConfigMap["measurementPoint"] }) {
+export function MeasurementPointWidget({ config, open: openProp, onOpenChange, dialogOnly = false }: {
+  config: WidgetConfigMap["measurementPoint"];
+  /** controlled dialog (e.g. opened from the Plants process graphic) */
+  open?: boolean; onOpenChange?: (o: boolean) => void;
+  /** render only the faceplate dialog, no card */
+  dialogOnly?: boolean;
+}) {
   const { tick } = useDashboardData();
   const [point, setPoint] = useState<AlarmPoint | null>(null);
   const [events, setEvents] = useState<AlarmEvent[]>([]);
-  const [open, setOpen] = useState(false);
+  const [openState, setOpenState] = useState(false);
+  const open = openProp ?? openState;
+  const setOpen = (o: boolean) => { setOpenState(o); onOpenChange?.(o); };
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const [evTick, setEvTick] = useState(0);
@@ -136,8 +144,8 @@ export function MeasurementPointWidget({ config }: { config: WidgetConfigMap["me
   }, [id, open, tick, point?.status, evTick]);
 
   if (!id) return <div className="text-xs text-muted-foreground italic">Pick a measurement point in widget settings.</div>;
-  if (err) return <div className="text-xs text-destructive">{err}</div>;
-  if (!point) return <div className="text-xs text-muted-foreground italic">Loading…</div>;
+  if (err) return dialogOnly ? null : <div className="text-xs text-destructive">{err}</div>;
+  if (!point) return dialogOnly ? null : <div className="text-xs text-muted-foreground italic">Loading…</div>;
 
   const pidAbn = pidKey ? pidAbnormal(pid) : [];
   const modeInd = pidKey ? pidModeIndication(pid) : null;
@@ -151,7 +159,7 @@ export function MeasurementPointWidget({ config }: { config: WidgetConfigMap["me
 
   const TAB = "min-h-11 flex-1 whitespace-nowrap rounded-md px-1.5 text-[13px] min-[400px]:px-3 min-[400px]:text-sm font-semibold text-muted-foreground data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow";
   return (
-    <div className={`@container h-full px-3 py-2.5 ${LEVEL_STYLE[level]} ${disabled && (level === "ok" || level === "unknown") && !modeInd ? LEVEL_STYLE.disabled : ""} ${modeInd?.outline ?? ""}`} data-testid="measurement-point" data-level={level}>
+    <div className={`@container h-full px-3 py-2.5 ${dialogOnly ? "hidden" : ""} ${LEVEL_STYLE[level]} ${disabled && (level === "ok" || level === "unknown") && !modeInd ? LEVEL_STYLE.disabled : ""} ${modeInd?.outline ?? ""}`} data-testid="measurement-point" data-level={level}>
       <PidModeBanner ind={modeInd} className="mb-1.5" />
       <div className="flex w-full items-start gap-2">
         <div className="min-w-0 flex-1 overflow-hidden">

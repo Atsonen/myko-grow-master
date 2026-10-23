@@ -565,7 +565,7 @@ export type PvFeed = {
   wrote: number | null; wroteAt: number | null; writes: number; writeErr: string | null; plcInput: number | null; alarms: { SENSOR_VIKA?: boolean; INPUT_STALE?: boolean; ANTURIVIKA_ALASAJO?: boolean };
   shutdownMin: number; faultSince: number | null; shutdown: boolean; onState: boolean | null;
 };
-export type PvFeedResponse = { key: string; feed: PvFeed; codes?: Record<string, string>; sources?: { topic: string; field: string; value: number; at: string }[] };
+export type PvFeedResponse = { key: string; feed: PvFeed; codes?: Record<string, string>; sources?: { topic: string; field: string; value: number; at: string; label?: string; dl?: string }[]; restricted?: boolean };
 export async function getPvFeed(key: string) {
   return requestJson<PvFeedResponse>(`/api/pid/${encodeURIComponent(key)}/feed`);
 }

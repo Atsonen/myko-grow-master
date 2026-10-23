@@ -10,7 +10,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const PID_POINTS = { F1: "ColdStorage1", T1: "Terrario1" }; // pid key -> parent measurement point
+export const PID_POINTS = { F1: "ColdStorage1", T1: "Terrario1", G_Air: "GardenAir" }; // pid key -> parent measurement point
 export const PID_BY_POINT = Object.fromEntries(Object.entries(PID_POINTS).map(([k, v]) => [v, k]));
 const CMD_KEYS = ["Input", "Setpoint", "ManualEnable", "ManualValue", "Mode", "ModeActivate", "ErrorAck", "HeatEnableTuning", "CoolEnableTuning"];
 

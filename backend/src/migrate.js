@@ -358,7 +358,20 @@ const seedStatements = [
       10,
     ],
   },
+  // Kasvamon ilma (G_Air PID_Temp, poistopuhallin PF-1). Parent point = controls (ON/SP) for the PID faceplate;
+  // no Myko temperature checker for it (bits empty), not part of Sensors/Mykovalvomo/Ctrl (PLC word unchanged).
+  {
+    sql: `INSERT IGNORE INTO alarm_points (id, name, topic_prefix, value_source, unit, bits_json, sort_order)
+          VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    params: ["GardenAir", "Kasvamo ilma", "Myko/Alarms/GardenAir", "dl:src-datalogger:dl03", "°C", "[]", 30],
+  },
+  {
+    sql: `INSERT IGNORE INTO alarm_points (id, name, topic_prefix, value_source, unit, bits_json, sort_order)
+          SELECT 'G_Air_PID', 'Kasvamo ilma · PID', 'Myko/Alarms/G_Air_PID', NULL, unit, bits_json, 31 FROM alarm_points WHERE id = 'F1_PID'`,
+    params: [],
+  },
   // Default controls (INSERT IGNORE: user changes persist). ColdStorage1 SP 8, Terrario1 SP 25.
+  { sql: "INSERT IGNORE INTO alarm_point_controls (point_id, on_state, heat, cool, setpoint, updated_by) VALUES ('GardenAir', 1, 0, 0, 28, 'migration')", params: [] },
   { sql: "INSERT IGNORE INTO alarm_point_controls (point_id, on_state, heat, cool, setpoint, updated_by) VALUES ('ColdStorage1', 1, 0, 0, 8, 'migration')", params: [] },
   { sql: "INSERT IGNORE INTO alarm_point_controls (point_id, on_state, heat, cool, setpoint, updated_by) VALUES ('Terrario1', 1, 0, 0, 25, 'migration')", params: [] },
   // Event function INOC (inoculation) added 2026-10-20
