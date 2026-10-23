@@ -6,6 +6,7 @@ import {
   useRouter,
   HeadContent,
   Scripts,
+
 } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 
@@ -13,6 +14,7 @@ import appCss from "../styles.css?url";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/layout/AppSidebar";
 import { Toaster } from "@/components/ui/sonner";
+import { AssistantChat } from "@/components/assistant/AssistantChat";
 
 function NotFoundComponent() {
   return (
@@ -133,6 +135,7 @@ function RootComponent() {
             </main>
           </div>
         </div>
+        <AssistantChat />
         <Toaster />
       </SidebarProvider>
     </QueryClientProvider>
