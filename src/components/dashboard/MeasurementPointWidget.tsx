@@ -5,7 +5,8 @@ import * as TabsPrimitive from "@radix-ui/react-tabs";
 import { getAlarmEvents, getAlarmPoints, setAlarmControls, type AlarmControls, type AlarmControlsPatch, type AlarmEvent, type AlarmLimits, type AlarmPoint } from "@/lib/apiClient";
 import { toast } from "sonner";
 import { useDashboardData } from "./DashboardData";
-import { PID_KEY_BY_POINT, PidCompact, PidControlTab, PidParamsTab, PidStateTab, PidModeBanner, pidAbnormal, pidModeIndication, usePid } from "./PidFaceplate";
+import { PID_KEY_BY_POINT, PidCompact, PidControlTab, PidStateTab, PidModeBanner, pidAbnormal, pidModeIndication, usePid } from "./PidFaceplate";
+import { PidParamsEditor } from "./PidParamsEditor";
 import { PidAiTab, usePidAiBadge } from "./PidAiTab";
 import type { WidgetConfigMap } from "./types";
 
@@ -324,7 +325,7 @@ export function MeasurementPointWidget({ config, open: openProp, onOpenChange, d
                     <PidStateTab v={pid.v} at={pid.at} unit={point.unit} />
                   </TabsPrimitive.Content>
                   <TabsPrimitive.Content value="param" className="min-h-0 flex-1 overflow-y-auto p-3 text-sm">
-                    <PidParamsTab v={pid.v} />
+                    <PidParamsEditor pidKey={pidKey} v={pid.v} />
                   </TabsPrimitive.Content>
                   <TabsPrimitive.Content value="ai" className="min-h-0 flex-1 overflow-y-auto p-3 text-sm">
                     <PidAiTab pidKey={pidKey} onSeen={clearAiNew} />

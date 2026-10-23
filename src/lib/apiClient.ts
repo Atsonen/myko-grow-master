@@ -590,3 +590,5 @@ export const markPidAiSeen = (key: string) => requestJson<{ ok: boolean }>(aiUrl
 export const startPidAiApply = (key: string, analysisId: number, params: Record<string, number>, confirmLarge: boolean) =>
   requestJson<PidAiJob>(aiUrl(key, "ai-apply"), post({ analysisId, params, confirmLarge }));
 export const startPidAiRestore = (key: string) => requestJson<PidAiJob>(aiUrl(key, "ai-restore"), post());
+export const startPidParamsApply = (key: string, params: Record<string, number>, confirmLarge: boolean) =>
+  requestJson<PidAiJob>(aiUrl(key, "params-apply"), post({ params, confirmLarge }));

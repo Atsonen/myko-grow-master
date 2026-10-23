@@ -17,7 +17,7 @@ const CONTEXT = {
 };
 const COMMON = "Siemens S7-1215C, PID_Temp, syklinen OB 100 ms. Warning 16#0020 on päällä jatkuvasti (tiedossa). Ulkolämpötila met.no. Ajat UTC.";
 // Members the user may apply (Cycle and ControlZone are excluded on purpose). [min, max]
-export const APPLY_LIMITS = { Gain: [0.01, 1000], Ti: [0, 10000], Td: [0, 1000], TdFiltRatio: [0, 1], PWeighting: [0, 1], DWeighting: [0, 1], DeadZone: [0, 5] };
+export const APPLY_LIMITS = { Gain: [0.01, 1000], Ti: [0, 10000], Td: [0, 1000], TdFiltRatio: [0, 1], PWeighting: [0, 1], DWeighting: [0, 1], DeadZone: [0, 5], Cycle: [0.1, 600] };
 const MAX_REL = 0.5, RATE_MIN = 10;
 
 function apiKey() {
@@ -113,7 +113,7 @@ Säännöt: proposed_params vain jos muutos on perusteltu; muuten {}. Sallitut a
   }
 
   // Validate + snapshot + write (CtrlParamsBackUp/LoadBackUp) + read back. values: {"Heat.Gain": 1.2}
-  async function applyParams(key, values, { by, reason, analysisId, confirmLarge, isRestore }) {
+  async function applyParams(key, values, { by, reason, analysisId, confirmLarge, isRestore, manual }) {
     const s = pidState(key);
     const v = s?.values ?? {};
     if (!s || Date.now() - s.at > 60_000) throw new Error("PID-tila ei ole tuore (ei voi tarkistaa State/ErrorBits)");
@@ -143,7 +143,7 @@ Säännöt: proposed_params vain jos muutos on perusteltu; muuten {}. Sallitut a
       [key, isRestore ? "restore" : "apply", by, reason, analysisId ?? null, JSON.stringify(values), JSON.stringify({ results, loadBackUpCleared: out.loadBackUpCleared, othersUnchanged: out.othersUnchanged })]);
     if (analysisId && !isRestore) await query("UPDATE pid_ai_analysis SET status = ? WHERE id = ? AND pid_key = ?", [allOk ? "applied" : "apply_failed", analysisId, key]);
     const txt = Object.entries(results).map(([n, r]) => `${n} ${r.before}→${r.read}${r.ok ? "" : " VIRHE"}`).join(", ");
-    await logEvent(key, `${isRestore ? "PID-param. palautettu" : "AI-param. otettu käyttöön"} (${by}): ${txt}`);
+    await logEvent(key, `${isRestore ? "PID-param. palautettu" : manual ? "PID-param. muutettu käsin" : "AI-param. otettu käyttöön"} (${by}): ${txt}`);
     return { ok: allOk, results, snapshotId: Number(ins.insertId), loadBackUpCleared: out.loadBackUpCleared, othersUnchanged: out.othersUnchanged };
   }
 
@@ -192,6 +192,18 @@ Säännöt: proposed_params vain jos muutos on perusteltu; muuten {}. Sallitut a
     if (!b.params || typeof b.params !== "object") return res.status(400).json({ error: "params puuttuu" });
     const by = String(b.user || "dashboard").slice(0, 40);
     res.status(202).json(startJob(() => lockPid(key, () => applyParams(key, b.params, { by, reason: `AI-analyysi #${b.analysisId ?? "?"}`, analysisId: b.analysisId, confirmLarge: b.confirmLarge === true }))));
+  }));
+  // Manual edit from the Parametrit tab: same validated snapshot/write/read-back path. body: { params, confirmLarge?, user? }
+  app.post("/api/pid/:key/params-apply", asyncRoute(async (req, res) => {
+    if (!keyOk(req, res)) return;
+    const key = req.params.key, b = req.body ?? {};
+    if (!b.params || typeof b.params !== "object" || !Object.keys(b.params).length) return res.status(400).json({ error: "params puuttuu" });
+    const by = String(b.user || "dashboard").slice(0, 40);
+    res.status(202).json(startJob(() => lockPid(key, () => applyParams(key, b.params, { by, reason: "käsin (Parametrit-välilehti)", confirmLarge: b.confirmLarge === true, manual: true }))));
+  }));
+  app.get("/api/pid/:key/params", asyncRoute(async (req, res) => {
+    if (!keyOk(req, res)) return;
+    res.json({ params: await readParams(req.params.key, req.query.fresh ? 0 : 5 * 60_000), limits: APPLY_LIMITS, maxRelChange: MAX_REL });
   }));
   app.post("/api/pid/:key/ai-restore", asyncRoute(async (req, res) => {
     if (!keyOk(req, res)) return;

@@ -10,7 +10,7 @@ const RISK_FI: Record<string, string> = { low: "matala riski", medium: "kohtalai
 const NAME_FI: Record<string, string> = { Gain: "Vahvistus", Ti: "Ti (s)", Td: "Td (s)", TdFiltRatio: "Td-suodatin", PWeighting: "P-painotus", DWeighting: "D-painotus", DeadZone: "Kuollut alue" };
 const label = (n: string) => { const [s, m] = n.split("."); return `${s === "Heat" ? "Lämmitys" : "Jäähdytys"} ${NAME_FI[m] ?? m}`; };
 
-async function waitJob(key: string, job: PidAiJob): Promise<PidAiJob> {
+export async function waitJob(key: string, job: PidAiJob): Promise<PidAiJob> {
   for (let i = 0; i < 120 && job.status === "running"; i++) { await new Promise((r) => setTimeout(r, 2000)); job = await getPidAiJob(key, job.id); }
   return job;
 }
