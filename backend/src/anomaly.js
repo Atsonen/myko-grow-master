@@ -57,6 +57,9 @@ high vain, jos säätö on vaarassa tai tuote vaarassa (esim. PID:n PV jäätyny
         const point = String(f.point ?? "SYSTEM").slice(0, 40);
         let sev = SEV.includes(f.severity) ? f.severity : "info";
         if (sev === "high" && !CRITICAL.has(point)) sev = "medium";
+        // PID saturation/output findings are only "high" when the loop is really off target (|PV avg - SP| >= 2 °C over 60 min)
+        const pl = data.pids[point]?.last60min;
+        if (sev === "high" && pl && !/frozen|stale|sensor|comm|err/i.test(String(f.category ?? "")) && !(Math.abs((pl.pvavg ?? 0) - (pl.sp ?? 0)) >= 2)) sev = "medium";
         if (ignore.includes(point)) continue;
         const cat = String(f.category ?? "other").slice(0, 40);
         const [dup] = await query("SELECT id FROM llm_findings WHERE point = ? AND category = ? AND severity = ? AND at > UTC_TIMESTAMP() - INTERVAL ? HOUR LIMIT 1", [point, cat, sev, DEDUPE_H]);
@@ -78,7 +81,11 @@ high vain, jos säätö on vaarassa tai tuote vaarassa (esim. PID:n PV jäätyny
   }
 
   const tick = () => { if (process.env.ANOMALY_DISABLED === "1") return; run("auto").catch((e) => console.error("[anomaly]", e.message)); };
-  setTimeout(tick, 90_000).unref(); setInterval(tick, EVERY_MIN * 60_000).unref();
+  // first run after start only if the last stored run is older than the interval (restarts don't trigger extra runs)
+  setTimeout(async () => {
+    try { const [l] = await query("SELECT TIMESTAMPDIFF(SECOND, MAX(at), UTC_TIMESTAMP()) age FROM llm_findings"); if (l?.age != null && Number(l.age) < EVERY_MIN * 60) return; } catch { /* run anyway */ }
+    tick();
+  }, 90_000).unref(); setInterval(tick, EVERY_MIN * 60_000).unref();
 
   app.get("/api/myko/anomaly", asyncRoute(async (_req, res) => {
     const rows = await query("SELECT CAST(id AS INT) id, DATE_FORMAT(at, '%Y-%m-%dT%H:%i:%sZ') at, run_id, `trigger`, severity, point, category, finding, suggestion, recommend_reset, duplicate, whatsapp FROM llm_findings ORDER BY id DESC LIMIT 50");
