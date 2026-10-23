@@ -4,6 +4,7 @@ import express from "express";
 import mqtt from "mqtt";
 import { query, withConnection } from "./db.js";
 import { PID_BY_POINT, PID_POINTS, registerPidRoutes } from "./pid.js";
+import { startWeather } from "./weather.js";
 import { registerPvFeed } from "./pvfeed.js";
 import { normalizeOrigins, registerTraceRoutes, writeOrigins } from "./trace.js";
 
@@ -988,6 +989,7 @@ function publishRetained(topic, message) {
 }
 // ---- OPC UA PID faceplates + PID alarm points: see pid.js ----
 const { pidCommand, pidState, setFeedAlarms } = registerPidRoutes(app, { mqttClient: mqttPublisher, query, asyncRoute });
+startWeather({ query });
 const pvFeed = registerPvFeed(app, { pidCommand, pidState, query, asyncRoute, pidPoints: PID_POINTS, mqttUrl: process.env.MQTT_URL || "mqtt://192.168.1.51:1883" });
 setFeedAlarms(pvFeed.feedAlarms);
 

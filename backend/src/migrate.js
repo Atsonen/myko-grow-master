@@ -253,6 +253,16 @@ const statements = [
     pv_age_s INT NULL,                  -- age of the PID state snapshot when logged
     PRIMARY KEY (pid_key, at), INDEX idx_pid_training_at (at)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+  // met.no Locationforecast (compact), one row per 30-min fetch: entry nearest the fetch time.
+  `CREATE TABLE IF NOT EXISTS weather_metno (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    fetched_at DATETIME NOT NULL,          -- UTC
+    forecast_time DATETIME NOT NULL,       -- UTC, timeseries entry used
+    air_temperature DECIMAL(5,1) NULL, relative_humidity DECIMAL(5,1) NULL,
+    cloud_area_fraction DECIMAL(5,1) NULL, wind_speed DECIMAL(5,1) NULL,
+    model_updated_at DATETIME NULL, http VARCHAR(8) NULL,  -- 200 / 304 / cached
+    INDEX idx_weather_metno_fetched (fetched_at)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 ];
 
 const alterStatements = [
