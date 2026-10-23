@@ -21,7 +21,10 @@ m = cfg["mqtt"]; pub = cfg.get("publish", {})
 TOPICS = {t: dict(mp) for t, mp in (cfg.get("topics") or {}).items()}
 PIDS = cfg.get("pids") or {}
 for k, p in PIDS.items():
-    TOPICS[f"Sensors/PLC_2/{k}_PID"] = {sk: f"@*/{p['instance']}/{path}" for sk, path in (cfg.get("pid_nodes") or {}).items()}
+    if p.get("monitor") is False: continue  # commands only (no monitored items)
+    # optional per-PID "nodes" subset: the S7-1200 OPC UA server rejects the whole subscription above its monitored-item limit
+    TOPICS[f"Sensors/PLC_2/{k}_PID"] = {sk: f"@*/{p['instance']}/{path}" for sk, path in (cfg.get("pid_nodes") or {}).items()
+                                        if not p.get("nodes") or sk in p["nodes"]}
 CMD_TOPICS = {f"Myko/Cmd/{k}_PID": k for k in PIDS}
 WL = cfg.get("pid_commands") or {}
 WCOUNT = {}
