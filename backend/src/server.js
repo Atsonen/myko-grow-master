@@ -3,7 +3,7 @@ import dotenv from "dotenv";
 import express from "express";
 import mqtt from "mqtt";
 import { query, withConnection } from "./db.js";
-import { PID_BY_POINT, registerPidRoutes } from "./pid.js";
+import { PID_BY_POINT, PID_POINTS, registerPidRoutes } from "./pid.js";
 import { normalizeOrigins, registerTraceRoutes, writeOrigins } from "./trace.js";
 
 dotenv.config();
@@ -809,6 +809,7 @@ app.get(
           alarm: e.alarm, bit: e.bit === null ? null : Number(e.bit), priority: level === "alarm" ? 1 : 2,
           start: e.at_iso.replace(/\.(\d{3})\d*Z$/, ".$1Z"), end: null, active: true,
           value: e.value === null ? null : Number(e.value), endValue: null,
+          source: PLC_POINT_IDS.has(e.point_id) ? "PLC" : "Myko",
           acked: Boolean(e.acked_iso), ackedAt: e.acked_iso ? e.acked_iso.replace(/\.(\d{3})\d*Z$/, ".$1Z") : null, ackedBy: e.acked_by ?? null,
         };
         open.set(k, row);
@@ -829,7 +830,40 @@ app.get(
       .map((r) => ({ ...r, durationSec: Math.round(((r.end ? new Date(r.end).getTime() : now) - new Date(r.start).getTime()) / 1000) }))
       .sort((a, b) => b.start.localeCompare(a.start))
       .slice(0, limit);
-    res.json({ hours, generatedAt: new Date().toISOString(), points: points.map((p) => ({ id: p.id, name: p.name })), rows: out });
+    res.json({ hours, generatedAt: new Date().toISOString(), points: points.map((p) => ({ id: p.id, name: p.name, source: PLC_POINT_IDS.has(p.id) ? "PLC" : "Myko" })), rows: out, plc: plcStatus() });
+  }),
+);
+
+// PLC-originated alarm points = PID_Temp instances (<key>_PID, from pid.js PID_POINTS; add new PIDs there + bridge config).
+const PLC_POINT_IDS = new Set(Object.keys(PID_POINTS).map((k) => `${k}_PID`));
+const PLC_ACK_CODES = ["ERRORBITS", "PID_VIKA"]; // Myko alarms that mirror PLC ErrorBits/Error
+function plcStatus() {
+  return Object.keys(PID_POINTS).map((k) => {
+    const s = pidState(k); const v = s?.values ?? {};
+    return { key: k, pointId: `${k}_PID`, errBits: v.ErrBits ?? null, err: v.Err ?? null, warn: v.Warn ?? null, at: s ? new Date(s.at).toISOString() : null };
+  });
+}
+// POST /api/plc/error-ack {dryRun?}: PLC ErrorAck pulse to EVERY PID via the bridge (Myko/Cmd/<key>_PID), each logged as a
+// control event, then Myko-acknowledges the unacked ERRORBITS/PID_VIKA alarms of the PIDs whose ErrorAck succeeded.
+app.post(
+  "/api/plc/error-ack",
+  asyncRoute(async (req, res) => {
+    const dryRun = Boolean(req.body?.dryRun);
+    const ids = await query(
+      `SELECT id, point_id FROM alarm_events WHERE event = 'start' AND acked_at IS NULL AND alarm IN (${PLC_ACK_CODES.map(() => "?").join(",")})
+       AND point_id IN (${[...PLC_POINT_IDS].map(() => "?").join(",")})`, [...PLC_ACK_CODES, ...PLC_POINT_IDS]);
+    const results = [];
+    for (const k of Object.keys(PID_POINTS)) {
+      if (dryRun) { results.push({ key: k, dryRun: true }); continue; }
+      const r = await pidCommand(k, { ErrorAck: true }, "dashboard").catch((e) => ({ error: e.message }));
+      await query("INSERT INTO alarm_events (point_id, alarm, bit, event, at, value, status_word) VALUES (?, ?, NULL, 'control', UTC_TIMESTAMP(3), NULL, NULL)",
+        [PID_POINTS[k], `PID ErrorAck=true (Kuittaa PLC-viat)${r.error ? " (VIRHE)" : ""}`.slice(0, 80)]).catch(() => undefined);
+      results.push({ key: k, error: r.error ?? null });
+    }
+    const okPoints = new Set(results.filter((r) => !r.error).map((r) => `${r.key}_PID`));
+    const ack = await ackAlarms(ids.filter((i) => okPoints.has(i.point_id)).map((i) => Number(i.id)), "dashboard (PLC ErrorAck)", dryRun);
+    const failed = results.filter((r) => r.error);
+    res.status(failed.length ? 502 : 200).json({ dryRun, pids: results, mykoAck: ack, error: failed.length ? failed.map((f) => `${f.key}: ${f.error}`).join("; ") : undefined });
   }),
 );
 
@@ -952,7 +986,7 @@ function publishRetained(topic, message) {
   });
 }
 // ---- OPC UA PID faceplates + PID alarm points: see pid.js ----
-const { pidCommand } = registerPidRoutes(app, { mqttClient: mqttPublisher, query, asyncRoute });
+const { pidCommand, pidState } = registerPidRoutes(app, { mqttClient: mqttPublisher, query, asyncRoute });
 
 app.get(
   "/api/alarms/:pointId/controls",

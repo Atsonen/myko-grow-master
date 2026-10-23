@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ArrowDown, ArrowUp } from "lucide-react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { toast } from "sonner";
-import { ackAlarms, getAlarmSummary, type AlarmSummary, type AlarmSummaryRow } from "@/lib/apiClient";
+import { ackAlarms, getAlarmSummary, plcErrorAckAll, type AlarmSummary, type AlarmSummaryRow } from "@/lib/apiClient";
 import { useDashboardData } from "./DashboardData";
 import { AlarmIndicator } from "./MeasurementPointWidget";
 import type { WidgetConfigMap } from "./types";
@@ -49,6 +49,12 @@ function Prio({ r, size = "h-5 w-5" }: { r: AlarmSummaryRow; size?: string }) {
     </span>
   );
 }
+function SrcBadge({ r }: { r: AlarmSummaryRow }) {
+  return r.source === "PLC"
+    ? <span className="rounded bg-sky-700 px-1.5 py-px text-[11px] font-bold text-white" title="PLC (PID_Temp OPC UA)">PLC</span>
+    : <span className="rounded border border-zinc-500 px-1.5 py-px text-[11px] text-zinc-300" title="Myko (anturi/raja)">MYKO</span>;
+}
+const hex = (n: number | undefined) => (n === undefined || n === null ? "—" : `16#${(n >>> 0).toString(16).toUpperCase().padStart(4, "0")}`);
 const activeText = (r: AlarmSummaryRow) => (r.active ? (r.priority === 1 ? "text-red-400 font-semibold" : "text-amber-300 font-semibold") : "text-muted-foreground");
 
 export function AlarmListWidget({ config }: { config: WidgetConfigMap["alarmList"] }) {
@@ -64,6 +70,8 @@ export function AlarmListWidget({ config }: { config: WidgetConfigMap["alarmList
   const [ackOpen, setAckOpen] = useState(false);
   const [ackBusy, setAckBusy] = useState(false);
   const [reload, setReload] = useState(0);
+  const [source, setSource] = useState<"" | "PLC" | "Myko">("");
+  const [plcOpen, setPlcOpen] = useState(false);
   const limit = config.limit ?? 200;
 
   useEffect(() => { setHours(config.hours ?? 24); }, [config.hours]);
@@ -77,13 +85,13 @@ export function AlarmListWidget({ config }: { config: WidgetConfigMap["alarmList
 
   const rows = useMemo(() => {
     const list = (data?.rows ?? []).filter(
-      (r) => (!points.length || points.includes(r.pointId)) && (!types.length || types.includes(r.alarm)) && (!prio || String(r.priority) === prio) && (!activeOnly || r.active),
+      (r) => (!points.length || points.includes(r.pointId)) && (!types.length || types.includes(r.alarm)) && (!prio || String(r.priority) === prio) && (!activeOnly || r.active) && (!source || (r.source ?? "Myko") === source),
     );
     return [...list].sort((a, b) => {
       const x = sortVal(a, sort.key), y = sortVal(b, sort.key);
       return (x < y ? -1 : x > y ? 1 : 0) * sort.dir || b.start.localeCompare(a.start);
     });
-  }, [data, points, types, prio, activeOnly, sort]);
+  }, [data, points, types, prio, activeOnly, sort, source]);
   const allTypes = useMemo(() => [...new Set((data?.rows ?? []).map((r) => r.alarm))].sort(), [data]);
   const activeByPoint = useMemo(() => {
     const m = new Map<string, number>();
@@ -92,6 +100,16 @@ export function AlarmListWidget({ config }: { config: WidgetConfigMap["alarmList
   }, [data]);
   const activeCount = (data?.rows ?? []).filter((r) => r.active).length;
   const unacked = rows.filter((r) => !r.acked);
+  const plcFaults = (data?.plc ?? []).filter((p) => (p.errBits ?? 0) !== 0 || p.err === true);
+  const plcRows = (data?.rows ?? []).filter((r) => r.source === "PLC" && !r.acked && (r.alarm === "ERRORBITS" || r.alarm === "PID_VIKA"));
+  const doPlcAck = async () => {
+    setAckBusy(true);
+    try {
+      const r = await plcErrorAckAll();
+      if (r.error) toast.error(`PLC ErrorAck: ${r.error}`); else toast.success(`ErrorAck lähetetty ${r.pids.length} PID:lle · Myko-kuitattu ${r.mykoAck.acked.length}`);
+    } catch (e) { toast.error((e as Error).message); }
+    finally { setAckBusy(false); setPlcOpen(false); setReload((x) => x + 1); }
+  };
   const doAck = async () => {
     setAckBusy(true);
     try {
@@ -107,13 +125,33 @@ export function AlarmListWidget({ config }: { config: WidgetConfigMap["alarmList
 
   return (
     <div className="@container flex h-full flex-col gap-2 text-sm" data-testid="alarm-list">
+      <DialogPrimitive.Root open={plcOpen} onOpenChange={(o) => !o && !ackBusy && setPlcOpen(false)}>
+        <DialogPrimitive.Portal>
+          <DialogPrimitive.Overlay className="fixed inset-0 z-[60] bg-black/75" />
+          <DialogPrimitive.Content data-testid="al-plc-confirm" aria-describedby={undefined}
+            className="fixed left-1/2 top-1/2 z-[61] w-[min(92vw,440px)] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-amber-400 bg-background p-4 shadow-2xl">
+            <DialogPrimitive.Title className="text-xs font-mono uppercase text-amber-300">Vahvista kirjoitus PLC:lle – ErrorAck</DialogPrimitive.Title>
+            <div className="mt-2 text-base font-semibold">Kuittaa PLC-viat kaikista PID-säätimistä ({(data.plc ?? []).length})?</div>
+            <div className="mt-1 text-sm text-muted-foreground">Lähettää ErrorAck-pulssin PLC:lle jokaiselle PID:lle ja kuittaa vastaavat ERRORBITS/PID_VIKA-hälytykset Myko-listalta. Jos vika on yhä päällä (Error=1), se palaa.</div>
+            <ul className="mt-2 space-y-0.5 text-sm tabular-nums">{(data.plc ?? []).map((p) => (
+              <li key={p.key} className={(p.errBits ?? 0) !== 0 || p.err ? "font-semibold text-amber-300" : "text-muted-foreground"}>
+                {p.key}: ErrorBits {hex(p.errBits ?? undefined)} · Error {p.err ? 1 : 0}{p.warn ? ` · Warning ${hex(p.warn)}` : ""}
+              </li>))}</ul>
+            {plcRows.length ? <div className="mt-1 text-xs text-muted-foreground">Myko-kuitataan: {plcRows.map((r) => `${r.pointId} ${r.alarm}`).join(", ")}</div> : null}
+            <div className="mt-4 flex justify-end gap-2">
+              <button type="button" disabled={ackBusy} onClick={() => setPlcOpen(false)} className="min-h-11 rounded-md border border-border px-4 text-sm">Peruuta</button>
+              <button type="button" disabled={ackBusy} onClick={doPlcAck} autoFocus className="min-h-11 rounded-md border border-amber-300 bg-amber-300 px-5 text-sm font-semibold text-zinc-900 disabled:opacity-50">{ackBusy ? "Lähetetään…" : "Lähetä ErrorAck"}</button>
+            </div>
+          </DialogPrimitive.Content>
+        </DialogPrimitive.Portal>
+      </DialogPrimitive.Root>
       <DialogPrimitive.Root open={ackOpen} onOpenChange={(o) => !o && !ackBusy && setAckOpen(false)}>
         <DialogPrimitive.Portal>
           <DialogPrimitive.Overlay className="fixed inset-0 z-[60] bg-black/75" />
           <DialogPrimitive.Content data-testid="al-ack-confirm" aria-describedby={undefined}
             className="fixed left-1/2 top-1/2 z-[61] w-[min(92vw,420px)] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-zinc-400 bg-background p-4 shadow-2xl">
-            <DialogPrimitive.Title className="text-xs font-mono uppercase text-muted-foreground">Vahvista kuittaus</DialogPrimitive.Title>
-            <div className="mt-2 text-base font-semibold">Kuittaa {unacked.length} kuittaamatonta hälytystä?</div>
+            <DialogPrimitive.Title className="text-xs font-mono uppercase text-muted-foreground">Vahvista kuittaus – vain Myko-hälytyslista</DialogPrimitive.Title>
+            <div className="mt-2 text-base font-semibold">Kuittaa {unacked.length} kuittaamatonta hälytystä listalta?</div>
             <div className="mt-1 text-sm text-muted-foreground">Koskee nykyisellä rajauksella näkyviä hälytyksiä. Kuittaus vain Mykossa (kirjataan tapahtumiin) – ei PLC:n ErrorAck, ei poista aktiivista hälytystä.</div>
             <ul className="mt-2 max-h-40 overflow-auto text-xs text-muted-foreground">{unacked.slice(0, 30).map((r) => <li key={r.id}>{fmtTime(r.start)} · {r.pointName} · <span className="font-mono">{r.alarm}</span></li>)}{unacked.length > 30 ? <li>… +{unacked.length - 30}</li> : null}</ul>
             <div className="mt-4 flex justify-end gap-2">
@@ -135,6 +173,11 @@ export function AlarmListWidget({ config }: { config: WidgetConfigMap["alarmList
           <option value="1">1 – hälytys</option>
           <option value="2">2 – varoitus</option>
         </select>
+        <select aria-label="Lähde" value={source} onChange={(e) => setSource(e.target.value as "" | "PLC" | "Myko")} className={SEL} data-testid="al-source">
+          <option value="">Kaikki lähteet</option>
+          <option value="PLC">PLC</option>
+          <option value="Myko">Myko</option>
+        </select>
         <select aria-label="Aikaväli" value={hours} onChange={(e) => setHours(Number(e.target.value))} className={SEL}>
           {RANGES.map(([h, l]) => <option key={h} value={h}>{l}</option>)}
         </select>
@@ -144,7 +187,11 @@ export function AlarmListWidget({ config }: { config: WidgetConfigMap["alarmList
         </label>
         <button type="button" data-testid="al-ack-all" disabled={!unacked.length || ackBusy} onClick={() => setAckOpen(true)}
           className={`min-h-11 rounded-md border px-3 text-sm font-semibold disabled:opacity-40 ${unacked.length ? "border-amber-400 bg-amber-400/15 text-amber-200" : "border-border text-muted-foreground"}`}>
-          Kuittaa kaikki ({unacked.length})
+          Kuittaa listalta ({unacked.length})
+        </button>
+        <button type="button" data-testid="al-plc-ack" disabled={ackBusy || !(data.plc ?? []).length} onClick={() => setPlcOpen(true)}
+          className={`min-h-11 rounded-md border px-3 text-sm font-semibold disabled:opacity-40 ${plcFaults.length ? "border-amber-400 bg-amber-400/25 text-amber-100" : "border-border text-muted-foreground"}`}>
+          <span className="mr-1 rounded bg-sky-700 px-1 text-[11px] font-bold text-white">PLC</span>Kuittaa PLC-viat{plcFaults.length ? ` (${plcFaults.length})` : ""}
         </button>
         <span className="ml-auto text-muted-foreground" data-testid="al-count">
           {activeCount > 0 ? <span className="text-foreground">{activeCount} aktiivista</span> : "Ei aktiivisia"} · {rows.length} riviä
@@ -175,7 +222,7 @@ export function AlarmListWidget({ config }: { config: WidgetConfigMap["alarmList
                 {rows.map((r) => (
                   <tr key={r.id} className="border-b border-border/50 last:border-0 hover:bg-secondary/30" data-active={r.active ? "1" : "0"}>
                     <td className="px-2 py-1.5 tabular-nums text-muted-foreground">{fmtTime(r.start)}</td>
-                    <td className="px-2 py-1.5">{r.pointName}</td>
+                    <td className="px-2 py-1.5"><SrcBadge r={r} /> {r.pointName}</td>
                     <td className={`px-2 py-1.5 font-mono ${activeText(r)}`}>{r.alarm}</td>
                     <td className="px-2 py-1.5"><Prio r={r} /></td>
                     <td className={`px-2 py-1.5 ${r.active ? "text-foreground" : "text-muted-foreground"}`}>
@@ -207,7 +254,7 @@ export function AlarmListWidget({ config }: { config: WidgetConfigMap["alarmList
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-baseline gap-x-2">
                       <span className={`font-mono ${activeText(r)}`}>{r.alarm}</span>
-                      <span className="truncate">{r.pointName}</span>
+                      <SrcBadge r={r} /><span className="truncate">{r.pointName}</span>
                       <span className={`ml-auto text-xs ${r.active ? "text-foreground" : "text-muted-foreground"}`}>{r.active ? "Aktiivinen" : "Poistunut"}{!r.acked ? " · kuittaamaton" : ""}</span>
                     </div>
                     <div className="text-xs tabular-nums text-muted-foreground">

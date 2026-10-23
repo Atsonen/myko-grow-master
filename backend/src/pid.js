@@ -205,5 +205,5 @@ export function registerPidRoutes(app, { mqttClient, query, asyncRoute }) {
       res.status(r.error ? 502 : 200).json(r);
     }),
   );
-  return { pidCommand };
+  return { pidCommand, pidState: (k) => state[k] ?? null };
 }

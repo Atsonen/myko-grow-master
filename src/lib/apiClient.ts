@@ -502,6 +502,7 @@ export interface AlarmSummaryRow {
   value: number | null;
   endValue: number | null;
   durationSec: number;
+  source?: "PLC" | "Myko";
   acked?: boolean;
   ackedAt?: string | null;
   ackedBy?: string | null;
@@ -509,13 +510,20 @@ export interface AlarmSummaryRow {
 export interface AlarmSummary {
   hours: number;
   generatedAt: string;
-  points: { id: string; name: string }[];
+  points: { id: string; name: string; source?: "PLC" | "Myko" }[];
   rows: AlarmSummaryRow[];
+  plc?: { key: string; pointId: string; errBits: number | null; err: boolean | null; warn: number | null; at: string | null }[];
 }
 export type AlarmAckResult = { requested: number; dryRun?: boolean; acked: { id: number; pointId: string; alarm: string }[]; skipped: { id: number; reason: string }[] };
 /** Myko alarm-list acknowledgment (not PLC ErrorAck). */
 export async function ackAlarms(ids: number[], dryRun = false) {
   return requestJson<AlarmAckResult>("/api/alarms/ack", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids, by: "dashboard", dryRun }) });
+}
+/** PLC ErrorAck to all PIDs (bridge) + Myko ack of the mirrored ERRORBITS/PID_VIKA alarms. */
+export async function plcErrorAckAll(dryRun = false) {
+  return requestJson<{ dryRun: boolean; pids: { key: string; error?: string | null }[]; mykoAck: AlarmAckResult; error?: string }>("/api/plc/error-ack", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dryRun }),
+  });
 }
 export async function getAlarmSummary(hours = 24, limit = 500) {
   return requestJson<AlarmSummary>(`/api/alarms/summary?hours=${hours}&limit=${limit}`);
