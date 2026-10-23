@@ -286,7 +286,7 @@ export function MeasurementPointWidget({ config, open: openProp, onOpenChange, d
                 )}
                 {point.status !== null && (
                   <div className="space-y-1 border-t border-border pt-2" data-testid="mp-ctrlbits">
-                    {([[7, "ON", "ohjaus päällä"], [8, "HEAT", "lämmitys"], [9, "COOL", "jäähdytys"], [15, "WA_DIS", "WhatsApp-hälytykset pois"]] as const).map(([bit, key, txt]) => {
+                    {([[7, "ON", "ohjaus päällä"], [8, "HEAT", "lämmitys (PID-rajatilassa vakio 1)"], [9, "COOL", "jäähdytys (PID-rajatilassa vakio 1)"], [15, "WA_DIS", "WhatsApp-hälytykset pois"]] as const).map(([bit, key, txt]) => {
                       const on = ((point.status! >>> bit) & 1) === 1;
                       return (
                         <div key={bit} className="flex items-start gap-2" data-bit={bit} data-on={on ? "1" : "0"}>
@@ -429,6 +429,11 @@ function ControlsEditor({
         {toggle("heat", "HEAT", CTRL_TOGGLE.heat)}
         {toggle("cool", "COOL", CTRL_TOGGLE.cool)}
       </div>
+      {hideSetpoint && (
+        <div className="text-xs text-muted-foreground" data-testid="mp-hc-caption">
+          HEAT/COOL ohjaa PID_Temp-lähtörajaa: Heat pois = Heat-yläraja 0, Cool pois = Cool-alaraja 0 (rajatilassa).
+        </div>
+      )}
       {!hideSetpoint && <div className="flex items-center gap-2">
         <span className="text-sm">Setpoint</span>
         <button
