@@ -104,7 +104,14 @@ def controls(pid,P):
                         high_delta=float(f[7]),high_min=int(f[8]),low_delta=float(f[9]),low_min=int(f[10]),disabled_until=du)
     except Exception as ex: log(P,f"controls read error {ex}")
     return dict(P["defaults"])
-def ctrl_word(c): return (c["on"]&1)<<7 | (c["heat"]&1)<<8 | (c["cool"]&1)<<9 | (c["setpoint"]&SP_MASK)<<SP_SHIFT
+def hc_limits_mode(plc_key):
+    """True when the backend (pid.js) does H/C via PID_Temp output limits -> Ctrl HEAT bit8 / COOL bit9 are constant 1."""
+    try: return mysql(f"SELECT mode FROM pid_output_limits WHERE pid_key='{plc_key}'").strip()=="limits"
+    except Exception: return False
+def ctrl_word(c,plc_key=None):
+    lim=bool(plc_key) and hc_limits_mode(plc_key)
+    heat=1 if lim else c["heat"]&1; cool=1 if lim else c["cool"]&1
+    return (c["on"]&1)<<7 | heat<<8 | cool<<9 | (c["setpoint"]&SP_MASK)<<SP_SHIFT
 def hel(t): return t.astimezone(HEL).strftime("%d.%m. %H:%M")
 
 def evaluate(P,rows,now,ctrl):
@@ -162,7 +169,7 @@ def step(P,rows,now,state,sender,ctrl):
 def payload(P,res,now,rows,ctrl,hb,disabled=False):
     B=P["bits"]
     alarm=sum(1<<B[k] for k,(a,_) in res.items() if a and k in B)
-    word=alarm|ctrl_word(ctrl)|((1 if disabled else 0)<<DIS_BIT)
+    word=alarm|ctrl_word(ctrl,P.get("plc"))|((1 if disabled else 0)<<DIS_BIT)
     js={"status":word,"alarm_bits":alarm,"active":[k for k in B if res.get(k,(False,))[0]],"bits":B,
         "controls":{"on":ctrl["on"],"heat":ctrl["heat"],"cool":ctrl["cool"],"setpoint":ctrl["setpoint"]},
         "layout":{"alarms":"0-6","ON":7,"HEAT":8,"COOL":9,"SP":"10-14","WA_DISABLED":15},
