@@ -322,6 +322,7 @@ const alterStatements = [
   "ALTER TABLE alarm_point_controls ADD COLUMN IF NOT EXISTS low_min SMALLINT UNSIGNED NOT NULL DEFAULT 10 AFTER low_delta",
   "ALTER TABLE alarm_point_controls ADD COLUMN IF NOT EXISTS alarms_disabled_until DATETIME NULL AFTER low_min",
   "ALTER TABLE alarm_events MODIFY alarm VARCHAR(255) NOT NULL",
+  "ALTER TABLE pid_ai_analysis ADD COLUMN IF NOT EXISTS user_wishes TEXT NULL",
   // hidden alarm point that owns DeepSeek monitor events (enabled=0: not shown as a point, not evaluated)
   "INSERT IGNORE INTO alarm_points (id, name, topic_prefix, enabled, sort_order) VALUES ('LLM_Advisor', 'DeepSeek-valvoja', 'Myko/LLM_Advisor', 0, 99)",
   "ALTER TABLE datalogger_variables ADD COLUMN IF NOT EXISTS var_type VARCHAR(16) NOT NULL DEFAULT 'analog' AFTER visible",

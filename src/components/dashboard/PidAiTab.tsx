@@ -34,6 +34,7 @@ type Confirm = { kind: "apply" | "restore"; rows: [string, number | undefined, n
 export function PidAiTab({ pidKey, onSeen }: { pidKey: string; onSeen?: () => void }) {
   const [s, setS] = useState<PidAiState | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [wishes, setWishes] = useState("");
   const [sel, setSel] = useState(0);
   const [confirm, setConfirm] = useState<Confirm>(null);
   const [okLarge, setOkLarge] = useState(false);
@@ -64,7 +65,7 @@ export function PidAiTab({ pidKey, onSeen }: { pidKey: string; onSeen?: () => vo
       setSel(0); await load();
     } catch (e) { toast.error((e as Error).message); } finally { setBusy(null); }
   }
-  const analyze = () => run("analyze", () => startPidAiAnalyze(pidKey), "Analyysi valmis");
+  const analyze = () => run("analyze", () => startPidAiAnalyze(pidKey, wishes.trim()), "Analyysi valmis");
   const doConfirm = () => {
     const c = confirm; setConfirm(null);
     if (!c || !a) return;
@@ -81,11 +82,18 @@ export function PidAiTab({ pidKey, onSeen }: { pidKey: string; onSeen?: () => vo
         </button>
         <span className="text-[11px] text-muted-foreground">DeepSeek, 24 h data + nykyiset parametrit. Enintään kerran {s?.rateMin ?? 10} min. Yöajo klo 3.00.</span>
       </div>
+      <label className="block text-xs">
+        <span className="font-semibold">Omat toiveet</span> <span className="text-muted-foreground">(vapaaehtoinen, välitetään AI:lle ja tallennetaan analyysin kanssa)</span>
+        <textarea data-testid="pid-ai-wishes" rows={2} maxLength={1000} value={wishes} onChange={(e) => setWishes(e.target.value)}
+          placeholder="esim. vähemmän kompressorin käynnistyksiä, hidas mutta tasainen säätö"
+          className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1 text-sm" />
+      </label>
 
       {!a ? <div className="text-xs italic text-muted-foreground">Ei analyyseja vielä.</div> : (
         <div className="space-y-3 rounded-md border border-border p-3">
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <span className="tabular-nums text-muted-foreground">{fmtT(a.at)} · {a.trigger === "nightly" ? "yöajo" : "käsin"} · {a.model}</span>
+            {a.wishes && <span className="rounded bg-muted px-2 py-0.5" title={a.wishes}>toiveet: {a.wishes.length > 60 ? a.wishes.slice(0, 60) + "…" : a.wishes}</span>}
             {r?.risk && <span className={`rounded px-2 py-0.5 font-semibold ${RISK[r.risk] ?? "bg-muted"}`}>{RISK_FI[r.risk] ?? r.risk}</span>}
             {typeof r?.confidence === "number" && <span className="rounded bg-muted px-2 py-0.5">varmuus {Math.round(r.confidence * 100)} %</span>}
             {a.status === "applied" && <span className="rounded bg-emerald-900/60 px-2 py-0.5 text-emerald-200">otettu käyttöön</span>}

@@ -71,7 +71,7 @@ export function registerPidAi(app, { query, asyncRoute, pidState, PID_POINTS }) 
     "INSERT INTO alarm_events (point_id, alarm, bit, event, at, value, status_word) VALUES (?, ?, NULL, 'control', UTC_TIMESTAMP(3), NULL, NULL)",
     [PID_POINTS[key], text.slice(0, 255)]).catch((e) => console.error("[pid-ai] event", e.message));
 
-  async function analyze(key, trigger) {
+  async function analyze(key, trigger, wishes = null) {
     const k = apiKey();
     if (!k) throw new Error("DEEPSEEK_API_KEY puuttuu");
     const params = await readParams(key, 60_000);
@@ -85,7 +85,7 @@ export function registerPidAi(app, { query, asyncRoute, pidState, PID_POINTS }) 
     const sys = `Olet kokenut säätöteknikko (Siemens PID_Temp). Analysoi säätöpiirin toiminta ja ehdota tarvittaessa parempia PID-parametreja. Vastaa VAIN JSON-objektina suomeksi:
 {"assessment": "1–3 lausetta", "issues": ["..."], "proposed_params": {"Heat.Gain": 1.2}, "rationale": "...", "risk": "low|medium|high", "confidence": 0.0-1.0}
 Säännöt: proposed_params vain jos muutos on perusteltu; muuten {}. Sallitut avaimet: ${Object.keys(APPLY_LIMITS).flatMap((m) => [`Heat.${m}`, `Cool.${m}`]).join(", ")}. Ti ja Td sekunteina. Muutos enintään ±50 % nykyarvosta. Huomioi kompressorin minimijaksot ja että turvallisuus > nopeus.`;
-    const user = `${COMMON}\n${CONTEXT[key]}\nNykyiset parametrit (Retain.CtrlParams + Config): ${JSON.stringify(params)}\nNykytila: ${JSON.stringify(now)}\nViimeiset 24 h, 5 min keskiarvot (state 3 = auto, 1/2 = viritys, 4 = käsi):\n${csv}`;
+    const user = `${COMMON}\n${CONTEXT[key]}\nNykyiset parametrit (Retain.CtrlParams + Config): ${JSON.stringify(params)}\nNykytila: ${JSON.stringify(now)}\nViimeiset 24 h, 5 min keskiarvot (state 3 = auto, 1/2 = viritys, 4 = käsi):\n${csv}${wishes ? `\n\nKäyttäjän omat toiveet (huomioi, mutta turvallisuus- ja muutosrajat ovat silti voimassa): ${wishes}` : ""}`;
     const t0 = Date.now();
     const r = await fetch("https://api.deepseek.com/chat/completions", {
       method: "POST", signal: AbortSignal.timeout(120_000),
@@ -104,10 +104,10 @@ Säännöt: proposed_params vain jos muutos on perusteltu; muuten {}. Sallitut a
     resp.proposed_params = prop; if (dropped.length) resp.dropped_params = dropped;
     const u = b.usage ?? {};
     const res = await query(
-      `INSERT INTO pid_ai_analysis (at, pid_key, \`trigger\`, model, params_json, input_summary, response_json, prompt_tokens, completion_tokens, duration_ms, status)
-       VALUES (UTC_TIMESTAMP(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO pid_ai_analysis (at, pid_key, \`trigger\`, model, params_json, input_summary, response_json, prompt_tokens, completion_tokens, duration_ms, status, user_wishes)
+       VALUES (UTC_TIMESTAMP(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [key, trigger, b.model ?? "deepseek-chat", JSON.stringify(params), JSON.stringify({ now, rows: rows.length, from: rows[0]?.t, to: rows.at(-1)?.t }),
-       JSON.stringify(resp), u.prompt_tokens ?? null, u.completion_tokens ?? null, Date.now() - t0, Object.keys(prop).length ? "new" : "noop"]);
+       JSON.stringify(resp), u.prompt_tokens ?? null, u.completion_tokens ?? null, Date.now() - t0, Object.keys(prop).length ? "new" : "noop", wishes]);
     console.log(`[pid-ai] ${key} ${trigger}: ${Object.keys(prop).length} proposals, tokens ${u.prompt_tokens}/${u.completion_tokens}`);
     return { id: Number(res.insertId) };
   }
@@ -156,7 +156,8 @@ Säännöt: proposed_params vain jos muutos on perusteltu; muuten {}. Sallitut a
     const age = Math.min(last ? Number(last.age) : Infinity, (Date.now() - (lastManual[key] ?? 0)) / 1000);
     if (age < RATE_MIN * 60) return res.status(429).json({ error: `Analyysi enintään kerran ${RATE_MIN} min välein (seuraava ${Math.ceil((RATE_MIN * 60 - age) / 60)} min kuluttua)` });
     lastManual[key] = Date.now();
-    res.status(202).json(startJob(() => lockPid(key, () => analyze(key, "manual"))));
+    const wishes = String(req.body?.wishes ?? "").trim().slice(0, 1000) || null;
+    res.status(202).json(startJob(() => lockPid(key, () => analyze(key, "manual", wishes))));
   }));
   app.get("/api/pid/:key/ai-job/:id", asyncRoute(async (req, res) => {
     const j = jobs.get(req.params.id);
@@ -167,12 +168,12 @@ Säännöt: proposed_params vain jos muutos on perusteltu; muuten {}. Sallitut a
     if (!keyOk(req, res)) return;
     const key = req.params.key;
     const rows = await query(
-      `SELECT id, DATE_FORMAT(at, '%Y-%m-%dT%H:%i:%sZ') at, \`trigger\`, model, params_json, response_json, prompt_tokens, completion_tokens, status
+      `SELECT id, DATE_FORMAT(at, '%Y-%m-%dT%H:%i:%sZ') at, \`trigger\`, model, params_json, response_json, prompt_tokens, completion_tokens, status, user_wishes
        FROM pid_ai_analysis WHERE pid_key = ? ORDER BY id DESC LIMIT 20`, [key]);
     const hist = await query(
       `SELECT CAST(id AS INT) id, DATE_FORMAT(at, "%Y-%m-%dT%H:%i:%sZ") at, kind, by_user, reason, params_json, result_json FROM pid_param_history WHERE pid_key = ? ORDER BY id DESC LIMIT 10`, [key]);
     const parse = (x) => { try { return typeof x === "string" ? JSON.parse(x) : x; } catch { return null; } };
-    const analyses = rows.map((r) => ({ id: Number(r.id), at: r.at, trigger: r.trigger, model: r.model, status: r.status, tokens: { prompt: r.prompt_tokens, completion: r.completion_tokens }, params: parse(r.params_json), response: parse(r.response_json) }));
+    const analyses = rows.map((r) => ({ id: Number(r.id), at: r.at, trigger: r.trigger, model: r.model, status: r.status, tokens: { prompt: r.prompt_tokens, completion: r.completion_tokens }, params: parse(r.params_json), response: parse(r.response_json), wishes: r.user_wishes ?? null }));
     const latest = analyses[0];
     res.json({
       key, analyses, history: hist.map((h) => ({ ...h, id: Number(h.id), params: parse(h.params_json), result: parse(h.result_json), params_json: undefined, result_json: undefined })),
