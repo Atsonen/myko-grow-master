@@ -133,6 +133,9 @@ export const SCHEMA_HINT = `TIETOKANTA (MariaDB, myko_valvomo; kaikki DATETIME =
 - datalogger_values(timestamp, source_id='src-datalogger', variable_key dlXX, numeric_value = skaalattu arvo) ~1 näyte/min. Muuttujat: datalogger_variables.
 - pid_training_log(at, pid_key F1|T1|G_Air, sp, csp, pv, out_heat, out_cool, out_sum, state, mode, man_en, err_bits, outdoor_temp) ~1/min.
 - weather_metno(fetched_at, forecast_time, air_temperature, relative_humidity, wind_speed) = ulkolämpö (met.no).
+- fmi_weather_obs(obs_time UTC tunnin hetkiarvo, t2m °C, rh %, td kastepiste, cloud_okta 0-8, precip_1h mm, pressure hPa, ws/wg m/s, wd °) = FMI-havainnot 2010→ (Nurmijärvi Röykkä fmisid 101149; tuuli Helsinki-Vantaa 100968). Pitkä historia ML:ään (F1/T1 vs ulkolämpö).
+- fmi_weather_forecast(fetched_at, forecast_time, t, rh, ws, wg, wd, cloud_pct, precip_1h, symbol) = FMI-ennusteet Rajamäelle, tallennus 3 h välein.
+- space_weather_kp(time_tag, kp, kind observed|estimated|predicted) = NOAA planetaarinen Kp (3 h). space_weather_log(at, kp_now, kp_max_24h_fc, sw_speed km/s, sw_density, bz nT, bt, nur_dx_1h = Nurmijärven magnetometrin X-vaihteluväli 1 h nT, aurora_level 0-4) 30 min välein.
 - alarm_events(at, point_id, alarm, bit, event start|clear|ack|control|llm, value, acked_at, acked_by); alarm_points(id, name, unit, bits_json). point_id LLM_Advisor = tekoälyneuvojan huomiot, ei oikeita hälytyksiä.
 - pid_param_history, pid_output_limits, pid_ai_analysis, llm_findings, events (tapahtumat/kirjaukset), units/transfers/strains (jäljitettävyys), environment_readings, audit_log, assistant_log.
 TAGIT: dl24 vesilämpö °C, dl25 vesitaso %, dl23 EC/ppm, dl26 pH, dl04 PF-1 %, dl31 Poistoilma DS4 °C, dl30 Katto DS3 °C, dl03 Keskiosa DS2 °C, dl09 G1 temp °C, dl21 G Temp AHT °C, dl22 G kosteus %RH, dl15 G1 kosteus %RH, dl00 T1 Temp °C, dl02 F1 Temp °C, dl20 T3 Temp °C, dl17 T3 Hum %RH, dl05 WaterTemp °C.

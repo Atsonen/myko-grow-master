@@ -1,5 +1,6 @@
 import dotenv from "dotenv";
 import { closeDb, query } from "./db.js";
+import { TABLES as FMI_TABLES } from "./fmiWeather.js";
 
 dotenv.config();
 
@@ -311,6 +312,7 @@ const statements = [
     model_updated_at DATETIME NULL, http VARCHAR(8) NULL,  -- 200 / 304 / cached
     INDEX idx_weather_metno_fetched (fetched_at)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+  ...FMI_TABLES,
 ];
 
 const alterStatements = [

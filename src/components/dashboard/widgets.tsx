@@ -20,6 +20,7 @@ import { AXIS_TICK, autoBucket, LEGEND_PROPS, resolveSeries, timeTickLabel, time
 import { useWidth } from "@/lib/useWidth";
 import { StatusBitsWidget } from "./StatusBitsWidget";
 import { AlarmListWidget } from "./AlarmListWidget";
+import { SpaceWeatherWidget, WeatherWidget } from "./WeatherWidgets";
 import { MeasurementPointWidget } from "./MeasurementPointWidget";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { renderSeriesChildren } from "@/components/trends/SeriesStyleEditor";
@@ -333,6 +334,10 @@ export function WidgetBody({ widget }: { widget: DashboardWidget }) {
       return <AlarmListWidget config={widget.config as WidgetConfigMap["alarmList"]} />;
     case "statusBits":
       return <StatusBitsWidget config={widget.config as WidgetConfigMap["statusBits"]} />;
+    case "weather":
+      return <WeatherWidget />;
+    case "spaceWeather":
+      return <SpaceWeatherWidget />;
     case "note":
       return <NoteWidget config={widget.config as WidgetConfigMap["note"]} />;
     default:
@@ -364,6 +369,10 @@ export function defaultTitle(widget: DashboardWidget, labelFor: (id: string) => 
       return "Mittauspiste";
     case "alarmList":
       return "Hälytyslista";
+    case "weather":
+      return "Sää · Rajamäki";
+    case "spaceWeather":
+      return "Avaruussää";
     case "statusBits":
       return `Status · ${(widget.config as WidgetConfigMap["statusBits"]).variableKey ?? "word"}`;
   }

@@ -12,7 +12,9 @@ export type WidgetType =
   | "note"
   | "statusBits"
   | "measurementPoint"
-  | "alarmList";
+  | "alarmList"
+  | "weather"
+  | "spaceWeather";
 
 export interface WidgetConfigMap {
   sensorLatest: { variableId?: string };
@@ -27,6 +29,8 @@ export interface WidgetConfigMap {
   statusBits: { variableKey?: string; bits?: number[]; staleMinutes?: number };
   /** pointId = alarm_points.id; name overrides the point name. */
   measurementPoint: { pointId?: string; name?: string };
+  weather: Record<string, never>;
+  spaceWeather: Record<string, never>;
   alarmList: { hours?: number; limit?: number; pointId?: string; priority?: 1 | 2; activeOnly?: boolean };
 }
 
@@ -59,6 +63,8 @@ export const WIDGET_META: Record<
   statusBits: { label: "Status bits", description: "Lamps for the bits of a datalogger status word.", w: 4, h: 3, minW: 2, minH: 2 },
   measurementPoint: { label: "Mittauspiste", description: "Measurement point: value + alarm status, expandable bits and event history.", w: 3, h: 4, minW: 2, minH: 3 },
   alarmList: { label: "Hälytyslista", description: "Alarm summary across all measurement points: time, point, type, priority, state, value, duration.", w: 8, h: 6, minW: 4, minH: 4 },
+  weather: { label: "Sää", description: "FMI: nykyinen sää (Nurmijärvi Röykkä) ja 48 h ennuste Rajamäelle.", w: 6, h: 6, minW: 3, minH: 4 },
+  spaceWeather: { label: "Avaruussää", description: "Kp-indeksi + ennuste, aurinkotuuli, Nurmijärven magnetometri, revontulien todennäköisyys.", w: 6, h: 6, minW: 3, minH: 4 },
   note: { label: "Note", description: "Free text note.", w: 3, h: 3, minW: 2, minH: 2 },
 };
 

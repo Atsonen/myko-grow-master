@@ -52,6 +52,9 @@ function mobileHeight(w: DashboardWidget): number | undefined {
       return 300;
     case "sensorLatest":
       return 150;
+    case "weather":
+    case "spaceWeather":
+      return 380;
     case "statusBits":
     case "measurementPoint":
     case "alarmList":

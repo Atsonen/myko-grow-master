@@ -5,6 +5,7 @@ import mqtt from "mqtt";
 import { query, withConnection } from "./db.js";
 import { PID_BY_POINT, PID_POINTS, registerPidRoutes } from "./pid.js";
 import { startWeather } from "./weather.js";
+import { registerFmiWeather } from "./fmiWeather.js";
 import { registerPidAi } from "./pidAi.js";
 import { registerMykoDb } from "./mykoDb.js";
 import { registerAnomaly } from "./anomaly.js";
@@ -999,6 +1000,7 @@ function publishRetained(topic, message) {
 // ---- OPC UA PID faceplates + PID alarm points: see pid.js ----
 const { pidCommand, pidState, setFeedAlarms, setHC, hcMode } = registerPidRoutes(app, { mqttClient: mqttPublisher, query, asyncRoute });
 startWeather({ query });
+registerFmiWeather(app, { query, asyncRoute });
 registerPidAi(app, { query, asyncRoute, pidState, PID_POINTS });
 registerMykoDb(app, { query, asyncRoute });
 registerProcessDoc(app, { query, asyncRoute });
