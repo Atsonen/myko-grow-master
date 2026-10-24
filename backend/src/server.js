@@ -367,14 +367,15 @@ app.put(
         x: n(w.x, 0), y: n(w.y, 0), w: Math.max(1, n(w.w, 4)), h: Math.max(1, n(w.h, 4)),
       };
     });
-    const json = JSON.stringify({ version: 1, widgets });
+    const version = layout.version === 2 ? 2 : 1; // v2 = 24-column grid
+    const json = JSON.stringify({ version, widgets });
     if (json.length > 200_000) return res.status(400).json({ error: "Layout too large" });
     await query(
       `INSERT INTO dashboard_layouts (id, layout_json) VALUES (?, ?)
        ON DUPLICATE KEY UPDATE layout_json = VALUES(layout_json)`,
       [id, json],
     );
-    res.json({ id, layout: { version: 1, widgets } });
+    res.json({ id, layout: { version, widgets } });
   }),
 );
 

@@ -162,17 +162,17 @@ export function MeasurementPointWidget({ config, open: openProp, onOpenChange, d
 
   const TAB = "min-h-11 flex-1 whitespace-nowrap rounded-md px-1.5 text-[13px] min-[400px]:px-3 min-[400px]:text-sm font-semibold text-muted-foreground data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow";
   return (
-    <div className={`@container h-full px-3 py-2.5 ${dialogOnly ? "hidden" : ""} ${LEVEL_STYLE[level]} ${disabled && (level === "ok" || level === "unknown") && !modeInd ? LEVEL_STYLE.disabled : ""} ${modeInd?.outline ?? ""}`} data-testid="measurement-point" data-level={level}>
-      <PidModeBanner ind={modeInd} className="mb-1.5" />
-      <div className="flex w-full items-start gap-2">
-        <div className="min-w-0 flex-1 overflow-hidden">
-          <div className="truncate text-[15px] font-medium leading-6 text-muted-foreground" data-testid="mp-name">{config.name || point.name}</div>
-          <div className="flex items-baseline gap-1">
-            <span className="text-3xl font-semibold tabular-nums text-foreground @[11rem]:text-4xl" data-testid="mp-value">
+    <div className={`@container relative h-full px-3 py-2.5 ${dialogOnly ? "hidden" : ""} ${LEVEL_STYLE[level]} ${disabled && (level === "ok" || level === "unknown") && !modeInd ? LEVEL_STYLE.disabled : ""} ${modeInd?.outline ?? ""}`} data-testid="measurement-point" data-level={level}>
+      <PidModeBanner ind={modeInd} className="mb-1.5 mr-9 w-auto" />
+      <div className="w-full">
+        <div className="min-w-0 overflow-hidden">
+          <div className="truncate pr-9 text-[15px] font-medium leading-6 text-muted-foreground" data-testid="mp-name">{config.name || point.name}</div>
+          <div className="flex items-center gap-3">
+            <span className="flex items-baseline gap-1"><span className="text-3xl font-semibold tabular-nums text-foreground @[11rem]:text-4xl" data-testid="mp-value">
               {value === null || value === undefined ? "—" : value.toFixed(1)}
             </span>
-            <span className="text-base text-muted-foreground">{point.unit}</span>
-            {pidKey && pid.v && <span className={`ml-auto self-center ${pid.stale ? "opacity-60" : ""}`}><OutputGauge v={pid.v} /></span>}
+            <span className="text-base text-muted-foreground">{point.unit}</span></span>
+            {pidKey && pid.v && <span className={`shrink-0 ${pid.stale ? "opacity-60" : ""}`}><OutputGauge v={pid.v} size={88} /></span>}
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1" data-testid="mp-chips">
             {active.length === 0 ? (
@@ -213,7 +213,7 @@ export function MeasurementPointWidget({ config, open: openProp, onOpenChange, d
           onClick={() => setOpen(true)}
           aria-label={`${point.name}: asetukset`}
           data-testid="mp-gear"
-          className="-mt-1 flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-muted-foreground/70 hover:bg-secondary/60 hover:text-foreground"
+          className="absolute right-1 top-1 flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-muted-foreground/70 hover:bg-secondary/60 hover:text-foreground"
         >
           <Settings className="h-[18px] w-[18px]" />
         </button>

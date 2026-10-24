@@ -46,7 +46,7 @@ export interface DashboardWidget<T extends WidgetType = WidgetType> {
 }
 
 export interface DashboardLayout {
-  version: 1;
+  version: 1 | 2;
   widgets: DashboardWidget[];
 }
 
@@ -61,7 +61,7 @@ export const WIDGET_META: Record<
   locationSummary: { label: "Locations", description: "Units per location with current temperature.", w: 4, h: 5, minW: 3, minH: 3 },
   unitCurve: { label: "Unit lifetime curve", description: "Temperature across one unit's lifetime.", w: 6, h: 6, minW: 3, minH: 4 },
   statusBits: { label: "Status bits", description: "Lamps for the bits of a datalogger status word.", w: 4, h: 3, minW: 2, minH: 2 },
-  measurementPoint: { label: "Mittauspiste", description: "Measurement point: value + alarm status, expandable bits and event history.", w: 3, h: 4, minW: 2, minH: 3 },
+  measurementPoint: { label: "Mittauspiste", description: "Measurement point: value + alarm status, expandable bits and event history.", w: 1.5, h: 4, minW: 1, minH: 3 },
   alarmList: { label: "Hälytyslista", description: "Alarm summary across all measurement points: time, point, type, priority, state, value, duration.", w: 8, h: 6, minW: 4, minH: 4 },
   weather: { label: "Sää", description: "FMI: nykyinen sää (Nurmijärvi Röykkä) ja 48 h ennuste Rajamäelle.", w: 6, h: 6, minW: 3, minH: 4 },
   spaceWeather: { label: "Avaruussää", description: "Kp-indeksi + ennuste, aurinkotuuli, Nurmijärven magnetometri, revontulien todennäköisyys.", w: 6, h: 6, minW: 3, minH: 4 },

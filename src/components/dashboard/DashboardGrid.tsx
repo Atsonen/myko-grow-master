@@ -22,14 +22,17 @@ import {
 } from "./types";
 
 const ResponsiveGrid = WidthProvider(GridLayout);
-const COLS = 12;
+/** 24-column grid (layout v2). v1 layouts were 12 columns: x/w are doubled on load. WIDGET_META sizes are in 12-col units. */
+const COLS = 24;
+const MINW_24: Partial<Record<WidgetType, number>> = { measurementPoint: 2 };
 const ROW_HEIGHT = 44;
 
 function sanitize(layout: DashboardLayout | null | undefined): DashboardLayout {
-  if (!layout || !Array.isArray(layout.widgets)) return DEFAULT_LAYOUT;
+  if (!layout || !Array.isArray(layout.widgets)) return sanitize(DEFAULT_LAYOUT);
+  const k = layout.version === 2 ? 1 : 2;
   return {
-    version: 1,
-    widgets: layout.widgets.filter((w) => w && w.type in WIDGET_META).map((w) => ({ ...w, config: w.config ?? {} })),
+    version: 2,
+    widgets: layout.widgets.filter((w) => w && w.type in WIDGET_META).map((w) => ({ ...w, x: w.x * k, w: w.w * k, config: w.config ?? {} })),
   };
 }
 
@@ -70,7 +73,7 @@ function DashboardInner() {
   // < 768 px: read-only single column in saved desktop order; the saved grid is never touched here.
   const isMobile = useIsMobile();
   const [saved, setSaved] = useState<DashboardLayout | null>(null);
-  const [layout, setLayout] = useState<DashboardLayout>(DEFAULT_LAYOUT);
+  const [layout, setLayout] = useState<DashboardLayout>(() => sanitize(DEFAULT_LAYOUT));
   const [isDefault, setIsDefault] = useState(true);
   const [editing, setEditing] = useState(false);
   const [dirty, setDirty] = useState(false);
@@ -99,7 +102,7 @@ function DashboardInner() {
         y: w.y,
         w: w.w,
         h: w.h,
-        minW: WIDGET_META[w.type].minW,
+        minW: MINW_24[w.type] ?? WIDGET_META[w.type].minW * 2,
         minH: WIDGET_META[w.type].minH,
       })),
     [layout],
@@ -124,7 +127,7 @@ function DashboardInner() {
   const addWidget = (type: WidgetType) => {
     const meta = WIDGET_META[type];
     const maxY = layout.widgets.reduce((m, w) => Math.max(m, w.y + w.h), 0);
-    const w: DashboardWidget = { id: newWidgetId(), type, config: {}, x: 0, y: maxY, w: meta.w, h: meta.h };
+    const w: DashboardWidget = { id: newWidgetId(), type, config: {}, x: 0, y: maxY, w: meta.w * 2, h: meta.h };
     setLayout({ ...layout, widgets: [...layout.widgets, w] });
     setDirty(true);
     setPicker(false);
@@ -161,7 +164,7 @@ function DashboardInner() {
   };
 
   const cancel = () => {
-    setLayout(saved ?? DEFAULT_LAYOUT);
+    setLayout(saved ?? sanitize(DEFAULT_LAYOUT));
     setDirty(false);
     setEditing(false);
   };
@@ -170,8 +173,8 @@ function DashboardInner() {
     if (!confirm("Reset the dashboard to the default layout? Your saved layout will be removed.")) return;
     try {
       await resetDashboardLayout();
-      setSaved(DEFAULT_LAYOUT);
-      setLayout(DEFAULT_LAYOUT);
+      setSaved(sanitize(DEFAULT_LAYOUT));
+      setLayout(sanitize(DEFAULT_LAYOUT));
       setIsDefault(true);
       setDirty(false);
       setEditing(false);
