@@ -55,6 +55,7 @@ def clean(v):
 def publish(t):
     d = {k: v for k, v in values[t].items() if v is not None}
     if not d: return
+    d = {k: (None if isinstance(v, float) and v != v or v in (float("inf"), float("-inf")) else v) for k, v in d.items()}  # NaN/Inf -> null (valid JSON)
     mq.publish(t, json.dumps(d, separators=(",", ":")), qos=0, retain=m.get("retain", False))
     last_pub[t] = time.time(); dirty.discard(t)
 
