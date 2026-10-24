@@ -8,11 +8,12 @@
 //   callback 'ack:<pointId>:<type>'  -> Kuittaa: Myko-only ack (alarm_events start rows acked, reminders suppressed
 //                                      while the alarm stays active; myko_settings k='telegram_alarm_acks')
 //   callback 'mute:<pointId>:<type>' -> Ohita 1 h: no reminders for that alarm for 60 min
-//   /status /halytykset /help, free text -> DeepSeek (process description + live status as context, answers only).
+//   /status /halytykset /help, free text -> DeepSeek (process description + live status + read-only DB tools, src/tgTools.js).
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { query } from "./db.js";
 import { deepseekChat } from "./deepseek.js";
+import { TOOLS, callTool, SCHEMA_HINT } from "./tgTools.js";
 
 const TOKEN_FILE = process.env.MYKO_TELEGRAM_ENV || "/home/atte/.config/myko/telegram.env";
 const API_BASE = process.env.MYKO_API || "http://127.0.0.1:3010";
@@ -79,15 +80,32 @@ export async function alarmsText() {
 }
 const HELP = "Myko-botti (vain luku, ei PLC-kirjoituksia)\n/status – lämpötilat ja onko kunnossa\n/halytykset – aktiiviset hälytykset\n/help – tämä ohje\nVapaa teksti → DeepSeek vastaa prosessikuvauksen ja tilan pohjalta.\nHälytysnapit: Kuittaa (Myko-kuittaus, ei muistutuksia) · Ohita 1 h.";
 
-async function askDeepSeek(text) {
+async function askDeepSeek(text, who = "telegram") {
   const [doc] = await query("SELECT content FROM ai_process_doc ORDER BY id DESC LIMIT 1").catch(() => []);
   const status = await statusText().catch((e) => `tila ei saatavilla: ${e.message}`);
-  const sys = `Olet Myko-sienikasvamon valvomon avustaja Telegramissa. Vastaa suomeksi, lyhyesti (enintään ~6 riviä). ` +
-    `Et voi tehdä toimenpiteitä etkä kirjoittaa PLC:lle; anna vain tietoa ja neuvoja. Jos käyttäjä pyytää toimenpidettä, kerro että se tehdään Myko-valvomosta.\n\n` +
-    `--- PROSESSIKUVAUS ---\n${String(doc?.content ?? "").slice(0, 8000)}\n--- /PROSESSIKUVAUS ---\n\n--- LIVE-TILA ---\n${status}\n--- /LIVE-TILA ---`;
-  const r = await deepseekChat({ messages: [{ role: "system", content: sys }, { role: "user", content: text.slice(0, 2000) }], max_tokens: 500 }, 60_000);
-  return r.choices?.[0]?.message?.content?.trim() || "(ei vastausta)";
+  const now = new Date().toLocaleString("sv-SE", { timeZone: "Europe/Helsinki" }).slice(0, 16);
+  const sys = `Olet Myko-sienikasvamon valvomon avustaja Telegramissa. Vastaa suomeksi, tiiviisti (Telegram, mieluiten alle ~12 riviä, ei markdown-taulukoita). ` +
+    `Et voi tehdä toimenpiteitä etkä kirjoittaa PLC:lle; anna vain tietoa ja neuvoja. Jos käyttäjä pyytää toimenpidettä, kerro että se tehdään Myko-valvomosta.\n` +
+    `Sinulla on vain luku -pääsy Myko-tietokantaan työkaluilla (get_measurements, get_alarm_history, list_tables, describe_table, run_sql). ` +
+    `Hae data työkaluilla äläkä arvaa lukuja. Nyt on ${now} (Europe/Helsinki); "tänään" = klo 00:00 alkaen paikallista aikaa. Ilmoita ajat paikallisaikana ja mainitse lähde (tagi) lyhyesti.\n\n` +
+    `${SCHEMA_HINT}\n\n--- PROSESSIKUVAUS ---\n${String(doc?.content ?? "").slice(0, 8000)}\n--- /PROSESSIKUVAUS ---\n\n--- LIVE-TILA ---\n${status}\n--- /LIVE-TILA ---`;
+  const messages = [{ role: "system", content: sys }, { role: "user", content: text.slice(0, 2000) }];
+  const ctx = { who, q: text.slice(0, 200) };
+  for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+    const r = await deepseekChat({ messages, tools: TOOLS, max_tokens: 900 }, 90_000);
+    const m = r.choices?.[0]?.message; if (!m) break;
+    if (!m.tool_calls?.length) return clip(m.content?.trim() || "(ei vastausta)");
+    messages.push({ role: "assistant", content: m.content ?? "", tool_calls: m.tool_calls });
+    for (const tc of m.tool_calls) {
+      let args = {}; try { args = JSON.parse(tc.function.arguments || "{}"); } catch {}
+      messages.push({ role: "tool", tool_call_id: tc.id, content: await callTool(tc.function.name, args, { ...ctx, round }) });
+    }
+  }
+  const r = await deepseekChat({ messages: [...messages, { role: "user", content: "Vastaa nyt jo haetun datan perusteella." }], max_tokens: 900 }, 90_000);
+  return clip(r.choices?.[0]?.message?.content?.trim() || "(ei vastausta)");
 }
+const MAX_TOOL_ROUNDS = 6;
+const clip = (s) => (s.length > 4000 ? s.slice(0, 3990) + "…" : s);
 
 /** Text command handler (exported for local tests). Returns reply text. */
 export async function handleText(text) {
