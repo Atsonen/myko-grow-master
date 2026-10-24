@@ -50,7 +50,7 @@ export function registerAnomaly(app, { query, asyncRoute, pidState, PID_POINTS }
     if (running) throw new Error("valvonta on jo käynnissä"); running = true; lastRun = Date.now();
     try {
       const data = await gather();
-      const sys = `Olet sienikasvamon automaation valvoja (Siemens PID_Temp + anturit). Etsi poikkeamat datasta: jäätyneet anturit (frozen=true; PID-säädön PV-anturit: F1=dl02, T1=dl00, G_Air=dl31 DS4 – näiden jäätyminen on high: sama arvo koko tunnin, esim. DS4 jumissa 8.89), vanhentunut data (stale), saturoitunut lähtö (100 % pitkään), SP:n ja PV:n pysyvä ero, epätavallinen lähtö ulkolämpötilaan nähden, anturien ristiriidat. Älä raportoi normaalia toimintaa. Tiedossa: Warning 16#0020 jatkuvasti päällä (ei raportoida).
+      const sys = `Olet sienikasvamon automaation valvoja (Siemens PID_Temp + anturit). Etsi poikkeamat datasta: jäätyneet anturit (frozen=true; PID-säädön PV-anturit: F1=dl02, T1=dl00, G_Air=dl31 DS4 – näiden jäätyminen on high; jäätynyt tarkoittaa VAIN frozen=true eli täsmälleen sama arvo koko tunnin – pienikin vaihtelu tai pieni std tarkoittaa toimivaa anturia, älä raportoi sitä), vanhentunut data (stale), saturoitunut lähtö (100 % pitkään), SP:n ja PV:n pysyvä ero, epätavallinen lähtö ulkolämpötilaan nähden, anturien ristiriidat. Älä raportoi normaalia toimintaa. Tiedossa: Warning 16#0020 jatkuvasti päällä (ei raportoida).
 Vastaa VAIN JSON: {"findings":[{"severity":"info|low|medium|high","point":"F1|T1|G_Air|<anturin key>|SYSTEM","category":"frozen_sensor|stale_data|saturation|sp_deviation|output|sensor_conflict|other","finding":"lyhyesti suomeksi","suggestion":"toimenpide suomeksi","recommend_reset":false}]}
 high vain, jos säätö on vaarassa tai tuote vaarassa (esim. PID:n PV jäätynyt -> säätö sokea). recommend_reset=true vain jäätyneelle/puuttuvalle anturille (5 V reset katkaisee SensorBlock 1+2 syötön n. 8 s; et suorita sitä itse).`;
       const b = await deepseekChat({ messages: [{ role: "system", content: sys + processContext("full") }, { role: "user", content: `Aika UTC ${new Date().toISOString()}\n${JSON.stringify(data)}` }], response_format: { type: "json_object" }, max_tokens: 1200 }, 90_000);
@@ -70,7 +70,13 @@ high vain, jos säätö on vaarassa tai tuote vaarassa (esim. PID:n PV jäätyny
         // F1 warming not dangerous, T1 cooling critical only near freezing) -> never WhatsApp from the LLM monitor.
         if (sev === "high" && /saturation|sp_deviation|output/i.test(String(f.category ?? ""))) sev = "medium";
         // A "frozen sensor" claim must be backed by the data (max == min over the window); small variation is normal steady control.
-        if (/frozen/i.test(String(f.category ?? "")) && !data.sensors.some((x) => x.frozen)) sev = "low";
+        // Drop any frozen claim unless the named sensor (or, if unnamed, some sensor) is exactly constant. Any movement = working.
+        if (/frozen|jumi|jäät|ei päivity/i.test(`${f.category ?? ""} ${f.finding ?? ""}`)) {
+          const txt = `${f.point ?? ""} ${f.finding ?? ""}`;
+          const named = data.sensors.filter((x) => new RegExp(`\\b${x.key}\\b`, "i").test(txt));
+          const ok = named.length ? named.some((x) => x.frozen) : data.sensors.some((x) => x.frozen);
+          if (!ok) continue;
+        }
         if (ignore.includes(point)) continue;
         const cat = String(f.category ?? "other").slice(0, 40);
         const [dup] = await query("SELECT id FROM llm_findings WHERE point = ? AND category = ? AND severity = ? AND at > UTC_TIMESTAMP() - INTERVAL ? HOUR LIMIT 1", [point, cat, sev, DEDUPE_H]);
