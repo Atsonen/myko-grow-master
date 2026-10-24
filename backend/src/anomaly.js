@@ -16,6 +16,11 @@ function sendWhatsApp(text) {
     { timeout: 60_000, cwd: WA_DIR }, (err, out) => resolve(!err && String(out).startsWith("OK"))));
 }
 
+function sendTelegram(text) {
+  return new Promise((resolve) => execFile(WA_PY, ["-c", "import sys; sys.path.insert(0, sys.argv[1]); from tg_alert import send; send(sys.argv[2])", WA_DIR, text],
+    { timeout: 30_000, cwd: WA_DIR }, (err) => resolve(!err)));
+}
+
 export function registerAnomaly(app, { query, asyncRoute, pidState, PID_POINTS }) {
   let running = false, lastRun = 0;
   async function gather() {
@@ -64,6 +69,8 @@ high vain, jos säätö on vaarassa tai tuote vaarassa (esim. PID:n PV jäätyny
         // Temperature deviations / saturation are handled by the rule-based alarm checker (F1/T1 are in outdoor temperature:
         // F1 warming not dangerous, T1 cooling critical only near freezing) -> never WhatsApp from the LLM monitor.
         if (sev === "high" && /saturation|sp_deviation|output/i.test(String(f.category ?? ""))) sev = "medium";
+        // A "frozen sensor" claim must be backed by the data (max == min over the window); small variation is normal steady control.
+        if (/frozen/i.test(String(f.category ?? "")) && !data.sensors.some((x) => x.frozen)) sev = "low";
         if (ignore.includes(point)) continue;
         const cat = String(f.category ?? "other").slice(0, 40);
         const [dup] = await query("SELECT id FROM llm_findings WHERE point = ? AND category = ? AND severity = ? AND at > UTC_TIMESTAMP() - INTERVAL ? HOUR LIMIT 1", [point, cat, sev, DEDUPE_H]);
@@ -71,7 +78,8 @@ high vain, jos säätö on vaarassa tai tuote vaarassa (esim. PID:n PV jäätyny
         if (!dup) {
           await query("INSERT INTO alarm_events (point_id, alarm, bit, event, at, value, status_word) VALUES ('LLM_Advisor', ?, NULL, 'llm', UTC_TIMESTAMP(3), NULL, NULL)",
             [`[${sev}] ${point}: ${f.finding}${f.recommend_reset ? " (suositus: anturireset)" : ""}`.slice(0, 255)]).catch((e) => console.error("[anomaly] event", e.message));
-          if (sev === "high") wa = await sendWhatsApp(`🤖 Myko-valvoja: ${point} – ${String(f.finding ?? "").split(/(?<=[.!?])\s/)[0]}`.slice(0, 160));
+          if (sev === "high") { const msg = `🤖 Myko-valvoja: ${point} – ${String(f.finding ?? "").split(/(?<=[.!?])\s/)[0]}`.slice(0, 160); sendTelegram(msg); wa = await sendWhatsApp(msg); }
+          if (false) wa = await sendWhatsApp(`🤖 Myko-valvoja: ${point} – ${String(f.finding ?? "").split(/(?<=[.!?])\s/)[0]}`.slice(0, 160));
         }
         await query(`INSERT INTO llm_findings (at, run_id, \`trigger\`, severity, point, category, finding, suggestion, recommend_reset, duplicate, whatsapp, prompt_tokens, completion_tokens)
           VALUES (UTC_TIMESTAMP(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [runId, trigger, sev, point, cat, String(f.finding ?? "").slice(0, 1000), String(f.suggestion ?? "").slice(0, 1000), f.recommend_reset ? 1 : 0, dup ? 1 : 0, wa === null ? null : wa ? 1 : 0, u.prompt_tokens ?? null, u.completion_tokens ?? null]);
