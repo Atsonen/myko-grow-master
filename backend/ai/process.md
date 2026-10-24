@@ -42,15 +42,16 @@ Myko (`alarm_point_controls`) on auktoriteetti. sp-sync 15 s: jos PLC:n Setpoint
 
 ## Hälytykset ja WhatsApp
 - Ctrl-sana per piste: bitit 0–6 hälytykset, 7 ON, 8 HEAT, 9 COOL, 10–14 SP, 15 WhatsApp pois.
-- Rajat SP:n suhteen (`alarm_point_controls`): F1 WARN SP+1,0 30 min, HIGH SP+3 10 min, LOW SP−3 3 min, CRIT > 14 °C 3 min, FREEZE ≤ 0 °C heti. T1 WARN ±1,5 30 min, HIGH SP+3, LOW SP−3 10 min, CRIT > 30 °C, COLD < 15 °C. Lisäksi FLATLINE ja STALE (data yli 10 min vanha).
-- WhatsApp lähtee hälytystarkistimelta (cold-alarm.timer, 1 min) ja DeepSeek-valvojan high-löydöksistä. Hälytykset voi mykistää enintään 24 h.
+- F1 ja T1 ovat ulkolämpötilassa. F1:n lämpeneminen ei ole vaarallista (vain hidastaa prosessia). T1:n jäähtyminen on kriittistä vain jäätymisen lähellä. ~2 °C poikkeama SP:stä ei ole ongelma eikä vaadi toimenpiteitä.
+- Rajat (`alarm_point_controls` + `myko_settings.alarm_policy`): F1 WARN SP+1 ja CRIT > 14 °C vain MQTT/PLC-bitti (ei WhatsAppia); HIGH ≥ SP+4 30 min = matalan prioriteetin ilmoitus; LOW SP−3 3 min; FREEZE ≤ 0 °C heti (kriittinen). T1 WARN ±1,5 vain bitti; LOW ≤ SP−4 30 min = matalan prioriteetin ilmoitus; COLD < 5 °C 3 min = kriittinen (jäätymisvaara); HIGH SP+3, CRIT > 30 °C. Lisäksi FLATLINE ja STALE (data yli 10 min vanha).
+- WhatsApp lähtee hälytystarkistimelta (cold-alarm.timer, 1 min) ja DeepSeek-valvojan high-löydöksistä (yksi lyhyt lause; SP-poikkeama/saturaatio ei koskaan high). Muistutus 60 min välein on yksi koontiviesti, 1 rivi / aktiivinen hälytys. SATUROITUNUT ei yksin lähetä WhatsAppia. Hälytykset voi mykistää enintään 24 h.
 - PID-hälytykset: SENSOR_VIKA, INPUT_STALE, EI_AUTO, PID_VIKA, ERRORBITS, SATUROITUNUT (30 min). PID_Temp Warning 16#0020 on jatkuvasti päällä (tunnettu, ei raportoida).
 
 ## Normaalialueet ja vaararajat
 | Piste | Normaali | Varoitus | Vaara |
 |---|---|---|---|
-| F1 | 7–9 °C | > 9 °C 30 min | > 14 °C, ≤ 0 °C (jäätyminen) |
-| T1 | 22,5–25,5 °C | ±1,5 °C 30 min | > 30 °C, < 15 °C |
+| F1 | 7–9 °C | ≥ 12 °C 30 min (ei vaarallinen) | ≤ 0 °C (jäätyminen) |
+| T1 | 22,5–25,5 °C | ≤ 20 °C 30 min (hidastaa) | > 30 °C, < 5 °C (jäätymisvaara) |
 | G_Air | 28,5–31,5 °C | ±1,5 °C 30 min | > 33 °C pitkään |
 
 ## Ulkolämpötila

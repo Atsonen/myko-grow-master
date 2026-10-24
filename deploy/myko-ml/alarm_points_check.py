@@ -20,7 +20,12 @@ Replaces cold_alarm_check.py (kept for reference); F1 keeps its state/log files.
 PID alarm points F1_PID / T1_PID are evaluated by the Myko backend (backend/src/pid.js, retained
 Myko/Alarms/<key>_PID/json -> alarm_points); this script only sends their WhatsApp messages (new / 60 min
 reminder / clear, plus re-notify when new ErrorBits appear), muted with the parent point's alarms_disabled_until.
-SATUROITUNUT is log-only (no WhatsApp)."""
+SATUROITUNUT is log-only (no WhatsApp).
+Alarm policy (2026-10-24, F1/T1 are in outdoor temperature): F1 warming is not dangerous, T1 cooling is critical only
+near freezing; ~2 °C deviations only slow the process -> WARN bits are MQTT/PLC-only, F1 HIGH (>=SP+4) and T1 LOW
+(<=SP-4) are low-priority notices, F1 CRIT is MQTT-only, T1 COLD = critical below 5 °C. Overridable with
+myko_settings k='alarm_policy' JSON, e.g. {"F1":{"high_delta_min":5},"T1":{"cold_c":4}}.
+Reminders: active alarms are repeated every REMIND_MIN as ONE combined WhatsApp, one short line per alarm."""
 import os, sys, json, bisect, subprocess, argparse, datetime as dt
 from zoneinfo import ZoneInfo
 D=os.path.dirname(os.path.abspath(__file__))
@@ -31,6 +36,23 @@ MQTT_ONLY={"FLATLINE"}
 MQTT_HOST,MQTT_PORT="192.168.1.51","1883"
 CTRL_BITS={"ON":7,"HEAT":8,"COOL":9}; SP_SHIFT=10; SP_MASK=0x1F; DIS_BIT=15
 HB_STATE=os.path.join(D,"heartbeat_state.json")
+POLICY_DEFAULTS={
+ "F1":{"high_delta_min":4.0,"high_min":30,"wa_skip":["WARN","CRIT"],"low_prio":["HIGH"]},
+ "T1":{"low_delta_min":4.0,"low_min":30,"cold_c":5.0,"wa_skip":["WARN"],"low_prio":["LOW"]}}
+_POL=None
+def policy(key):
+    """Effective alarm policy for PLC key F1/T1: code defaults, overridden by myko_settings k='alarm_policy' (JSON)."""
+    global _POL
+    if _POL is None:
+        _POL={k:dict(v) for k,v in POLICY_DEFAULTS.items()}
+        try:
+            raw=mysql("SELECT v FROM myko_settings WHERE k='alarm_policy'").strip()
+            if raw:
+                for k,v in json.loads(raw).items():
+                    if k in _POL and isinstance(v,dict): _POL[k].update(v)
+        except Exception: pass
+    return _POL.get(key,{})
+REMIND_LINES=[]  # combined reminder: one line per active alarm
 PLC_TOPIC="Sensors/Mykovalvomo/Ctrl"; PLC_KEYS={"ColdStorage1":"F1","Terrario1":"T1"}  # point id -> PLC key (backend uses the same map)
 
 def num(x):
@@ -45,21 +67,21 @@ def warn_rule(c,both_label):
     if c["warn_both"]: return (both_label(sp,d),lambda v:abs(v-sp)>d,c["warn_min"])
     return (f"VAROITUS: yli {num(sp+d)} °C",lambda v:v>sp+d,c["warn_min"])
 def f1_rules(c):
-    sp=c["setpoint"]
+    sp=c["setpoint"]; pol=policy("F1"); hd=max(c["high_delta"],float(pol.get("high_delta_min",0))); hm=max(c["high_min"],int(pol.get("high_min",0)))
     return {
-     "CRIT":("KRIITTINEN: yli 14 °C",lambda v:v>14,3),
-     "HIGH":(f"KORKEA: yli {num(sp+c['high_delta'])} °C",lambda v:v>sp+c["high_delta"],c["high_min"]),
+     "CRIT":("HYVIN KORKEA: yli 14 °C",lambda v:v>14,3),
+     "HIGH":(f"KORKEA: yli {num(sp+hd)} °C",lambda v:v>sp+hd,hm),
      "WARN":warn_rule(c,lambda sp,d:f"VAROITUS: poikkeama asetusarvosta {num(sp)} °C yli {num(d)} °C"),
      "LOW":(f"MATALA: alle {num(sp-c['low_delta'])} °C",lambda v:v<sp-c["low_delta"],c["low_min"]),
      "FREEZE":("JÄÄTYMINEN: 0 °C tai alle",lambda v:v<=0,0)}
 def t1_rules(c):
-    sp=c["setpoint"]
+    sp=c["setpoint"]; pol=policy("T1"); ld=max(c["low_delta"],float(pol.get("low_delta_min",0))); lm=max(c["low_min"],int(pol.get("low_min",0))); cc=float(pol.get("cold_c",5.0))
     return {
      "CRIT":("KRIITTINEN: yli 30 °C",lambda v:v>30,3),
      "HIGH":(f"KORKEA: yli {num(sp+c['high_delta'])} °C (asetusarvo {num(sp)} °C)",lambda v:v>sp+c["high_delta"],c["high_min"]),
      "WARN":warn_rule(c,lambda sp,d:f"VAROITUS: poikkeama asetusarvosta {num(sp)} °C yli {num(d)} °C"),
-     "LOW":(f"MATALA: alle {num(sp-c['low_delta'])} °C (asetusarvo {num(sp)} °C)",lambda v:v<sp-c["low_delta"],c["low_min"]),
-     "COLD":("KYLMÄ: alle 15 °C",lambda v:v<15,3)}
+     "LOW":(f"MATALA: alle {num(sp-ld)} °C (asetusarvo {num(sp)} °C)",lambda v:v<sp-ld,lm),
+     "COLD":(f"KRIITTINEN, jäätymisvaara: alle {num(cc)} °C",lambda v:v<cc,3)}
 
 POINTS={
  "ColdStorage1":dict(name="Kylmäsäilytystila 1",var="dl02",topic="Myko/Alarms/ColdStorage1",rules=f1_rules,
@@ -148,18 +170,31 @@ def msg(P,ctrl,kind,typ,info,now):
         low=typ in ("LOW","FREEZE","COLD") or (typ=="WARN" and v is not None and v<ctrl["setpoint"])
         ext=("min",info.get("min",v)) if low else ("max",info.get("max",v)); d=f"{dur} min {since}, {ext[0]} {ext[1]:.1f} °C"
     head={"new":"🚨 HÄLYTYS","remind":"⏰ MUISTUTUS, hälytys jatkuu","clear":"✅ PALAUTUNUT"}[kind]
+    if kind=="new" and typ in policy(P.get("plc","")).get("low_prio",[]): head="ℹ️ ILMOITUS"
     if kind=="clear": return f"{head}: {NAME} – {lab.split(':')[0]} ohi. {cur}"
     return f"{head}: {NAME} – {lab}. {d}. {cur}"
 
-def step(P,rows,now,state,sender,ctrl):
-    out=[]; res=evaluate(P,rows,now,ctrl)
+def remind_line(P,ctrl,typ,info):
+    """One short line for the combined reminder: point, what, value vs SP."""
+    v=info.get("v"); key=P.get("plc",P["name"])
+    if typ=="STALE": return f"• {key} {P['name']}: ei dataa"+(f" (viim. {num(round(v,1))} °C)" if v is not None else "")
+    if typ in ("FLATLINE","FLATLINE_WA"): return f"• {key} {P['name']}: anturi jumissa {num(round(v,1)) if v is not None else '?'} °C"
+    lab=P["rules"](ctrl)[typ][0].split(":")[0]
+    return f"• {key} {P['name']}: {lab} {num(round(v,1)) if v is not None else '?'} °C (SP {num(ctrl['setpoint'])})"
+
+def step(P,rows,now,state,sender,ctrl,remind=None):
+    out=[]; res=evaluate(P,rows,now,ctrl); skip=set(policy(P.get("plc","")).get("wa_skip",[]))
     for typ,(active,info) in res.items():
         if typ.startswith('_') or typ in MQTT_ONLY: continue
+        if typ in skip:  # MQTT/PLC bit only, no WhatsApp; forget any earlier WA state silently
+            state.pop(typ,None); continue
         s=state.get(typ,{"active":False})
         if active and not s["active"]: kind="new"
         elif active and (now-dt.datetime.fromisoformat(s["last_sent"])).total_seconds()>=REMIND_MIN*60: kind="remind"
         elif not active and s["active"]: kind="clear"
         else: continue
+        if kind=="remind" and remind is not None:
+            remind.append(remind_line(P,ctrl,typ,info)); s["last_sent"]=now.isoformat(); state[typ]=s; out.append((typ,kind,"(koonti)")); continue
         m=msg(P,ctrl,kind,typ,info,now)
         if sender(m):
             state[typ]={"active":active,"last_sent":now.isoformat(),"since":(info.get("since") or now).isoformat() if active else None}
@@ -211,7 +246,7 @@ def run_point(pid,a,now,sender_factory,hb):
         print(f"  word {word} = 0b{word:016b}  json={json.dumps(js,ensure_ascii=False)[:160]}…")
         if not a.no_publish: publish(P,word,js); print("  published")
         st=json.loads(json.dumps(state))
-        for typ,kind,m in step(P,rows,now,st,lambda m:True,ctrl): print(f"  WOULD SEND {typ} {kind}: {m}")
+        for typ,kind,m in step(P,rows,now,st,lambda m:True,ctrl,REMIND_LINES): print(f"  WOULD SEND {typ} {kind}: {m}")
         return 0
     if expired:
         # auto re-enable: clear the DB flag, log the event, short WhatsApp notice, start alarm state fresh
@@ -225,9 +260,9 @@ def run_point(pid,a,now,sender_factory,hb):
     if disabled:
         # WhatsApp disabled: evaluate and track normally, but only log the would-be messages
         quiet=lambda m:(log(P,f"WA suppressed (WhatsApp alarms disabled) msg={m!r}"),True)[1]
-        sent=step(P,rows,now,state,quiet,ctrl)
+        sent=step(P,rows,now,state,quiet,ctrl,[])
     else:
-        sent=step(P,rows,now,state,sender_factory(P),ctrl)
+        sent=step(P,rows,now,state,sender_factory(P),ctrl,REMIND_LINES)
     publish(P,word,js); state['_status_word']=word; WORDS[pid]=word; DISABLED[pid]=disabled
     json.dump(state,open(STATE,"w"),indent=1)
     log(P,f"check ok readings={len(rows)} last={rows[-1][1] if rows else None} word={word}{' WA-DISABLED until '+hel(du) if disabled else ''} sent={[(t,k) for t,k,_ in sent]}")
@@ -265,6 +300,10 @@ def run_pid(a,now,sender_factory):
             elif on and (now-dt.datetime.fromisoformat(s0["last_sent"])).total_seconds()>=REMIND_MIN*60: kind="remind"
             elif not on and s0["active"]: kind="clear"
             else: continue
+            if kind=="remind" and not muted:
+                REMIND_LINES.append(f"• {PLC_KEYS[PP['parent']]} PID: {PID_LABEL[k].split(' – ')[0]}")
+                if not a.dry_run: S[k]["last_sent"]=now.isoformat()
+                continue
             head={"new":"🚨 HÄLYTYS","remind":"⏰ MUISTUTUS, hälytys jatkuu","clear":"✅ PALAUTUNUT"}[kind]
             m=f"{head}: {PP['name']} – {PID_LABEL[k]}{' ohi' if kind=='clear' else ''}. {cur}"
             if sender(m) and not a.dry_run:
@@ -294,6 +333,12 @@ def main():
     if not a.sim:
         try: run_pid(a,now,sender_factory)
         except Exception as ex: log(POINTS["ColdStorage1"],f"PID alarm ERROR {ex}"); print("pid",ex); rc=1
+    if REMIND_LINES and not a.sim:
+        m=f"⏰ Aktiiviset hälytykset ({hel(now)}):\n"+"\n".join(REMIND_LINES)
+        if a.dry_run: print("WOULD SEND REMINDER:\n"+m)
+        else:
+            try: sender_factory(POINTS["ColdStorage1"])(m)
+            except Exception as ex: log(POINTS["ColdStorage1"],f"reminder send ERROR {ex}")
     if live:
         json.dump({"counter":hb,"at":now.isoformat()},open(HB_STATE,"w"))
         if not a.point:

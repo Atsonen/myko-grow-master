@@ -61,6 +61,9 @@ high vain, jos säätö on vaarassa tai tuote vaarassa (esim. PID:n PV jäätyny
         // PID saturation/output findings are only "high" when the loop is really off target (|PV avg - SP| >= 2 °C over 60 min)
         const pl = data.pids[point]?.last60min;
         if (sev === "high" && pl && !/frozen|stale|sensor|comm|err/i.test(String(f.category ?? "")) && !(Math.abs((pl.pvavg ?? 0) - (pl.sp ?? 0)) >= 2)) sev = "medium";
+        // Temperature deviations / saturation are handled by the rule-based alarm checker (F1/T1 are in outdoor temperature:
+        // F1 warming not dangerous, T1 cooling critical only near freezing) -> never WhatsApp from the LLM monitor.
+        if (sev === "high" && /saturation|sp_deviation|output/i.test(String(f.category ?? ""))) sev = "medium";
         if (ignore.includes(point)) continue;
         const cat = String(f.category ?? "other").slice(0, 40);
         const [dup] = await query("SELECT id FROM llm_findings WHERE point = ? AND category = ? AND severity = ? AND at > UTC_TIMESTAMP() - INTERVAL ? HOUR LIMIT 1", [point, cat, sev, DEDUPE_H]);
@@ -68,7 +71,7 @@ high vain, jos säätö on vaarassa tai tuote vaarassa (esim. PID:n PV jäätyny
         if (!dup) {
           await query("INSERT INTO alarm_events (point_id, alarm, bit, event, at, value, status_word) VALUES ('LLM_Advisor', ?, NULL, 'llm', UTC_TIMESTAMP(3), NULL, NULL)",
             [`[${sev}] ${point}: ${f.finding}${f.recommend_reset ? " (suositus: anturireset)" : ""}`.slice(0, 255)]).catch((e) => console.error("[anomaly] event", e.message));
-          if (sev === "high") wa = await sendWhatsApp(`Myko-valvoja (DeepSeek): ${point} – ${f.finding}. ${f.suggestion ?? ""}`.slice(0, 600));
+          if (sev === "high") wa = await sendWhatsApp(`🤖 Myko-valvoja: ${point} – ${String(f.finding ?? "").split(/(?<=[.!?])\s/)[0]}`.slice(0, 160));
         }
         await query(`INSERT INTO llm_findings (at, run_id, \`trigger\`, severity, point, category, finding, suggestion, recommend_reset, duplicate, whatsapp, prompt_tokens, completion_tokens)
           VALUES (UTC_TIMESTAMP(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [runId, trigger, sev, point, cat, String(f.finding ?? "").slice(0, 1000), String(f.suggestion ?? "").slice(0, 1000), f.recommend_reset ? 1 : 0, dup ? 1 : 0, wa === null ? null : wa ? 1 : 0, u.prompt_tokens ?? null, u.completion_tokens ?? null]);
