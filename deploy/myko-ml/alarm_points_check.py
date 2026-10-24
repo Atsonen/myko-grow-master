@@ -25,7 +25,14 @@ Alarm policy (2026-10-24, F1/T1 are in outdoor temperature): F1 warming is not d
 near freezing; ~2 °C deviations only slow the process -> WARN bits are MQTT/PLC-only, F1 HIGH (>=SP+4) and T1 LOW
 (<=SP-4) are low-priority notices, F1 CRIT is MQTT-only, T1 COLD = critical below 5 °C. Overridable with
 myko_settings k='alarm_policy' JSON, e.g. {"F1":{"high_delta_min":5},"T1":{"cold_c":4}}.
-Reminders: active alarms are repeated every REMIND_MIN as ONE combined WhatsApp, one short line per alarm."""
+Reminders: active alarms are repeated every REMIND_MIN as ONE combined WhatsApp, one short line per alarm.
+Channels (2026-10-24): Telegram (tg_alert.py, @Valvomo_bot) is the primary channel, WhatsApp the backup; both on by default,
+switchable with myko_settings k='alarm_channels' {"telegram":true,"whatsapp":true}. Same policy (wa_skip/low_prio) for both.
+Telegram alarm messages are one line and carry inline buttons Kuittaa / Ohita 1 h (handled by backend/src/telegram.js,
+stored in myko_settings k='telegram_alarm_acks' {"<pointId>:<type>":{"acked_at","muted_until"}}): an acked alarm gets no
+reminders while it stays active (entry removed when it clears), a muted one none until muted_until.
+Transient alarms: an alarm that clears within TRANSIENT_MIN minutes and never got a reminder is treated as transient:
+Telegram gets only a short one-line note, its ack/mute state is dropped (auto-acknowledged) and no reminders follow."""
 import os, sys, json, bisect, subprocess, argparse, datetime as dt
 from zoneinfo import ZoneInfo
 D=os.path.dirname(os.path.abspath(__file__))
@@ -53,6 +60,36 @@ def policy(key):
         except Exception: pass
     return _POL.get(key,{})
 REMIND_LINES=[]  # combined reminder: one line per active alarm
+TRANSIENT_MIN=10  # alarm cleared within this many minutes without a reminder = transient (short note only, auto-acked)
+_SET={}
+def setting(k,default):
+    """myko_settings JSON value (cached per run)."""
+    if k not in _SET:
+        try: raw=mysql(f"SELECT v FROM myko_settings WHERE k='{k}'").strip(); _SET[k]=json.loads(raw) if raw else default
+        except Exception: _SET[k]=default
+    return _SET[k]
+def channels():
+    c={"telegram":True,"whatsapp":True}; v=setting("alarm_channels",{})
+    if isinstance(v,dict): c.update({k:bool(x) for k,x in v.items() if k in c})
+    return c
+def _acks():
+    v=setting("telegram_alarm_acks",{}); return v if isinstance(v,dict) else {}
+def suppressed(key,now):
+    """True when the alarm was acknowledged (Kuittaa) or muted (Ohita 1 h) in Telegram -> no reminder line."""
+    a=_acks().get(key) or {}
+    if a.get("acked_at"): return True
+    mu=a.get("muted_until")
+    try: return bool(mu) and dt.datetime.fromisoformat(mu.replace("Z","+00:00"))>now
+    except Exception: return False
+def clear_ack(key):
+    """Alarm cleared -> forget its ack/mute (next occurrence alarms again)."""
+    try:
+        raw=mysql("SELECT v FROM myko_settings WHERE k='telegram_alarm_acks'").strip(); d=json.loads(raw) if raw else {}
+        if key in d:
+            d.pop(key); v=json.dumps(d).replace("\\","\\\\").replace("'","''")
+            mysql(f"UPDATE myko_settings SET v='{v}' WHERE k='telegram_alarm_acks'"); _SET.pop("telegram_alarm_acks",None)
+    except Exception: pass
+def point_id(P): return next((k for k,v in POINTS.items() if v["topic"]==P["topic"]),P["name"])
 PLC_TOPIC="Sensors/Mykovalvomo/Ctrl"; PLC_KEYS={"ColdStorage1":"F1","Terrario1":"T1"}  # point id -> PLC key (backend uses the same map)
 
 def num(x):
@@ -193,11 +230,22 @@ def step(P,rows,now,state,sender,ctrl,remind=None):
         elif active and (now-dt.datetime.fromisoformat(s["last_sent"])).total_seconds()>=REMIND_MIN*60: kind="remind"
         elif not active and s["active"]: kind="clear"
         else: continue
+        key=f"{point_id(P)}:{typ}"; line=remind_line(P,ctrl,typ,info)[2:]
         if kind=="remind" and remind is not None:
-            remind.append(remind_line(P,ctrl,typ,info)); s["last_sent"]=now.isoformat(); state[typ]=s; out.append((typ,kind,"(koonti)")); continue
-        m=msg(P,ctrl,kind,typ,info,now)
-        if sender(m):
-            state[typ]={"active":active,"last_sent":now.isoformat(),"since":(info.get("since") or now).isoformat() if active else None}
+            if not suppressed(key,now): remind.append(remind_line(P,ctrl,typ,info))
+            s["last_sent"]=now.isoformat(); state[typ]=s; out.append((typ,kind,"(koonti)")); continue
+        m=msg(P,ctrl,kind,typ,info,now); tgm=None; bkey=None
+        if kind=="new":
+            head="ℹ️" if typ in policy(P.get("plc","")).get("low_prio",[]) else "🚨"; tgm=f"{head} {line}"; bkey=key
+        elif kind=="clear":
+            st0=s.get("since"); dur=int((now-dt.datetime.fromisoformat(st0)).total_seconds()//60) if st0 else None
+            # transient: cleared quickly and never reminded -> short note only, auto-acknowledged (ack/mute dropped below)
+            transient=dur is not None and dur<TRANSIENT_MIN and s.get("last_sent")==s.get("_first_sent",s.get("last_sent"))
+            lab=line.split(":",1)[0]
+            tgm=f"ℹ️ {lab}: {typ} kävi hetken ({dur} min), ohi" if transient else f"✅ {lab}: {typ} ohi, nyt {num(round(info['v'],1)) if info.get('v') is not None else '?'} °C"
+            clear_ack(key)
+        if sender(m,tg=tgm,key=bkey):
+            state[typ]={"active":active,"last_sent":now.isoformat(),"_first_sent":now.isoformat(),"since":(info.get("since") or now).isoformat() if active else None}
             out.append((typ,kind,m))
     return out
 
@@ -232,7 +280,7 @@ def run_point(pid,a,now,sender_factory,hb):
         allr=query(P["var"],s-dt.timedelta(hours=24),e); state={}; t=s; n=0; ts=[r[0] for r in allr]
         while t<=e:
             rows=allr[bisect.bisect_left(ts,t-dt.timedelta(hours=24)):bisect.bisect_right(ts,t)]
-            for typ,kind,m in step(P,rows,t,state,lambda m:True,ctrl): print(f"[SIM {hel(t)}] {typ:8} {kind:6} | {m}"); n+=1
+            for typ,kind,m in step(P,rows,t,state,lambda m,**k:True,ctrl): print(f"[SIM {hel(t)}] {typ:8} {kind:6} | {m}"); n+=1
             t+=dt.timedelta(minutes=1)
         print(f"sim done: {n} would-be messages"); return 0
     try: rows=query(P["var"],now-dt.timedelta(hours=24),now)
@@ -246,7 +294,7 @@ def run_point(pid,a,now,sender_factory,hb):
         print(f"  word {word} = 0b{word:016b}  json={json.dumps(js,ensure_ascii=False)[:160]}…")
         if not a.no_publish: publish(P,word,js); print("  published")
         st=json.loads(json.dumps(state))
-        for typ,kind,m in step(P,rows,now,st,lambda m:True,ctrl,REMIND_LINES): print(f"  WOULD SEND {typ} {kind}: {m}")
+        for typ,kind,m in step(P,rows,now,st,lambda m,**k:True,ctrl,REMIND_LINES): print(f"  WOULD SEND {typ} {kind}: {m}")
         return 0
     if expired:
         # auto re-enable: clear the DB flag, log the event, short WhatsApp notice, start alarm state fresh
@@ -259,7 +307,7 @@ def run_point(pid,a,now,sender_factory,hb):
         log(P,f"alarms auto re-enabled (notice ok={ok})")
     if disabled:
         # WhatsApp disabled: evaluate and track normally, but only log the would-be messages
-        quiet=lambda m:(log(P,f"WA suppressed (WhatsApp alarms disabled) msg={m!r}"),True)[1]
+        quiet=lambda m,**k:(log(P,f"WA suppressed (WhatsApp alarms disabled) msg={m!r}"),True)[1]
         sent=step(P,rows,now,state,quiet,ctrl,[])
     else:
         sent=step(P,rows,now,state,sender_factory(P),ctrl,REMIND_LINES)
@@ -289,8 +337,8 @@ def run_pid(a,now,sender_factory):
         if not lmt or (now-lmt).total_seconds()>300: active.add("OPCUA")   # backend evaluator itself silent
         ctrl=controls(PP["parent"],POINTS[PP["parent"]]); du=ctrl.get("disabled_until"); muted=bool(du and now<du)
         S=st.setdefault(pid,{}); eb=int(pv.get("ErrBits") or 0)
-        sender=(lambda m:(log(P,f"WA suppressed (WhatsApp alarms disabled) msg={m!r}"),True)[1]) if muted else sender_factory(P)
-        if a.dry_run: sender=lambda m:(print("  WOULD SEND",m),True)[1]
+        sender=(lambda m,**k:(log(P,f"WA suppressed (WhatsApp alarms disabled) msg={m!r}"),True)[1]) if muted else sender_factory(P)
+        if a.dry_run: sender=lambda m,**k:(print("  WOULD SEND",m),True)[1]
         cur=f"tila {STATE_TXT.get(pv.get('State'),pv.get('State'))}, ErrorBits 16#{eb:04X}, lähtö {round(pv.get('OutSum') or 0)} % ({hel(now)})"
         for k in PID_LABEL:
             if k in PID_WA_SKIP: continue
@@ -300,13 +348,16 @@ def run_pid(a,now,sender_factory):
             elif on and (now-dt.datetime.fromisoformat(s0["last_sent"])).total_seconds()>=REMIND_MIN*60: kind="remind"
             elif not on and s0["active"]: kind="clear"
             else: continue
+            pkey=f"{pid}:{k}"
             if kind=="remind" and not muted:
-                REMIND_LINES.append(f"• {PLC_KEYS[PP['parent']]} PID: {PID_LABEL[k].split(' – ')[0]}")
+                if not suppressed(pkey,now): REMIND_LINES.append(f"• {PLC_KEYS[PP['parent']]} PID: {PID_LABEL[k].split(' – ')[0]}")
                 if not a.dry_run: S[k]["last_sent"]=now.isoformat()
                 continue
             head={"new":"🚨 HÄLYTYS","remind":"⏰ MUISTUTUS, hälytys jatkuu","clear":"✅ PALAUTUNUT"}[kind]
             m=f"{head}: {PP['name']} – {PID_LABEL[k]}{' ohi' if kind=='clear' else ''}. {cur}"
-            if sender(m) and not a.dry_run:
+            short=f"{PLC_KEYS[PP['parent']]} PID: {PID_LABEL[k].split(' – ')[0]}"
+            if kind=="clear": clear_ack(pkey)
+            if sender(m,tg=("✅ "+short+" ohi") if kind=="clear" else ("🚨 "+short),key=pkey if kind=="new" else None) and not a.dry_run:
                 S[k]={"active":on,"last_sent":now.isoformat(),"errbits":eb if on else 0}; log(P,f"PID {pid} {k} {kind} sent")
     if not a.dry_run: json.dump(st,open(PID_STATE,"w"),indent=1)
 
@@ -317,10 +368,19 @@ def main():
     now=dt.datetime.now(UTC).replace(microsecond=0)
     def sender_factory(P):
         if a.no_wa:
-            return lambda m:(log(P,f"WA suppressed (--no-wa) msg={m!r}"),True)[1]
-        sys.path.insert(0,D); from wa_alert import send
-        def sender(m):
-            ok,status,body=send(m,bypass_rate=True,tag="ALARM "); log(P,f"send status={status} ok={ok} msg={m!r}"); return ok
+            return lambda m,**k:(log(P,f"WA suppressed (--no-wa) msg={m!r}"),True)[1]
+        sys.path.insert(0,D); from wa_alert import send; import tg_alert
+        ch=channels()
+        def sender(m,tg=None,key=None):
+            """Telegram (primary, one line + buttons) and WhatsApp (backup, as before); ok if any channel delivered."""
+            ok=False
+            if ch["telegram"]:
+                try: okt=tg_alert.send(tg or m,buttons_key=key,chat_ids_=tg_alert.chat_ids(setting("telegram_chat_ids",[]) or []))
+                except Exception as ex: okt=False; log(P,f"telegram ERROR {type(ex).__name__}")
+                log(P,f"telegram ok={okt} msg={(tg or m)!r}"); ok|=okt
+            if ch["whatsapp"]:
+                okw,status,body=send(m,bypass_rate=True,tag="ALARM "); log(P,f"send status={status} ok={okw} msg={m!r}"); ok|=okw
+            return ok
         return sender
     # Heartbeat: counter +1 per live run (wraps at 65535); published only as the "Heartbeat" key.
     hb_prev=json.load(open(HB_STATE)).get("counter",0) if os.path.exists(HB_STATE) else 0

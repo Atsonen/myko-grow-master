@@ -1,0 +1,16 @@
+# systemd USER service: cp to ~/.config/systemd/user/ && systemctl --user enable --now myko-telegram.service
+# Token + optional MYKO_TELEGRAM_CHAT_IDS in ~/.config/myko/telegram.env (600, not in git). Read-only gateway, no PLC writes.
+[Unit]
+Description=Myko Telegram bot (@Valvomo_bot, long polling: alarm buttons, /status, DeepSeek Q&A)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/myko/backend
+ExecStart=/home/atte/.nvm/versions/node/v24.15.0/bin/node /opt/myko/backend/src/telegram.js
+Restart=always
+RestartSec=10
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=default.target
