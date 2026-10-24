@@ -3,7 +3,7 @@ import dotenv from "dotenv";
 import express from "express";
 import mqtt from "mqtt";
 import { query, withConnection } from "./db.js";
-import { PID_BY_POINT, PID_POINTS, registerPidRoutes } from "./pid.js";
+import { PID_ALARM_BITS, PID_BY_POINT, PID_POINTS, registerPidRoutes } from "./pid.js";
 import { startWeather } from "./weather.js";
 import { registerFmiWeather } from "./fmiWeather.js";
 import { registerPidAi } from "./pidAi.js";
@@ -788,6 +788,28 @@ app.get(
   }),
 );
 
+// ---- Alarm descriptions (short Finnish text per alarm code; PID rules come from pid.js PID_ALARM_BITS) ----
+const ALARM_DESC_FI = {
+  WARN: "Lämpötila poikkeaa varoitusrajan yli", HIGH: "Lämpötila liian korkea", CRIT: "Lämpötila kriittisen korkea",
+  LOW: "Lämpötila liian matala", FREEZE: "Pakkasraja: lämpötila ≤ 0 °C", COLD: "Lämpötila liian kylmä",
+  FLATLINE: "Anturiarvo ei ole muuttunut (jumittunut anturi?)", STALE: "Anturilta ei tule dataa",
+  EI_AUTO: "Säädin ei ole automaatilla", PID_VIKA: "PID-säätimen vika päällä (Error=1)",
+  ERRORBITS: "PID ErrorBits≠0 – kuittaamaton PLC-vika", OPCUA: "Ei PID-dataa OPC UA:sta yli 60 s",
+  SATUROITUNUT: "Säätimen lähtö ±100 % yli 30 min", SENSOR_VIKA: "PV-syötön anturiarvo ei kelpaa",
+  ANTURIVIKA_ALASAJO: "Anturivika → Myko ajoi säätimen alas (ON pois)", INPUT_STALE: "PV-arvon kirjoitus PLC:lle epäonnistuu",
+};
+const RULE_FI = [ // English checker rules -> Finnish
+  [/value unchanged for (\d+) min/i, "arvo ei muuttunut $1 min"], [/no data for (\d+) min/i, "ei dataa $1 min"],
+  [/ for (\d+) min/i, " yli $1 min"],
+];
+const ruleFi = (s) => RULE_FI.reduce((a, [re, to]) => a.replace(re, to), String(s ?? ""));
+function alarmText(bits, code) {
+  const b = (bits ?? []).find((x) => x.key === code) ?? PID_ALARM_BITS.find((x) => x.key === code);
+  const rule = b?.rule ? ruleFi(b.rule) : null;
+  return { desc: ALARM_DESC_FI[code] ?? rule ?? code, rule, level: b?.level ?? null };
+}
+const isoMs = (s) => (s ? s.replace(/\.(\d{3})\d*Z$/, ".$1Z") : null);
+
 // ---- Alarm summary (SCADA-style alarm list across all points) ----
 // GET /api/alarms/summary?hours=24&limit=500
 // One row per alarm occurrence (start paired with its following clear). Rows that started in the window,
@@ -817,7 +839,7 @@ app.get(
           alarm: e.alarm, bit: e.bit === null ? null : Number(e.bit), priority: level === "alarm" ? 1 : 2,
           start: e.at_iso.replace(/\.(\d{3})\d*Z$/, ".$1Z"), end: null, active: true,
           value: e.value === null ? null : Number(e.value), endValue: null,
-          source: PLC_POINT_IDS.has(e.point_id) ? "PLC" : "Myko",
+          source: PLC_POINT_IDS.has(e.point_id) ? "PLC" : "Myko", desc: alarmText(m?.bits, e.alarm).desc,
           acked: Boolean(e.acked_iso), ackedAt: e.acked_iso ? e.acked_iso.replace(/\.(\d{3})\d*Z$/, ".$1Z") : null, ackedBy: e.acked_by ?? null,
         };
         open.set(k, row);
@@ -833,12 +855,86 @@ app.get(
     }
     const from = Date.now() - hours * 3600_000;
     const now = Date.now();
+    // DeepSeek-valvoja findings (llm_findings, non-duplicate, severity >= medium) as informational rows (negative id, no ack/clear)
+    try {
+      const lf = await query(
+        `SELECT CAST(id AS INT) id, DATE_FORMAT(at, '%Y-%m-%dT%H:%i:%sZ') at_iso, severity, point, category, finding
+         FROM llm_findings WHERE duplicate = 0 AND severity IN ('medium','high') AND at > UTC_TIMESTAMP() - INTERVAL ? HOUR ORDER BY id DESC LIMIT 200`, [hours]);
+      for (const f of lf) rows.push({
+        id: -Number(f.id), pointId: "LLM_Advisor", pointName: `DeepSeek-valvoja · ${f.point}`, unit: "", alarm: `LLM_${String(f.category ?? "other").toUpperCase()}`,
+        bit: null, priority: f.severity === "high" ? 1 : 2, start: f.at_iso, end: f.at_iso, active: false, value: null, endValue: null,
+        source: "LLM", desc: String(f.finding ?? ""), acked: true, ackedAt: null, ackedBy: null,
+      });
+    } catch (e) { console.error("[alarms] llm rows", e.message); }
     const out = rows
       .filter((r) => r.active || new Date(r.start).getTime() >= from || (r.end && new Date(r.end).getTime() >= from))
       .map((r) => ({ ...r, durationSec: Math.round(((r.end ? new Date(r.end).getTime() : now) - new Date(r.start).getTime()) / 1000) }))
       .sort((a, b) => b.start.localeCompare(a.start))
       .slice(0, limit);
     res.json({ hours, generatedAt: new Date().toISOString(), points: points.map((p) => ({ id: p.id, name: p.name, source: PLC_POINT_IDS.has(p.id) ? "PLC" : "Myko" })), rows: out, plc: plcStatus() });
+  }),
+);
+
+// GET /api/alarms/detail/:id  (id > 0 = alarm_events 'start' row, id < 0 = llm_findings id)
+// Full description/rule, start/clear/duration, values, ack, PID SP/PV (live, if active), related events ±10 min.
+app.get(
+  "/api/alarms/detail/:id",
+  asyncRoute(async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id === 0) return res.status(400).json({ error: "bad id" });
+    const pointFamily = (pid) => {
+      const k = /^(\w+)_PID$/.exec(pid)?.[1];
+      const parent = k ? PID_POINTS[k] : pid;
+      return [...new Set([pid, parent, PID_BY_POINT[parent] ? `${PID_BY_POINT[parent]}_PID` : null].filter(Boolean))];
+    };
+    const llmNear = async (keys, atIso) => (await query(
+      `SELECT CAST(id AS INT) id, DATE_FORMAT(at, '%Y-%m-%dT%H:%i:%sZ') at, severity, point, category, finding, suggestion, duplicate
+       FROM llm_findings WHERE at BETWEEN ? - INTERVAL 10 MINUTE AND ? + INTERVAL 10 MINUTE ${keys ? `AND point IN (${keys.map(() => "?").join(",")})` : ""} ORDER BY at`,
+      [atIso.replace("T", " ").replace("Z", ""), atIso.replace("T", " ").replace("Z", ""), ...(keys ?? [])])).map((r) => ({ ...r, id: Number(r.id), duplicate: Boolean(r.duplicate) }));
+    if (id < 0) {
+      const [f] = await query(
+        `SELECT CAST(id AS INT) id, DATE_FORMAT(at, '%Y-%m-%dT%H:%i:%sZ') at, run_id, \`trigger\`, severity, point, category, finding, suggestion, recommend_reset, duplicate, whatsapp
+         FROM llm_findings WHERE id = ?`, [-id]);
+      if (!f) return res.status(404).json({ error: "not found" });
+      const related = (await llmNear(null, f.at)).filter((r) => r.id !== Number(f.id));
+      return res.json({ kind: "llm", id, source: "LLM", pointName: `DeepSeek-valvoja · ${f.point}`, alarm: `LLM_${String(f.category ?? "other").toUpperCase()}`,
+        desc: f.finding, finding: f.finding, suggestion: f.suggestion, severity: f.severity, category: f.category, point: f.point, trigger: f.trigger, runId: f.run_id,
+        recommendReset: Boolean(f.recommend_reset), whatsapp: f.whatsapp === null ? null : Boolean(f.whatsapp), start: f.at, related: [], relatedLlm: related });
+    }
+    const [e] = await query(
+      `SELECT id, point_id, alarm, bit, event, DATE_FORMAT(at, '%Y-%m-%dT%H:%i:%s.%fZ') at_iso, value, status_word,
+              DATE_FORMAT(acked_at, '%Y-%m-%dT%H:%i:%s.%fZ') acked_iso, acked_by FROM alarm_events WHERE id = ? AND event = 'start'`, [id]);
+    if (!e) return res.status(404).json({ error: "not found" });
+    const [p] = await query("SELECT id, name, unit, bits_json FROM alarm_points WHERE id = ?", [e.point_id]);
+    const bits = jsonCol(p?.bits_json, []) ?? [];
+    const t = alarmText(bits, e.alarm);
+    const start = isoMs(e.at_iso);
+    const [clr] = await query(
+      `SELECT DATE_FORMAT(at, '%Y-%m-%dT%H:%i:%s.%fZ') at_iso, value FROM alarm_events
+       WHERE point_id = ? AND alarm = ? AND event = 'clear' AND (at > ? OR (at = ? AND id > ?)) ORDER BY at, id LIMIT 1`,
+      [e.point_id, e.alarm, start.replace("T", " ").replace("Z", ""), start.replace("T", " ").replace("Z", ""), id]);
+    const end = clr ? isoMs(clr.at_iso) : null;
+    const fam = pointFamily(e.point_id);
+    const sql = start.replace("T", " ").replace("Z", "");
+    const rel = await query(
+      `SELECT id, point_id, alarm, event, DATE_FORMAT(at, '%Y-%m-%dT%H:%i:%s.%fZ') at_iso, value FROM alarm_events
+       WHERE point_id IN (${fam.map(() => "?").join(",")}) AND at BETWEEN ? - INTERVAL 10 MINUTE AND ? + INTERVAL 10 MINUTE AND id <> ?
+       ORDER BY at, id LIMIT 100`, [...fam, sql, sql, id]);
+    const names = new Map((await query("SELECT id, name FROM alarm_points")).map((r) => [r.id, r.name]));
+    const pidKey = /^(\w+)_PID$/.exec(e.point_id)?.[1] ?? PID_BY_POINT[e.point_id] ?? null;
+    const ps = pidKey && !end ? pidState(pidKey) : null; // live SP/PV only while active
+    const thr = /(?:[<>≤≥]=?|yli|> SP [+−-])\s*[-\d.,]+\s*(?:°C|%|s|min)?/.exec(t.rule ?? "")?.[0] ?? null;
+    res.json({
+      kind: "alarm", id, pointId: e.point_id, pointName: p?.name ?? e.point_id, unit: p?.unit ?? "", alarm: e.alarm, bit: e.bit === null ? null : Number(e.bit),
+      desc: t.desc, rule: t.rule, threshold: thr, level: t.level, priority: (t.level ?? "alarm") === "alarm" ? 1 : 2,
+      source: PLC_POINT_IDS.has(e.point_id) ? "PLC" : "Myko",
+      start, end, active: !end, durationSec: Math.round(((end ? Date.parse(end) : Date.now()) - Date.parse(start)) / 1000),
+      value: e.value === null ? null : Number(e.value), endValue: clr?.value == null ? null : Number(clr.value), statusWord: e.status_word,
+      acked: Boolean(e.acked_iso), ackedAt: isoMs(e.acked_iso), ackedBy: e.acked_by ?? null,
+      pid: ps ? { key: pidKey, at: new Date(ps.at).toISOString(), sp: ps.values?.SP ?? null, pv: ps.values?.PV ?? null, outHeat: ps.values?.OutHeat ?? null, outCool: ps.values?.OutCool ?? null, state: ps.values?.State ?? null, live: true } : null,
+      related: rel.map((r) => ({ id: Number(r.id), pointId: r.point_id, pointName: names.get(r.point_id) ?? r.point_id, alarm: r.alarm, event: r.event, at: isoMs(r.at_iso), value: r.value === null ? null : Number(r.value), desc: r.event === "llm" ? r.alarm : alarmText(null, r.alarm).desc })),
+      relatedLlm: await llmNear([pidKey, e.point_id, PID_POINTS[pidKey]].filter(Boolean), start),
+    });
   }),
 );
 

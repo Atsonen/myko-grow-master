@@ -502,7 +502,9 @@ export interface AlarmSummaryRow {
   value: number | null;
   endValue: number | null;
   durationSec: number;
-  source?: "PLC" | "Myko";
+  source?: "PLC" | "Myko" | "LLM";
+  /** short Finnish description (rule text / DeepSeek finding) */
+  desc?: string;
   acked?: boolean;
   ackedAt?: string | null;
   ackedBy?: string | null;
@@ -524,6 +526,20 @@ export async function plcErrorAckAll(dryRun = false) {
   return requestJson<{ dryRun: boolean; pids: { key: string; error?: string | null }[]; mykoAck: AlarmAckResult; error?: string }>("/api/plc/error-ack", {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dryRun }),
   });
+}
+export interface AlarmDetailEvent { id: number; pointId: string; pointName: string; alarm: string; event: string; at: string; value: number | null; desc: string }
+export interface AlarmDetailLlm { id: number; at: string; severity: string; point: string; category: string; finding: string; suggestion: string; duplicate: boolean }
+export interface AlarmDetail {
+  kind: "alarm" | "llm"; id: number; pointId?: string; pointName: string; unit?: string; alarm: string; bit?: number | null;
+  desc: string; rule?: string | null; threshold?: string | null; level?: string | null; priority?: 1 | 2; source: "PLC" | "Myko" | "LLM";
+  start: string; end?: string | null; active?: boolean; durationSec?: number; value?: number | null; endValue?: number | null; statusWord?: number | null;
+  acked?: boolean; ackedAt?: string | null; ackedBy?: string | null;
+  pid?: { key: string; at: string; sp: number | null; pv: number | null; outHeat: number | null; outCool: number | null; state: number | null; live: boolean } | null;
+  finding?: string; suggestion?: string; severity?: string; category?: string; point?: string; trigger?: string; recommendReset?: boolean; whatsapp?: boolean | null;
+  related: AlarmDetailEvent[]; relatedLlm: AlarmDetailLlm[];
+}
+export async function getAlarmDetail(id: number) {
+  return requestJson<AlarmDetail>(`/api/alarms/detail/${id}`);
 }
 export async function getAlarmSummary(hours = 24, limit = 500) {
   return requestJson<AlarmSummary>(`/api/alarms/summary?hours=${hours}&limit=${limit}`);

@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { ackAlarms, getAlarmSummary, plcErrorAckAll, type AlarmSummary, type AlarmSummaryRow } from "@/lib/apiClient";
 import { useDashboardData } from "./DashboardData";
 import { AlarmIndicator } from "./MeasurementPointWidget";
+import { AlarmDetailDialog } from "./AlarmDetailDialog";
 import type { WidgetConfigMap } from "./types";
 
 /** "Hälytyslista": SCADA-style alarm summary across all points (ISA-101: neutral, colour only for active alarms). */
@@ -50,6 +51,7 @@ function Prio({ r, size = "h-5 w-5" }: { r: AlarmSummaryRow; size?: string }) {
   );
 }
 function SrcBadge({ r }: { r: AlarmSummaryRow }) {
+  if (r.source === "LLM") return <span className="rounded bg-violet-700 px-1.5 py-px text-[11px] font-bold text-white" title="DeepSeek-valvoja (havainto)">LLM</span>;
   return r.source === "PLC"
     ? <span className="rounded bg-sky-700 px-1.5 py-px text-[11px] font-bold text-white" title="PLC (PID_Temp OPC UA)">PLC</span>
     : <span className="rounded border border-zinc-500 px-1.5 py-px text-[11px] text-zinc-300" title="Myko (anturi/raja)">MYKO</span>;
@@ -70,8 +72,9 @@ export function AlarmListWidget({ config }: { config: WidgetConfigMap["alarmList
   const [ackOpen, setAckOpen] = useState(false);
   const [ackBusy, setAckBusy] = useState(false);
   const [reload, setReload] = useState(0);
-  const [source, setSource] = useState<"" | "PLC" | "Myko">("");
+  const [source, setSource] = useState<"" | "PLC" | "Myko" | "LLM">("");
   const [plcOpen, setPlcOpen] = useState(false);
+  const [detailId, setDetailId] = useState<number | null>(null);
   const limit = config.limit ?? 200;
 
   useEffect(() => { setHours(config.hours ?? 24); }, [config.hours]);
@@ -125,6 +128,7 @@ export function AlarmListWidget({ config }: { config: WidgetConfigMap["alarmList
 
   return (
     <div className="@container flex h-full flex-col gap-2 text-sm" data-testid="alarm-list">
+      <AlarmDetailDialog id={detailId} onClose={() => setDetailId(null)} />
       <DialogPrimitive.Root open={plcOpen} onOpenChange={(o) => !o && !ackBusy && setPlcOpen(false)}>
         <DialogPrimitive.Portal>
           <DialogPrimitive.Overlay className="fixed inset-0 z-[60] bg-black/75" />
@@ -173,10 +177,11 @@ export function AlarmListWidget({ config }: { config: WidgetConfigMap["alarmList
           <option value="1">1 – hälytys</option>
           <option value="2">2 – varoitus</option>
         </select>
-        <select aria-label="Lähde" value={source} onChange={(e) => setSource(e.target.value as "" | "PLC" | "Myko")} className={SEL} data-testid="al-source">
+        <select aria-label="Lähde" value={source} onChange={(e) => setSource(e.target.value as "" | "PLC" | "Myko" | "LLM")} className={SEL} data-testid="al-source">
           <option value="">Kaikki lähteet</option>
           <option value="PLC">PLC</option>
           <option value="Myko">Myko</option>
+          <option value="LLM">DeepSeek-valvoja</option>
         </select>
         <select aria-label="Aikaväli" value={hours} onChange={(e) => setHours(Number(e.target.value))} className={SEL}>
           {RANGES.map(([h, l]) => <option key={h} value={h}>{l}</option>)}
@@ -220,10 +225,11 @@ export function AlarmListWidget({ config }: { config: WidgetConfigMap["alarmList
               </thead>
               <tbody>
                 {rows.map((r) => (
-                  <tr key={r.id} className="border-b border-border/50 last:border-0 hover:bg-secondary/30" data-active={r.active ? "1" : "0"}>
+                  <tr key={r.id} onClick={() => setDetailId(r.id)} tabIndex={0} onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && setDetailId(r.id)}
+                    title="Näytä lisätiedot" className="cursor-pointer border-b border-border/50 last:border-0 hover:bg-secondary/30" data-active={r.active ? "1" : "0"}>
                     <td className="px-2 py-1.5 tabular-nums text-muted-foreground">{fmtTime(r.start)}</td>
                     <td className="px-2 py-1.5"><SrcBadge r={r} /> {r.pointName}</td>
-                    <td className={`px-2 py-1.5 font-mono ${activeText(r)}`}>{r.alarm}</td>
+                    <td className="px-2 py-1.5"><div className={`font-mono ${activeText(r)}`}>{r.alarm}</div>{r.desc && r.desc !== r.alarm && <div className="line-clamp-2 text-xs text-muted-foreground" data-testid="al-desc">{r.desc}</div>}</td>
                     <td className="px-2 py-1.5"><Prio r={r} /></td>
                     <td className={`px-2 py-1.5 ${r.active ? "text-foreground" : "text-muted-foreground"}`}>
                       {r.active ? "Aktiivinen" : <span title={r.end ? `Poistunut ${fmtTime(r.end)}` : ""}>Poistunut</span>}
@@ -249,7 +255,8 @@ export function AlarmListWidget({ config }: { config: WidgetConfigMap["alarmList
             </select>
             <ul className="max-h-[60vh] space-y-1.5 overflow-auto">
               {rows.map((r) => (
-                <li key={r.id} className="flex items-start gap-2.5 rounded-md border border-border px-2.5 py-2" data-active={r.active ? "1" : "0"}>
+                <li key={r.id} onClick={() => setDetailId(r.id)} role="button" tabIndex={0} onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && setDetailId(r.id)}
+                  className="flex cursor-pointer items-start gap-2.5 rounded-md border border-border px-2.5 py-2 hover:bg-secondary/30" data-active={r.active ? "1" : "0"}>
                   <span className="mt-0.5"><Prio r={r} /></span>
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-baseline gap-x-2">
@@ -257,6 +264,7 @@ export function AlarmListWidget({ config }: { config: WidgetConfigMap["alarmList
                       <SrcBadge r={r} /><span className="truncate">{r.pointName}</span>
                       <span className={`ml-auto text-xs ${r.active ? "text-foreground" : "text-muted-foreground"}`}>{r.active ? "Aktiivinen" : "Poistunut"}{!r.acked ? " · kuittaamaton" : ""}</span>
                     </div>
+                    {r.desc && r.desc !== r.alarm && <div className="line-clamp-2 text-xs text-muted-foreground">{r.desc}</div>}
                     <div className="text-xs tabular-nums text-muted-foreground">
                       {fmtTime(r.start)} · {fmtDuration(r.durationSec)}{r.value !== null ? ` · ${r.value.toFixed(1)} ${r.unit}` : ""}
                     </div>
