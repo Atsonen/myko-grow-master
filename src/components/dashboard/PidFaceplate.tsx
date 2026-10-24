@@ -73,6 +73,36 @@ export function OutputBar({ v }: { v: Partial<PidValues> }) {
   );
 }
 
+/** Compact needle gauge: 0 at top centre, HEAT +100 % clockwise (right), COOL -100 % counter-clockwise (left). */
+const num = (x: number | undefined | null) => (x === undefined || x === null || Number.isNaN(x) ? null : x);
+export function OutputGauge({ v, size = 76 }: { v: Partial<PidValues>; size?: number }) {
+  const heat = Math.max(0, Math.min(100, num(v.OutHeat) ?? 0));
+  const cool = Math.max(0, Math.min(100, num(v.OutCool) ?? 0));
+  const out = heat - cool;
+  const SW = 120, cx = 40, cy = 40, r = 32;
+  const pt = (pct: number, rr: number) => { const a = (pct / 100) * SW * Math.PI / 180; return [cx + rr * Math.sin(a), cy - rr * Math.cos(a)]; };
+  const arc = (a: number, b: number) => { const [x1, y1] = pt(a, r), [x2, y2] = pt(b, r); return `M${x1.toFixed(2)} ${y1.toFixed(2)} A${r} ${r} 0 0 1 ${x2.toFixed(2)} ${y2.toFixed(2)}`; };
+  const sum = num(v.OutSum);
+  return (
+    <div className="flex shrink-0 flex-col items-center" data-testid="pid-outgauge">
+      <svg viewBox="0 0 80 62" width={size} height={size * 62 / 80} aria-label={`Lähtö ${f1(sum ?? undefined, 0)} %`} role="img">
+        <path d={arc(-100, 0)} fill="none" stroke="#a9c8e8" strokeOpacity={0.55} strokeWidth={5} />
+        <path d={arc(0, 100)} fill="none" stroke="#d9b08f" strokeOpacity={0.55} strokeWidth={5} />
+        {[-100, -50, 0, 50, 100].map((t) => { const [x1, y1] = pt(t, r - 5), [x2, y2] = pt(t, r + 3); return <line key={t} x1={x1} y1={y1} x2={x2} y2={y2} stroke="#d4d4d8" strokeWidth={t === 0 ? 1.6 : 1} />; })}
+        <g style={{ transform: `rotate(${(out / 100) * SW}deg)`, transformOrigin: `${cx}px ${cy}px`, transition: "transform 0.6s ease-out" }}>
+          <line x1={cx} y1={cy + 4} x2={cx} y2={cy - r + 3} stroke="#f4f4f5" strokeWidth={2} strokeLinecap="round" />
+        </g>
+        <circle cx={cx} cy={cy} r={3} fill="#f4f4f5" />
+        <text x={cx} y={58} textAnchor="middle" fontSize={11} fill="currentColor" className="tabular-nums">Σ {sum === null ? "–" : f1(sum, 0)}%</text>
+      </svg>
+      <div className="-mt-0.5 flex gap-2 whitespace-nowrap text-[11px] tabular-nums text-muted-foreground">
+        <span className={cool > 0 ? TINT.cool : ""}>C {f1(cool, 0)}</span>
+        <span className={heat > 0 ? TINT.heat : ""}>H {f1(heat, 0)}</span>
+      </div>
+    </div>
+  );
+}
+
 /** ISA-101 mode indication when State != 3: outline colour (edge, so alarm rings stay visible inside) + full-width banner.
  * cyan = operator modes (manual/inactive), violet = tuning, red = substitute output / error, grey = no OPC UA data. */
 export type PidModeInd = { text: string; outline: string; banner: string } | null;
@@ -114,7 +144,6 @@ export function PidCompact({ v, stale, unit }: { v: Partial<PidValues> | null; s
         <span className={m.cls} data-testid="pid-mode">{m.text}</span>
         {v.ManEn && <span className="text-zinc-100">MAN {f1(v.ManVal, 0)} %</span>}
       </div>
-      <OutputBar v={v} />
     </div>
   );
 }

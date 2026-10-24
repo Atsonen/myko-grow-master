@@ -5,7 +5,7 @@ import * as TabsPrimitive from "@radix-ui/react-tabs";
 import { getAlarmEvents, getAlarmPoints, setAlarmControls, type AlarmControls, type AlarmControlsPatch, type AlarmEvent, type AlarmLimits, type AlarmPoint } from "@/lib/apiClient";
 import { toast } from "sonner";
 import { useDashboardData } from "./DashboardData";
-import { PID_KEY_BY_POINT, PidCompact, PidControlTab, PidStateTab, PidModeBanner, pidAbnormal, pidModeIndication, usePid } from "./PidFaceplate";
+import { PID_KEY_BY_POINT, PidCompact, OutputGauge, PidControlTab, PidStateTab, PidModeBanner, pidAbnormal, pidModeIndication, usePid } from "./PidFaceplate";
 import { PidParamsEditor } from "./PidParamsEditor";
 import { PidAiTab, usePidAiBadge } from "./PidAiTab";
 import type { WidgetConfigMap } from "./types";
@@ -172,6 +172,7 @@ export function MeasurementPointWidget({ config, open: openProp, onOpenChange, d
               {value === null || value === undefined ? "—" : value.toFixed(1)}
             </span>
             <span className="text-base text-muted-foreground">{point.unit}</span>
+            {pidKey && pid.v && <span className={`ml-auto self-center ${pid.stale ? "opacity-60" : ""}`}><OutputGauge v={pid.v} /></span>}
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1" data-testid="mp-chips">
             {active.length === 0 ? (
