@@ -54,13 +54,15 @@ export async function activeAlarms() {
   const s = await api("/api/alarms/summary?hours=72");
   return (s.rows ?? []).filter((r) => r.active && r.pointId !== "LLM_Advisor");
 }
+const NAMES = { F1: "F1 Kylmiö", T1: "T1 Terrario", G_Air: "Kasvamo" };
 export async function statusText() {
   const lines = [`📊 Myko ${hel(new Date().toISOString())}`];
   for (const k of ["F1", "T1", "G_Air"]) {
     try {
       const p = await api(`/api/pid/${k}`); const v = p.values ?? {};
       const age = p.at ? Math.round((Date.now() - Date.parse(p.at)) / 60000) : null;
-      lines.push(`${k}: PV ${n1(v.PV)} / SP ${n1(v.SP)} °C, lähtö ${n1(v.OutSum)} %${v.Err ? " ⚠️Err" : ""}${age > 5 ? ` (data ${age} min vanha)` : ""}`);
+      const ok = !v.Err && !(age > 5) && v.PV != null && v.SP != null && Math.abs(Number(v.PV) - Number(v.SP)) <= 2;
+      lines.push(`${ok ? "✅" : "⚠️"} ${NAMES[k]}: ${n1(v.PV)} °C${ok ? "" : age > 5 ? " (ei tuoretta dataa)" : v.Err ? " (säädinvika)" : ` (tavoite ${n1(v.SP)})`}`);
     } catch (e) { lines.push(`${k}: ei saatavilla (${e.message.slice(0, 60)})`); }
   }
   lines.push(await alarmsText());
@@ -75,7 +77,7 @@ export async function alarmsText() {
     return `• ${r.pointName}: ${r.alarm} ${n1(r.value)} ${r.unit ?? ""} (${hel(r.start)})${r.acked || a?.acked_at ? " ✔kuitattu" : ""}${mute ? " 🔕" : ""}`;
   }).join("\n");
 }
-const HELP = "Myko-botti (vain luku, ei PLC-kirjoituksia)\n/status – F1, T1, G_Air PV/SP/lähtö + hälytykset\n/halytykset – aktiiviset hälytykset\n/help – tämä ohje\nVapaa teksti → DeepSeek vastaa prosessikuvauksen ja tilan pohjalta.\nHälytysnapit: Kuittaa (Myko-kuittaus, ei muistutuksia) · Ohita 1 h.";
+const HELP = "Myko-botti (vain luku, ei PLC-kirjoituksia)\n/status – lämpötilat ja onko kunnossa\n/halytykset – aktiiviset hälytykset\n/help – tämä ohje\nVapaa teksti → DeepSeek vastaa prosessikuvauksen ja tilan pohjalta.\nHälytysnapit: Kuittaa (Myko-kuittaus, ei muistutuksia) · Ohita 1 h.";
 
 async function askDeepSeek(text) {
   const [doc] = await query("SELECT content FROM ai_process_doc ORDER BY id DESC LIMIT 1").catch(() => []);
