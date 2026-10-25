@@ -24,9 +24,10 @@ export const PID_ALARM_BITS = [
   { bit: 4, key: "SATUROITUNUT", level: "warn", rule: "Lähtö ±100 % yli 30 min (vain loki, ei WhatsAppia)" },
   { bit: 5, key: "SENSOR_VIKA", level: "alarm", rule: "Myko PV-syöttö päällä: ei hyväksyttyä anturiarvoa 30 s (ESP-virhekoodi/epäuskottava/piikki) yli 10 s" },
   { bit: 7, key: "ANTURIVIKA_ALASAJO", level: "alarm", rule: "P1: anturivika/ei päivity yli alasajoajan (oletus 5 min) -> Myko asetti ON pois (lämmitys+jäähdytys seis). Ei automaattista uudelleenkäynnistystä." },
+  { bit: 8, key: "LAHTO_NAN", level: "alarm", rule: "PID-lähtö virheellinen (NaN): OutputHeat (lämmitys päällä), OutputCool (jäähdytys päällä) tai PidOutputSum puuttuu yli 60 s, kun säädin ei ole inaktiivinen" },
   { bit: 6, key: "INPUT_STALE", level: "alarm", rule: "Myko PV-syöttö päällä: Input-kirjoitus PLC:lle ei onnistunut yli 60 s" },
 ];
-const DEB = { ANTURIVIKA_ALASAJO: 0, SENSOR_VIKA: 10, INPUT_STALE: 10, EI_AUTO: 10, PID_VIKA: 5, ERRORBITS: 10, SATUROITUNUT: 1800 }; // seconds
+const DEB = { ANTURIVIKA_ALASAJO: 0, SENSOR_VIKA: 10, INPUT_STALE: 10, EI_AUTO: 10, PID_VIKA: 5, ERRORBITS: 10, SATUROITUNUT: 1800, LAHTO_NAN: 60 }; // seconds
 const STALE_S = 60;
 const INTENT_S = 60; // a Mode/ManualEnable command within this window makes a State change "intended"
 
@@ -124,11 +125,14 @@ export function registerPidRoutes(app, { mqttClient, query, asyncRoute }) {
     };
     if (stale) {
       if (now - started > 90_000) act.add("OPCUA");
-      for (const n of ["EI_AUTO", "PID_VIKA", "ERRORBITS", "SATUROITUNUT"]) if (prevActive.has(n)) act.add(n); // freeze while blind
+      for (const n of ["EI_AUTO", "PID_VIKA", "ERRORBITS", "SATUROITUNUT", "LAHTO_NAN"]) if (prevActive.has(n)) act.add(n); // freeze while blind
     } else {
-      hold("EI_AUTO", v.State !== undefined && v.State !== 3 && !intent[k]?.intended);
+      hold("EI_AUTO", v.State !== undefined && v.State !== 3 && !intent[k]?.intended && !(v.State === 0 && hcBothOff(k)));
       hold("PID_VIKA", v.Err === true);
       hold("ERRORBITS", (v.ErrBits ?? 0) !== 0 && v.Err !== true);
+      { const d = hcDesired[k]; const bad = (x) => x === null || (typeof x === "number" && !Number.isFinite(x));
+        hold("LAHTO_NAN", v.State !== 0 && !hcBothOff(k) && ("OutSum" in v) &&
+          (bad(v.OutSum) || (d?.heat !== false && "OutHeat" in v && bad(v.OutHeat)) || (d?.cool !== false && "OutCool" in v && bad(v.OutCool)))); }
       hold("SATUROITUNUT", v.State === 3 && Math.abs(v.OutSum ?? 0) >= 99.5);
     }
     const fa = hooks.feedAlarms?.(k) ?? {};
@@ -292,6 +296,8 @@ export function registerPidRoutes(app, { mqttClient, query, asyncRoute }) {
   async function hcLoad() {
     const rows = await query("SELECT pid_key, heat_on, cool_on, mode FROM pid_output_limits").catch(() => []);
     for (const r of rows) hc[r.pid_key] = { heatOn: Number(r.heat_on), coolOn: Number(r.cool_on), mode: r.mode };
+    const fl = await query("SELECT point_id, heat, cool FROM alarm_point_controls").catch(() => []);
+    for (const [k, pt] of Object.entries(PID_POINTS)) { const f = fl.find((x) => x.point_id === pt); if (f) hcDesired[k] ??= { heat: Boolean(f.heat), cool: Boolean(f.cool) }; }
     for (const k of Object.keys(PID_POINTS)) {
       if (hc[k]) continue;
       // first run: read the PLC's current limits and store them as the ON values (0 = currently off -> defaults)
@@ -306,6 +312,32 @@ export function registerPidRoutes(app, { mqttClient, query, asyncRoute }) {
     }
   }
   const hcWant = (k, heat, cool) => hcWantFor(hc[k], heat, cool, HC_OFF_EPS);
+  // both heat+cool OFF => PID_Temp Inactive (Mode 0) with valid full limits (no 0/0 zero span -> no NaN)
+  const hcDesired = {}; // key -> {heat, cool} last known Myko intent
+  const hcBothOff = (k) => { const d = hcDesired[k]; return Boolean(d && !d.heat && !d.cool); };
+  async function hcSetMode(k, mode, by) {
+    const r = await pidCommand(k, { Mode: mode, ModeActivate: true }, `${by}-mode${mode}`).catch((e) => ({ error: e.message }));
+    if (r.error) { console.error(`[hc] ${k} Mode=${mode} failed: ${r.error}`); return { ok: false, error: r.error }; }
+    for (let i = 0; i < 20; i++) { // wait for State readback (G_Air polls every 5 s)
+      await new Promise((res) => setTimeout(res, 1000));
+      if (Number(state[k]?.values?.State) === mode) return { ok: true };
+    }
+    return { ok: false, error: `State != ${mode} after Mode write` };
+  }
+  // apply heat/cool intent: limits + mode transitions; returns writeHC result (+mode)
+  async function applyHC(k, heat, cool, by, prev) {
+    const wasOff = prev ? (!prev.heat && !prev.cool) : Number(state[k]?.values?.State) === 0;
+    if (!heat && !cool) {
+      const m = await hcSetMode(k, 0, by);              // stop first, then make limits valid
+      const w = await writeHC(k, true, true, by);
+      return { ...w, ok: w.ok && m.ok, mode: "inactive", error: w.error ?? m.error };
+    }
+    const w = await writeHC(k, heat, cool, by);
+    if (!w.ok) return w;
+    if (wasOff || Number(state[k]?.values?.State) === 0) { const m = await hcSetMode(k, 3, by); return { ...w, ok: m.ok, mode: "auto", error: m.error }; }
+    await hcReactivate(k, by);
+    return w;
+  }
   const withLock = (k, fn) => { const p = (hcLock[k] ?? Promise.resolve()).then(fn, fn); hcLock[k] = p.catch(() => undefined); return p; };
   // write + readback verify; returns {ok, want, read, error}
   async function writeHC(k, heat, cool, by) {
@@ -342,7 +374,11 @@ export function registerPidRoutes(app, { mqttClient, query, asyncRoute }) {
     // intent first: drift sync must not re-assert the old DB flags while this toggle is in flight
     hcIntent[k] = { heat, cool, at: Date.now() };
     hcAt[k] = Date.now();
-    const r = await withLock(k, async () => { const w = await writeHC(k, heat, cool, by); if (w.ok) await hcReactivate(k, by); return w; });
+    const prev = hcDesired[k];
+    hcDesired[k] = { heat, cool };
+    intent[k] = { ...(intent[k] ?? {}), cmdAt: Date.now() };
+    const r = await withLock(k, () => applyHC(k, heat, cool, by, prev));
+    if (!r.ok) hcDesired[k] = prev;
     hcAt[k] = Date.now();
     if (!r.ok) delete hcIntent[k];
     await hcLog(k, `H/C raja: Heat yläraja ${r.want?.HeatUpperLimit ?? "?"}, Cool alaraja ${r.want?.CoolLowerLimit ?? "?"}${r.ok ? " (luettu ok)" : " VIRHE"}`);
@@ -358,6 +394,7 @@ export function registerPidRoutes(app, { mqttClient, query, asyncRoute }) {
       const it = hcIntent[k];
       if (it && f && Boolean(f.heat) === it.heat && Boolean(f.cool) === it.cool) delete hcIntent[k];
       else if (it) f = it;
+      if (f) hcDesired[k] = { heat: Boolean(f.heat), cool: Boolean(f.cool) };
       if (!f || Date.now() - (hcAt[k] ?? 0) < HC_EVERY_S * 1000) continue;
       hcAt[k] = Date.now();
       await withLock(k, () => syncOne(k, f));
@@ -365,14 +402,19 @@ export function registerPidRoutes(app, { mqttClient, query, asyncRoute }) {
   }
   async function syncOne(k, f) {
     {
-      const want = hcWant(k, Boolean(f.heat), Boolean(f.cool));
+      const off = !f.heat && !f.cool;
+      if (off && Number(state[k]?.values?.State) === 3) { // PLC restart re-enabled auto: keep it Inactive
+        console.log(`[hc-sync] ${k} both H/C off but State 3 -> Mode 0`);
+        await hcSetMode(k, 0, "hc-sync"); await hcLog(k, "H/C molemmat pois: säädin palautettu inaktiiviseksi");
+      }
+      const want = off ? hcWant(k, true, true) : hcWant(k, Boolean(f.heat), Boolean(f.cool));
       const r = await pidCommand(k, { _read: Object.keys(want) }, "hc-sync").catch((e) => ({ error: e.message }));
       const rd = r.results?._read;
       if (r.error || !rd) { console.error(`[hc-sync] ${k} read: ${r.error ?? "no data"}`); return; }
       const diff = Object.keys(want).filter((m) => !(Math.abs(Number(rd[m]) - want[m]) <= HC_TOL));
       if (!diff.length) return;
-      const w = await writeHC(k, Boolean(f.heat), Boolean(f.cool), "hc-sync");
-      if (w.ok) await hcReactivate(k, "hc-sync");
+      const w = await writeHC(k, off || Boolean(f.heat), off || Boolean(f.cool), "hc-sync");
+      if (w.ok && !off) await hcReactivate(k, "hc-sync");
       const lbl = `H/C raja palautettu ${diff.map((m) => `${m} ${rd[m]}→${want[m]}`).join(", ")}${w.ok ? "" : " VIRHE"}`;
       console.log(`[hc-sync] ${k} ${lbl}`);
       await hcLog(k, lbl);
@@ -387,7 +429,7 @@ export function registerPidRoutes(app, { mqttClient, query, asyncRoute }) {
     const k = req.params.key;
     if (!PID_POINTS[k]) return res.status(404).json({ error: "unknown PID" });
     const r = await pidCommand(k, { _read: ["HeatUpperLimit", "CoolLowerLimit"] }, "dashboard").catch((e) => ({ error: e.message }));
-    res.json({ key: k, stored: hc[k] ?? null, plc: r.results?._read ?? null, error: r.error });
+    res.json({ key: k, stored: hc[k] ?? null, plc: r.results?._read ?? null, inactive: hcBothOff(k), state: hcBothOff(k) ? "Inactive (H/C pois)" : null, error: r.error });
   }));
   // POST /api/pid/:key/hc/cutover {confirm:true} -> write limits matching current Myko heat/cool flags, verify, then mode='limits'
   app.post("/api/pid/:key/hc/cutover", asyncRoute(async (req, res) => {
@@ -397,7 +439,8 @@ export function registerPidRoutes(app, { mqttClient, query, asyncRoute }) {
     if (!hc[k]) return res.status(409).json({ error: "ON limits not stored yet" });
     const [f] = await query("SELECT heat, cool FROM alarm_point_controls WHERE point_id = ?", [PID_POINTS[k]]);
     if (!f) return res.status(404).json({ error: "no controls row" });
-    const w = await withLock(k, () => writeHC(k, Boolean(f.heat), Boolean(f.cool), "hc-cutover"));
+    hcDesired[k] = { heat: Boolean(f.heat), cool: Boolean(f.cool) };
+    const w = await withLock(k, () => applyHC(k, Boolean(f.heat), Boolean(f.cool), "hc-cutover"));
     if (!w.ok) return res.status(502).json(w);
     await query("UPDATE pid_output_limits SET mode = 'limits', updated_at = UTC_TIMESTAMP() WHERE pid_key = ?", [k]);
     hc[k].mode = "limits"; hcAt[k] = Date.now();
