@@ -49,6 +49,10 @@ export function registerPidRoutes(app, { mqttClient, query, asyncRoute }) {
   const saveIntent = () => fs.writeFile(INTENT_FILE, JSON.stringify(intent), () => undefined);
   const started = Date.now();
   const hooks = {}; // feedAlarms(k) from pvfeed.js
+  // PLC restart/download detection (for auto-recovery + safe reactivate): data gap > STALE_S, or PLC start values (SP 0 / PV 0)
+  const restartAt = {}; // key -> ms of last detected restart/reconnect
+  const pvAt = {}; // key -> ms of last message carrying a valid (non-zero, finite) PV after which PV changed or was re-sent
+  const markRestart = (k, why) => { if (Date.now() - (restartAt[k] ?? 0) > 120_000) console.log(`[pid] ${k} PLC restart/reconnect detected (${why})`); restartAt[k] = Date.now(); };
 
   const c = mqttClient();
   const topics = Object.keys(PID_POINTS).flatMap((k) => [`Sensors/PLC_2/${k}_PID`, `Myko/Cmd/${k}_PID/ack`]);
@@ -62,7 +66,11 @@ export function registerPidRoutes(app, { mqttClient, query, asyncRoute }) {
     if (m && PID_POINTS[m[1]]) {
       const k = m[1];
       const prevState = state[k]?.values?.State;
+      const prevAt = state[k]?.at;
+      if (prevAt && Date.now() - prevAt > STALE_S * 1000) markRestart(k, "data gap");
+      if (("SP" in d && Number(d.SP) === 0) || ("PV" in d && Number(d.PV) === 0) || d.Err === true) markRestart(k, "start values / Err");
       state[k] = { at: Date.now(), values: { ...(state[k]?.values ?? {}), ...d } };
+      if ("PV" in d && Number.isFinite(Number(d.PV)) && Number(d.PV) !== 0) pvAt[k] = Date.now();
       const st = state[k].values.State;
       const recent = intent[k]?.cmdAt && Date.now() - intent[k].cmdAt < INTENT_S * 1000;
       if (prevState === 3 && st !== 3 && st !== undefined) {
@@ -248,6 +256,7 @@ export function registerPidRoutes(app, { mqttClient, query, asyncRoute }) {
       if (fresh && Number.isFinite(plc)) {
         if (Math.abs(plc - want) <= SYNC_TOL) continue;
         label = `SP palautettu ${plc}→${want} (PLC poikkesi Myko-arvosta)`;
+        if (plc === 0) markRestart(k, "SP 0");
       } else if (COMMAND_ONLY.has(k)) {
         if (now - (syncAt[k] ?? 0) < BLIND_EVERY_S * 1000) continue;
         label = syncAt[k] ? null : `SP synkronointi ${want} → PLC (ei OPC UA -seurantaa)`; // log first blind write only
@@ -370,7 +379,21 @@ export function registerPidRoutes(app, { mqttClient, query, asyncRoute }) {
     return last;
   }
   // clear PID_Temp's latched NaN in the PWM/scaling stage after a limit change (only when running in automatic)
+  // After a PLC restart/download (2026-10-25 21:54): never ModeActivate while Input is still the DB start value (0) -> that latched
+  // ErrBits 1 and froze T1. Wait (max 120 s) until a valid PV has been read back after the restart, ErrorAck if ErrBits≠0, then ModeActivate.
+  const pvValid = (k) => { const v = state[k]?.values ?? {}; const pv = Number(v.PV);
+    const lo = Number.isFinite(Number(v.InLo)) ? Number(v.InLo) : -40, hi = Number.isFinite(Number(v.InHi)) ? Number(v.InHi) : 80;
+    return Number.isFinite(pv) && pv !== 0 && pv > lo && pv < hi && (pvAt[k] ?? 0) > (restartAt[k] ?? 0) && Date.now() - (state[k]?.at ?? 0) < STALE_S * 1000; };
   async function hcReactivate(k, by) {
+    if (Date.now() - (restartAt[k] ?? 0) < 10 * 60_000) {
+      for (let i = 0; i < 60 && !pvValid(k); i++) await new Promise((res) => setTimeout(res, 2000));
+      if (!pvValid(k)) { console.error(`[hc] ${k} reactivate skipped: no valid PV after restart`); return { skipped: true, error: "no valid PV after restart" }; }
+      if (Number(state[k]?.values?.ErrBits ?? 0) !== 0) {
+        const a = await pidCommand(k, { ErrorAck: true }, `${by}-errorack`).catch((e) => ({ error: e.message }));
+        console.log(`[hc] ${k} ErrorAck before reactivate${a.error ? ` failed: ${a.error}` : ""}`);
+        await new Promise((res) => setTimeout(res, 2000));
+      }
+    }
     const v = state[k]?.values ?? {};
     if (Number(v.Mode) !== 3 || Number(v.State) !== 3 || v.ManEn) return { skipped: true };
     const r = await pidCommand(k, { Mode: 3, ModeActivate: true }, `${by}-reactivate`).catch((e) => ({ error: e.message }));
@@ -461,5 +484,5 @@ export function registerPidRoutes(app, { mqttClient, query, asyncRoute }) {
     res.json({ ...w, mode: "limits" });
   }));
 
-  return { pidCommand, setHC, hcMode: (k) => hc[k]?.mode ?? "bits", onHcMode: (f) => { hooks.onHcMode = f; }, pidState: (k) => state[k] ?? null, setFeedAlarms: (f) => { hooks.feedAlarms = f; } };
+  return { pidCommand, setHC, hcMode: (k) => hc[k]?.mode ?? "bits", onHcMode: (f) => { hooks.onHcMode = f; }, pidState: (k) => state[k] ?? null, pidActive: (k) => [...(active[k] ?? [])], pidRestartAt: (k) => restartAt[k] ?? 0, pidPvAt: (k) => pvAt[k] ?? 0, setFeedAlarms: (f) => { hooks.feedAlarms = f; } };
 }

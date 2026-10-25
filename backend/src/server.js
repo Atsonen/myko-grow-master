@@ -12,6 +12,8 @@ import { registerAnomaly } from "./anomaly.js";
 import { registerAssistant } from "./assistant.js";
 import { registerProcessDoc } from "./processDoc.js";
 import { registerPvFeed } from "./pvfeed.js";
+import { registerAutoRecovery } from "./autoRecovery.js";
+import { tg, allowedChats } from "./telegram.js";
 import { normalizeOrigins, registerTraceRoutes, writeOrigins } from "./trace.js";
 
 dotenv.config();
@@ -1095,7 +1097,10 @@ function publishRetained(topic, message) {
   });
 }
 // ---- OPC UA PID faceplates + PID alarm points: see pid.js ----
-const { pidCommand, pidState, setFeedAlarms, setHC, hcMode } = registerPidRoutes(app, { mqttClient: mqttPublisher, query, asyncRoute });
+const { pidCommand, pidState, setFeedAlarms, setHC, hcMode, pidActive, pidRestartAt, pidPvAt } = registerPidRoutes(app, { mqttClient: mqttPublisher, query, asyncRoute });
+// kunnossapito auto-recovery watcher (Telegram Tee/Älä, 10 min timeout -> autonomous); see autoRecovery.js
+registerAutoRecovery(app, { pidState, pidActive, pidRestartAt, pidPvAt, PID_POINTS, asyncRoute, port: Number(process.env.PORT || 3010),
+  notify: async (text, reply_markup) => { const out = []; for (const chat_id of await allowedChats()) out.push(await tg("sendMessage", { chat_id, text, ...(reply_markup ? { reply_markup } : {}) })); return out; } });
 startWeather({ query });
 registerFmiWeather(app, { query, asyncRoute });
 registerPidAi(app, { query, asyncRoute, pidState, PID_POINTS });

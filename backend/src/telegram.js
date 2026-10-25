@@ -3,7 +3,8 @@
 // never logged, not in git). Allowed chats: env MYKO_TELEGRAM_CHAT_IDS (comma list) or myko_settings k='telegram_chat_ids'
 // (JSON array). Messages/callbacks from any other chat are ignored; their /start is only recorded to
 // myko_settings k='telegram_pending_chats' so the owner can be allow-listed.
-// READ-ONLY towards the PLC: no ErrorAck, no SP writes, no pid commands from Telegram (this version).
+// READ-ONLY towards the PLC from chat: no SP writes, no free pid commands. Exception: 'kp:<id>:do|skip' buttons answer an
+// auto-recovery proposal (autoRecovery.js, kunnossapito known_fixes only); the backend validates and executes.
 // Alarm messages themselves are sent by deploy/myko-ml/alarm_points_check.py (tg_alert.py); this process handles:
 //   callback 'ack:<pointId>:<type>'  -> Kuittaa: Myko-only ack (alarm_events start rows acked, reminders suppressed
 //                                      while the alarm stays active; myko_settings k='telegram_alarm_acks')
@@ -87,6 +88,8 @@ async function askDeepSeek(text, who = "telegram") {
   const sys = `Olet Myko-sienikasvamon valvomon avustaja Telegramissa. Vastaa suomeksi, tiiviisti (Telegram, mieluiten alle ~12 riviä, ei markdown-taulukoita). ` +
     `Et voi tehdä toimenpiteitä etkä kirjoittaa PLC:lle; anna vain tietoa ja neuvoja. Jos käyttäjä pyytää toimenpidettä, kerro että se tehdään Myko-valvomosta.\n` +
     `Sinulla on vain luku -pääsy Myko-tietokantaan työkaluilla (get_measurements, get_alarm_history, list_tables, describe_table, run_sql). ` +
+    `Kunnossapitotietokanta (kp_search, kp_show_incident, kp_match, kp_list_fixes, kp_policy): aiemmat viat, tehdyt toimenpiteet ja tunnetut korjaukset – käytä sitä vikoja selvittäessä. ` +
+    `Voit kirjata (kp_log_incident, kp_log_action) havaitun vian tai käyttäjän kertoman toimenpiteen, mutta et voi suorittaa korjauksia: tunnetut korjaukset tekee automaattinen valvoja Tee/Älä-kysymyksen kautta.\n` +
     `Hae data työkaluilla äläkä arvaa lukuja. Nyt on ${now} (Europe/Helsinki); "tänään" = klo 00:00 alkaen paikallista aikaa. Ilmoita ajat paikallisaikana ja mainitse lähde (tagi) lyhyesti.\n\n` +
     `${SCHEMA_HINT}\n\n--- PROSESSIKUVAUS ---\n${String(doc?.content ?? "").slice(0, 8000)}\n--- /PROSESSIKUVAUS ---\n\n--- LIVE-TILA ---\n${status}\n--- /LIVE-TILA ---`;
   const messages = [{ role: "system", content: sys }, { role: "user", content: text.slice(0, 2000) }];
@@ -121,6 +124,10 @@ export async function handleText(text) {
 export async function handleCallback(data, who = "telegram") {
   const [act, pointId, type] = String(data).split(":");
   if (act === "test") return "Testikuittaus OK ✅";
+  if (act === "kp") { // auto-recovery proposal (autoRecovery.js): kp:<proposalId>:do|skip -> backend decides/executes
+    const r = await fetch(API_BASE + "/api/autorecovery/decision", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: pointId, decision: type, by: who }), signal: AbortSignal.timeout(10_000) });
+    const b = await r.json().catch(() => ({})); return String(b.text ?? b.error ?? `HTTP ${r.status}`).slice(0, 180);
+  }
   if (!pointId || !type || !["ack", "mute"].includes(act)) return "Tuntematon toiminto";
   const acks = await setting("telegram_alarm_acks", {}); const key = `${pointId}:${type}`; const a = acks[key] ?? {};
   if (act === "ack") {

@@ -1,10 +1,11 @@
-// Read-only DB tools for the Telegram DeepSeek assistant (function calling).
+// DB tools for the Telegram DeepSeek assistant (function calling): read-only Myko DB + kunnossapito KB (read + log incidents/actions).
 // Uses a dedicated MariaDB user (myko_ro: SELECT + SHOW VIEW only on myko_valvomo), credentials in
 // /home/atte/.config/myko/db_ro.env (600, never logged). Extra guards: single statement, SELECT/WITH/SHOW/
 // DESCRIBE/EXPLAIN only, forced row limit, max_statement_time, truncated output. Every call is audited to
 // ~/.local/state/myko/tg_ai_queries.log (JSONL). Never touches the PLC.
 import * as mariadb from "mariadb";
 import { readFileSync, appendFileSync, mkdirSync } from "node:fs";
+import { kpSearch, kpShowIncident, kpMatch, kpListFixes, kpPolicy, kpLogIncident, kpLogAction } from "./kunnossapito.js";
 
 const RO_FILE = process.env.MYKO_DB_RO_ENV || "/home/atte/.config/myko/db_ro.env";
 const AUDIT_DIR = "/home/atte/.local/state/myko";
@@ -114,8 +115,28 @@ export const TOOLS = [
   fn("describe_table", "Taulun sarakkeet.", { table: { type: "string" } }, ["table"]),
   fn("run_sql", "Vain luku -SQL (MariaDB 10.11) Myko-tietokantaan. Yksi SELECT/WITH/SHOW/DESCRIBE; max 500 riviä, 10 s aikaraja. DATETIME-sarakkeet ovat UTC: käytä CONVERT_TZ(col,'UTC','Europe/Helsinki'). datalogger_values on iso (~6M riviä): rajaa aina source_id='src-datalogger', variable_key ja timestamp.",
     { sql: { type: "string" } }, ["sql"]),
+  // kunnossapito (maintenance KB, separate DB kunnossapito; times are Helsinki local)
+  fn("kp_search", "Hae kunnossapitotietokannasta (viat/incidents, toimenpiteet/actions, tunnetut korjaukset/known_fixes) tekstillä, esim. 'T1', 'ErrBits', 'restart'.", { text: { type: "string" } }, ["text"]),
+  fn("kp_show_incident", "Näytä yksi vika (incident) ja sen toimenpiteet.", { id: { type: "integer" } }, ["id"]),
+  fn("kp_match", "Etsi tunnetut korjaukset oireille. Palauttaa korjaukset, esiehdot, vaiheet ja onko autonominen suoritus sallittu.", {
+    system: { type: "string", description: "PLC_2 | Myko | koti" }, device: { type: "string", description: "T1 | G_Air | F1 | LVV ..." },
+    conditions: { type: "array", items: { type: "string" }, description: "esim. ['PLC restart/download']" },
+    symptoms: { type: "array", items: { type: "string" }, description: "esim. ['ERRORBITS','PID_LAHTO_JUMISSA','PID output frozen']" } }),
+  fn("kp_list_fixes", "Listaa tunnetut korjaukset.", {}),
+  fn("kp_policy", "Autonomisten toimenpiteiden politiikka.", {}),
+  fn("kp_log_incident", "KIRJAA uusi vika kunnossapitoon (ei tee toimenpiteitä).", { system: { type: "string" }, device: { type: "string" }, symptom: { type: "string" },
+    conditions: { type: "array", items: { type: "string" } }, root_cause: { type: "string" }, resolution: { type: "string" }, status: { type: "string", enum: ["open", "resolved", "info", "closed"] },
+    ts_start: { type: "string", description: "Helsingin aika 'YYYY-MM-DD HH:MM:SS', oletus nyt" } }, ["system", "symptom"]),
+  fn("kp_log_action", "KIRJAA toimenpide (esim. käyttäjän kertoma) vikaan. Ei suorita mitään.", { incident_id: { type: "integer" }, action: { type: "string" }, result: { type: "string" },
+    worked: { type: "boolean" }, approved_by: { type: "string" }, ts: { type: "string" } }, ["action"]),
 ];
-const IMPL = { get_measurements: getMeasurements, get_alarm_history: getAlarmHistory, list_tables: listTables, describe_table: describeTable, run_sql: runSql };
+const kpPack = async (p) => pack(await p, "kunnossapito; ajat Europe/Helsinki");
+const IMPL = { get_measurements: getMeasurements, get_alarm_history: getAlarmHistory, list_tables: listTables, describe_table: describeTable, run_sql: runSql,
+  kp_search: (a) => kpPack(kpSearch(a.text)), kp_show_incident: (a) => kpPack(kpShowIncident(a.id)),
+  kp_match: (a) => kpPack(kpMatch({ system: a.system, device: a.device, conditions: a.conditions ?? [], symptoms: a.symptoms ?? [] })),
+  kp_list_fixes: () => kpPack(kpListFixes()), kp_policy: () => kpPack(kpPolicy()),
+  kp_log_incident: (a) => kpPack(kpLogIncident(a)),
+  kp_log_action: (a) => kpPack(kpLogAction({ ...a, actor: "deepseek-telegram", known_fix_id: null })) };
 export async function callTool(name, args, ctx = {}) {
   const t0 = Date.now();
   try {
