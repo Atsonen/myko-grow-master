@@ -320,7 +320,7 @@ PID_POINTS={"F1_PID":dict(parent="ColdStorage1",name="Kylmäsäilytystila 1"),"T
 PID_WA_SKIP={"SATUROITUNUT"}
 PID_STATE=os.path.join(D,"pid_alarm_state.json")
 PID_LABEL={"EI_AUTO":"PID-säädin ei automaatilla","PID_VIKA":"PID-säätimen vika (Error)","ERRORBITS":"PID ErrorBits (kuittaa ErrorAck)",
-           "OPCUA":"PID-data ei päivity (OPC UA / valvonta)","SATUROITUNUT":"PID-lähtö saturoitunut",
+           "OPCUA":"PID-data ei päivity (OPC UA / valvonta)","SATUROITUNUT":"PID-lähtö saturoitunut","LAHTO_NAN":"PID-lähtö virheellinen (NaN)","PID_LAHTO_JUMISSA":"PID-lähtö jumissa",
            "SENSOR_VIKA":"PID-mittauksen anturivika (Myko PV-syöttö)","INPUT_STALE":"PID-mittaus ei päivity PLC:lle (Myko PV-syöttö)",
            "ANTURIVIKA_ALASAJO":"P1 ANTURIVIKA – piste ajettu alas (ON pois, lämmitys+jäähdytys seis). Käynnistä uudelleen käsin"}
 STATE_TXT={0:"ei aktiivinen",1:"esiviritys",2:"hienoviritys",3:"automaatti",4:"käsiajo",5:"korvaava lähtö"}

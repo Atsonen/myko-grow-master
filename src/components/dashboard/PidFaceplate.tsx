@@ -19,6 +19,7 @@ const PID_ALARM: Record<string, { level: "alarm" | "warn"; text: string }> = {
   OPCUA: { level: "warn", text: "Ei PID-dataa" },
   SATUROITUNUT: { level: "warn", text: "Lähtö saturoitunut" },
   LAHTO_NAN: { level: "alarm", text: "PID-lähtö virheellinen (NaN)" },
+  PID_LAHTO_JUMISSA: { level: "alarm", text: "PID-lähtö jumissa" },
   SENSOR_VIKA: { level: "alarm", text: "Anturivika (PV-syöttö)" },
   INPUT_STALE: { level: "alarm", text: "Mittaus ei päivity PLC:lle" },
   ANTURIVIKA_ALASAJO: { level: "alarm", text: "P1 ANTURIVIKA – ajettu alas (ON pois)" },
