@@ -6,6 +6,7 @@
 //  - evaluates PID alarms and publishes them as a normal alarm point (retained Myko/Alarms/<key>_PID/json,
 //    same payload shape as the checker) -> mqtt-logger stores status + start/clear events, the alarm list shows
 //    them and alarm_points_check.py sends WhatsApp with the parent point's mute (alarms_disabled_until).
+import { hcWantFor, hcMatches } from "./hcLimits.js";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -281,7 +282,12 @@ export function registerPidRoutes(app, { mqttClient, query, asyncRoute }) {
   // Limits can be changed online; from PID_Temp V2 the integral is adjusted, so the output can jump. Config is not retain ->
   // PLC restart/download reverts to start values -> limitsSync() re-asserts Myko's values every 60 s (mode 'limits' only).
   const hc = {}; // key -> { heatOn, coolOn, mode }
-  const HC_TOL = 0.01, HC_EVERY_S = 60;
+  // NOTE: PID_Temp scales OutputHeat/Cool(_PWM/_PER) between the PidLower/UpperLimit pair, so OFF = 0 makes a zero
+  // span -> that output becomes NaN (16#7FC0_0000) and the PWM stage latches NaN: OutputHeat_PWM stays FALSE even after
+  // the limit is restored (seen 2026-10-25 on T1). A small epsilon is NOT an option (0.01 span => sum 0.01 = 100 % output).
+  // => keep OFF = 0, and after every limit change re-activate automatic mode (Mode=3 + ModeActivate) to clear the latch.
+  const HC_TOL = 0.001, HC_EVERY_S = 60, HC_OFF_EPS = 0, HC_RETRIES = 3;
+  const hcLock = {}; // key -> promise chain: toggles and drift sync never interleave
   const hcAt = {};
   async function hcLoad() {
     const rows = await query("SELECT pid_key, heat_on, cool_on, mode FROM pid_output_limits").catch(() => []);
@@ -299,15 +305,33 @@ export function registerPidRoutes(app, { mqttClient, query, asyncRoute }) {
       console.log(`[hc] ${k} stored ON limits heat=${hc[k].heatOn} cool=${hc[k].coolOn} (PLC now ${h}/${cl})`);
     }
   }
-  const hcWant = (k, heat, cool) => ({ HeatUpperLimit: heat ? hc[k].heatOn : 0, CoolLowerLimit: cool ? hc[k].coolOn : 0 });
+  const hcWant = (k, heat, cool) => hcWantFor(hc[k], heat, cool, HC_OFF_EPS);
+  const withLock = (k, fn) => { const p = (hcLock[k] ?? Promise.resolve()).then(fn, fn); hcLock[k] = p.catch(() => undefined); return p; };
   // write + readback verify; returns {ok, want, read, error}
   async function writeHC(k, heat, cool, by) {
     if (!hc[k]) return { ok: false, error: "ON limits not known yet (bridge read failed)" };
     const want = hcWant(k, heat, cool);
-    const r = await pidCommand(k, want, by).catch((e) => ({ error: e.message }));
-    const read = { HeatUpperLimit: r.results?.HeatUpperLimit?.read, CoolLowerLimit: r.results?.CoolLowerLimit?.read };
-    const ok = !r.error && Object.keys(want).every((m) => Number.isFinite(Number(read[m])) && Math.abs(Number(read[m]) - want[m]) <= HC_TOL);
-    return { ok, want, read, error: r.error ?? (ok ? undefined : "readback mismatch") };
+    let last;
+    for (let i = 0; i < HC_RETRIES; i++) {
+      const r = await pidCommand(k, want, by).catch((e) => ({ error: e.message }));
+      // independent readback (not just the write ack)
+      const rb = await pidCommand(k, { _read: Object.keys(want) }, `${by}-verify`).catch((e) => ({ error: e.message }));
+      const read = rb.results?._read ?? { HeatUpperLimit: r.results?.HeatUpperLimit?.read, CoolLowerLimit: r.results?.CoolLowerLimit?.read };
+      const ok = hcMatches(want, read, HC_TOL);
+      last = { ok, want, read, attempts: i + 1, error: ok ? undefined : (r.error ?? rb.error ?? "readback mismatch") };
+      if (ok) return last;
+      console.error(`[hc] ${k} write attempt ${i + 1} failed: ${last.error} read=${JSON.stringify(read)}`);
+      await new Promise((res) => setTimeout(res, 1000));
+    }
+    return last;
+  }
+  // clear PID_Temp's latched NaN in the PWM/scaling stage after a limit change (only when running in automatic)
+  async function hcReactivate(k, by) {
+    const v = state[k]?.values ?? {};
+    if (Number(v.Mode) !== 3 || Number(v.State) !== 3 || v.ManEn) return { skipped: true };
+    const r = await pidCommand(k, { Mode: 3, ModeActivate: true }, `${by}-reactivate`).catch((e) => ({ error: e.message }));
+    if (r.error) console.error(`[hc] ${k} reactivate failed: ${r.error}`);
+    return r;
   }
   async function hcLog(k, label) {
     await query("INSERT INTO alarm_events (point_id, alarm, bit, event, at, value, status_word) VALUES (?, ?, NULL, 'control', UTC_TIMESTAMP(3), NULL, NULL)",
@@ -315,26 +339,40 @@ export function registerPidRoutes(app, { mqttClient, query, asyncRoute }) {
   }
   // dashboard toggle (server.js PUT controls) for a PID in 'limits' mode
   async function setHC(k, { heat, cool }, by = "dashboard") {
-    const r = await writeHC(k, heat, cool, by);
+    // intent first: drift sync must not re-assert the old DB flags while this toggle is in flight
+    hcIntent[k] = { heat, cool, at: Date.now() };
     hcAt[k] = Date.now();
+    const r = await withLock(k, async () => { const w = await writeHC(k, heat, cool, by); if (w.ok) await hcReactivate(k, by); return w; });
+    hcAt[k] = Date.now();
+    if (!r.ok) delete hcIntent[k];
     await hcLog(k, `H/C raja: Heat yläraja ${r.want?.HeatUpperLimit ?? "?"}, Cool alaraja ${r.want?.CoolLowerLimit ?? "?"}${r.ok ? " (luettu ok)" : " VIRHE"}`);
     return r;
   }
+  const hcIntent = {}; // key -> latest toggle intent (wins over DB flags until DB catches up)
   async function limitsSync() {
     const rows = await query("SELECT point_id, heat, cool FROM alarm_point_controls").catch(() => []);
     const flags = new Map(rows.map((r) => [r.point_id, r]));
     for (const k of Object.keys(PID_POINTS)) {
       if (hc[k]?.mode !== "limits") continue;
-      const f = flags.get(PID_POINTS[k]);
+      let f = flags.get(PID_POINTS[k]);
+      const it = hcIntent[k];
+      if (it && f && Boolean(f.heat) === it.heat && Boolean(f.cool) === it.cool) delete hcIntent[k];
+      else if (it) f = it;
       if (!f || Date.now() - (hcAt[k] ?? 0) < HC_EVERY_S * 1000) continue;
       hcAt[k] = Date.now();
+      await withLock(k, () => syncOne(k, f));
+    }
+  }
+  async function syncOne(k, f) {
+    {
       const want = hcWant(k, Boolean(f.heat), Boolean(f.cool));
       const r = await pidCommand(k, { _read: Object.keys(want) }, "hc-sync").catch((e) => ({ error: e.message }));
       const rd = r.results?._read;
-      if (r.error || !rd) { console.error(`[hc-sync] ${k} read: ${r.error ?? "no data"}`); continue; }
+      if (r.error || !rd) { console.error(`[hc-sync] ${k} read: ${r.error ?? "no data"}`); return; }
       const diff = Object.keys(want).filter((m) => !(Math.abs(Number(rd[m]) - want[m]) <= HC_TOL));
-      if (!diff.length) continue;
+      if (!diff.length) return;
       const w = await writeHC(k, Boolean(f.heat), Boolean(f.cool), "hc-sync");
+      if (w.ok) await hcReactivate(k, "hc-sync");
       const lbl = `H/C raja palautettu ${diff.map((m) => `${m} ${rd[m]}→${want[m]}`).join(", ")}${w.ok ? "" : " VIRHE"}`;
       console.log(`[hc-sync] ${k} ${lbl}`);
       await hcLog(k, lbl);
@@ -359,7 +397,7 @@ export function registerPidRoutes(app, { mqttClient, query, asyncRoute }) {
     if (!hc[k]) return res.status(409).json({ error: "ON limits not stored yet" });
     const [f] = await query("SELECT heat, cool FROM alarm_point_controls WHERE point_id = ?", [PID_POINTS[k]]);
     if (!f) return res.status(404).json({ error: "no controls row" });
-    const w = await writeHC(k, Boolean(f.heat), Boolean(f.cool), "hc-cutover");
+    const w = await withLock(k, () => writeHC(k, Boolean(f.heat), Boolean(f.cool), "hc-cutover"));
     if (!w.ok) return res.status(502).json(w);
     await query("UPDATE pid_output_limits SET mode = 'limits', updated_at = UTC_TIMESTAMP() WHERE pid_key = ?", [k]);
     hc[k].mode = "limits"; hcAt[k] = Date.now();
