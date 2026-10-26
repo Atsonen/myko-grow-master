@@ -67,6 +67,11 @@ export async function statusText() {
       lines.push(`${ok ? "✅" : "⚠️"} ${NAMES[k]}: ${n1(v.PV)} °C${ok ? "" : age > 5 ? " (ei tuoretta dataa)" : v.Err ? " (säädinvika)" : ` (tavoite ${n1(v.SP)})`}`);
     } catch (e) { lines.push(`${k}: ei saatavilla (${e.message.slice(0, 60)})`); }
   }
+  try { // Kasvamo raja-arvohälytykset (kasvamoAlarms.js, backend kirjoittaa tilan)
+    const k = JSON.parse((await import("node:fs")).readFileSync("/home/atte/.config/myko/kasvamo_alarm_state.json", "utf8"));
+    const a = Object.entries(k.active ?? {}).filter(([, v]) => v).map(([x]) => (k.msg?.[x] ?? x).replace("🌱 Kasvamo: ", ""));
+    lines.push(`🌱 Kasvamo-rajat: ${a.length ? a.join("; ") : "ei aktiivisia"}`);
+  } catch { /* ei tilaa vielä */ }
   lines.push(await alarmsText());
   return lines.join("\n");
 }

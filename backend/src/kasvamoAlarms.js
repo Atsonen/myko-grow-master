@@ -1,0 +1,70 @@
+// Kasvamo – väliaikaiset raja-arvohälytykset (26.10.2026) Valvomo-botin kautta (telegram.js tg/allowedChats).
+// Siirretty koti-telegramista. Lähetetään KERRAN kun tila alkaa (viive) ja kerran kun palautuu (hystereesi).
+// Asetukset: myko_settings k='kasvamo_alarms' (JSON, yhdistetään oletuksiin): {enabled, delay_min, stale_min, limits:{id:{lo,hi,hyst}}}
+// Tila: /home/atte/.config/myko/kasvamo_alarm_state.json. Vain luku: ei PLC-kirjoituksia.
+import fs from "node:fs";
+import { query } from "./db.js";
+import { tg, allowedChats } from "./telegram.js";
+const STATE = "/home/atte/.config/myko/kasvamo_alarm_state.json";
+const DEF = { enabled: true, delay_min: 5, stale_min: 20, limits: {
+  pinta: { lo: 20, hi: null, hyst: 2 }, vesi: { lo: 15, hi: 26, hyst: 0.5 }, ec: { lo: 500, hi: 2500, hyst: 100 }, ph: { lo: 5.0, hi: 7.0, hyst: 0.2 } } };
+const SIG = { pinta: ["dl25", "Ravinnesäiliö pinta", "%"], vesi: ["dl24", "Ravinnevesi", "°C"], ec: ["dl23", "EC", "ppm"], ph: ["dl26", "pH", ""] };
+const BITS = { A_Tayttovesi: "Täyttövesi-hälytys (Pumput_DB Tayttovesi.Active)", A_HumHH: "Kosteus HH (Pumput_DB A_HumHH.Active)", EC_Below_Q: "EC alhainen yli viiveen (Pumput_DB EC_Below.Q)" };
+let st = { active: {}, since: {}, msg: {} };
+try { st = { ...st, ...JSON.parse(fs.readFileSync(STATE, "utf8")) }; } catch { /* first run */ }
+const save = () => { try { fs.writeFileSync(STATE + ".tmp", JSON.stringify(st)); fs.renameSync(STATE + ".tmp", STATE); } catch (e) { console.warn("[kasvamo] state", e.message); } };
+async function cfg() {
+  const [r] = await query("SELECT v FROM myko_settings WHERE k = 'kasvamo_alarms'");
+  let c = {}; try { c = r ? JSON.parse(r.v) : {}; } catch { /* default */ }
+  return { ...DEF, ...c, limits: Object.fromEntries(Object.keys(DEF.limits).map((k) => [k, { ...DEF.limits[k], ...(c.limits?.[k] ?? {}) }])) };
+}
+async function evaluate(c, port) {
+  const out = {}; const now = Date.now();
+  const get = async (p) => (await fetch(`http://127.0.0.1:${port}${p}`, { signal: AbortSignal.timeout(10_000) })).json();
+  try {
+    const rows = Object.fromEntries((await get(`/api/datalogger/latest?keys=${Object.values(SIG).map((s) => s[0]).join(",")}`)).map((r) => [r.variableKey, r]));
+    const newest = Math.max(0, ...Object.values(rows).map((r) => Date.parse(r.timestamp) || 0));
+    out.stale = [now - newest > c.stale_min * 60_000, `⚠️ Kasvamo: ei uutta dataloggerdataa ${Math.round((now - newest) / 60000)} min`];
+    for (const [id, [dl, name, unit]] of Object.entries(SIG)) {
+      const r = rows[dl]; if (!r || r.value == null) continue;
+      const v = Number(r.value); const L = c.limits[id];
+      for (const side of ["lo", "hi"]) {
+        const lim = L[side]; const key = `${id}:${side}`;
+        if (lim == null) { out[key] = [false, ""]; continue; }
+        const h = st.active[key] ? Number(L.hyst) || 0 : 0; // aktiivisena palautuminen vaatii hystereesin
+        const bad = side === "lo" ? v < lim + h : v > lim - h;
+        out[key] = [bad, `🌱 Kasvamo: ${name} ${v} ${unit} ${side === "lo" ? "alle" : "yli"} rajan ${lim} ${unit}`.replace(/ +/g, " ")];
+      }
+    }
+  } catch (e) { console.warn("[kasvamo] datalogger", e.message); }
+  try {
+    const p = await get("/api/pumput");
+    if (!p.stale) for (const [k, t] of Object.entries(BITS)) if (k in p.values) out[k] = [!!p.values[k], "🌱 Kasvamo: " + t];
+  } catch (e) { console.warn("[kasvamo] pumput", e.message); }
+  return out;
+}
+async function notify(text) { for (const chat_id of await allowedChats()) await tg("sendMessage", { chat_id, text }); }
+export function kasvamoActive() { return Object.entries(st.active).filter(([, v]) => v).map(([k]) => st.msg[k] ?? k); }
+export function startKasvamoAlarms({ port }) {
+  const tick = async () => {
+    const c = await cfg(); if (!c.enabled) return;
+    const now = Date.now(); const delay = c.delay_min * 60_000;
+    for (const [key, [bad, msg]] of Object.entries(await evaluate(c, port))) {
+      if (bad && !st.active[key]) {
+        st.since[key] ??= now;
+        if (now - st.since[key] >= delay) {
+          st.active[key] = true; st.msg[key] = msg; console.log(`[kasvamo] ALARM ${key}: ${msg}`);
+          try { await notify(msg + " (ilmoitetaan kerran, palautumisesta erikseen)"); } catch (e) { console.warn("[kasvamo] telegram", e.message); }
+        }
+      } else if (!bad) {
+        delete st.since[key];
+        if (st.active[key]) {
+          st.active[key] = false; console.log(`[kasvamo] clear ${key}`);
+          try { await notify("✅ Palautui: " + (st.msg[key] ?? key).replace("🌱 ", "")); } catch (e) { console.warn("[kasvamo] telegram", e.message); }
+        }
+      }
+    }
+    save();
+  };
+  setTimeout(() => { tick().catch((e) => console.warn("[kasvamo]", e.message)); setInterval(() => tick().catch((e) => console.warn("[kasvamo]", e.message)), 60_000); }, 30_000);
+}
