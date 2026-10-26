@@ -8,7 +8,7 @@ import { startWeather } from "./weather.js";
 import { registerFmiWeather } from "./fmiWeather.js";
 import { registerPidAi } from "./pidAi.js";
 import { registerPumputRoutes } from "./pumput.js";
-import { startKasvamoAlarms } from "./kasvamoAlarms.js";
+import { startKasvamoAlarms, registerKasvamoAlarmRoutes } from "./kasvamoAlarms.js";
 import { registerMykoDb } from "./mykoDb.js";
 import { registerAnomaly } from "./anomaly.js";
 import { registerAssistant } from "./assistant.js";
@@ -1109,7 +1109,7 @@ function publishRetained(topic, message) {
 }
 // ---- OPC UA PID faceplates + PID alarm points: see pid.js ----
 registerPumputRoutes(app, { mqttClient: mqttPublisher }); // Pumput_DB, read-only
-startKasvamoAlarms({ port: PORT }); // Kasvamo raja-arvohälytykset -> Valvomo-botti
+startKasvamoAlarms({ port: PORT }); registerKasvamoAlarmRoutes(app); // Kasvamo raja-arvohälytykset -> Valvomo-botti
 // kunnossapito: log a manual PID command (UI / Kuittaa PLC-viat) as an action, linked to the PID's open auto-incident
 async function kpLogPidCommand({ key, cmd, result, actor = "myko-ui", label }) {
   const incident_id = await kpOpenIncidentFor([`${key}_PID`, PID_POINTS[key]]);

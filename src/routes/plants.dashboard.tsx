@@ -2,7 +2,8 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { Gauge } from "lucide-react";
 import { Card } from "@/components/ui/card";
-import { getDataloggerLatest, getPumput, getPvFeed, type DataloggerLatest, type PumputResponse } from "@/lib/apiClient";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { getDataloggerLatest, getKasvamoAlarms, putKasvamoAlarms, type KasvamoAlarms, type KasLimit, getPumput, getPvFeed, type DataloggerLatest, type PumputResponse } from "@/lib/apiClient";
 import { DashboardDataProvider } from "@/components/dashboard/DashboardData";
 import { MeasurementPointWidget } from "@/components/dashboard/MeasurementPointWidget";
 import { usePid, PID_STATE } from "@/components/dashboard/PidFaceplate";
@@ -45,6 +46,56 @@ function usePumput() {
   const b = (k: string) => (ok && typeof p.values[k] === "boolean" ? (p.values[k] as boolean) : undefined);
   const n = (k: string) => (ok && typeof p.values[k] === "number" ? (p.values[k] as number) : undefined);
   return { ok, b, n };
+}
+
+// Kasvamo-hälytysrajat (Myko-asetus kasvamo_alarms, backend kasvamoAlarms.js). Ei PLC-kirjoituksia.
+function useKasAlarms() {
+  const [a, setA] = useState<KasvamoAlarms | null>(null);
+  const load = () => getKasvamoAlarms().then(setA).catch(() => undefined);
+  useEffect(() => { load(); const t = setInterval(load, 15_000); return () => clearInterval(t); }, []);
+  return { a, setA, load };
+}
+const limTxt = (L?: KasLimit) => (!L ? undefined : !L.enabled ? "pois" : `${L.lo ?? ""}–${L.hi ?? ""}`);
+
+function AlarmDialog({ sig, data, onClose, onSaved }: { sig: string | null; data: KasvamoAlarms | null; onClose: () => void; onSaved: (d: KasvamoAlarms) => void }) {
+  const L = sig && data ? data.config.limits[sig] : undefined; const S = sig && data ? data.signals[sig] : undefined;
+  const [f, setF] = useState({ lo: "", hi: "", hyst: "", enabled: true, delay: "" });
+  const [err, setErr] = useState<string | null>(null); const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (L && data) setF({ lo: L.lo == null ? "" : String(L.lo), hi: L.hi == null ? "" : String(L.hi), hyst: String(L.hyst ?? 0), enabled: L.enabled !== false, delay: String(data.config.delay_min) });
+    setErr(null);
+  }, [sig]); // eslint-disable-line react-hooks/exhaustive-deps
+  const save = async () => {
+    if (!sig) return; setBusy(true); setErr(null);
+    const n = (v: string) => (v.trim() === "" ? null : Number(v.replace(",", ".")));
+    try {
+      const d = await putKasvamoAlarms({ delay_min: Number(f.delay.replace(",", ".")), limits: { [sig]: { lo: n(f.lo), hi: n(f.hi), hyst: n(f.hyst) ?? 0, enabled: f.enabled } } });
+      onSaved(d); onClose();
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
+  };
+  const inp = "w-full rounded border border-border bg-background px-2 py-1 font-mono text-sm";
+  return (
+    <Dialog open={!!sig} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-sm font-mono">
+        <DialogHeader><DialogTitle className="text-base">Hälytysrajat · {S?.name} {S?.unit && `(${S.unit})`}</DialogTitle></DialogHeader>
+        <div className="space-y-2 text-sm">
+          <label className="flex items-center gap-2"><input type="checkbox" checked={f.enabled} onChange={(e) => setF({ ...f, enabled: e.target.checked })} /> Hälytys käytössä</label>
+          <div className="grid grid-cols-3 gap-2">
+            <label>Alaraja<input className={inp} value={f.lo} placeholder="ei" onChange={(e) => setF({ ...f, lo: e.target.value })} /></label>
+            <label>Yläraja<input className={inp} value={f.hi} placeholder="ei" onChange={(e) => setF({ ...f, hi: e.target.value })} /></label>
+            <label>Hystereesi<input className={inp} value={f.hyst} onChange={(e) => setF({ ...f, hyst: e.target.value })} /></label>
+          </div>
+          <label className="block">Viive (min, kaikki signaalit)<input className={inp} value={f.delay} onChange={(e) => setF({ ...f, delay: e.target.value })} /></label>
+          <div className="text-xs text-muted-foreground">Tyhjä = ei rajaa. Sallittu {S?.range[0]}–{S?.range[1]}. Ilmoitus Valvomo-bottiin kerran alkaessa ja palautuessa. Vain Myko-asetus, ei PLC-kirjoitusta.</div>
+          {err && <div className="text-xs text-red-500">{err}</div>}
+          <div className="flex justify-end gap-2 pt-1">
+            <button className="rounded border border-border px-3 py-1" onClick={onClose}>Peruuta</button>
+            <button className="rounded bg-primary px-3 py-1 text-primary-foreground disabled:opacity-50" disabled={busy} onClick={save}>{busy ? "Tallennetaan…" : "Tallenna"}</button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 function useLive() {
@@ -96,16 +147,17 @@ function fmt(v: number | null | undefined, d: number) {
 }
 
 const ACCENT = "#f59e0b";
-function ValueBox({ x, y, w = 92, label, value, unit, wired = true, title, onClick, selected = false }: {
+function ValueBox({ x, y, w = 92, label, value, unit, wired = true, title, onClick, selected = false, alarm = false, limits, clickHint }: {
   x: number; y: number; w?: number; label: string; value?: string; unit?: string; wired?: boolean; title?: string;
-  onClick?: () => void; selected?: boolean;
+  onClick?: () => void; selected?: boolean; alarm?: boolean; limits?: string; clickHint?: string;
 }) {
   return (
     <g transform={`translate(${x},${y})`} opacity={wired ? 1 : 0.55} onClick={onClick}
       style={onClick ? { cursor: "pointer" } : undefined} role={onClick ? "button" : undefined}
       data-testid={onClick ? `pd-click-${label}` : undefined}>
-      <title>{(title ?? label) + (onClick ? " – avaa G_Air-säädin" : "")}</title>
-      <rect width={w} height={40} rx={6} fill={C.panel} stroke={selected ? ACCENT : wired ? C.stroke : C.na} strokeWidth={selected ? 2.5 : 1} strokeDasharray={wired ? undefined : "4 3"} />
+      <title>{(title ?? label) + (onClick ? (clickHint ?? " – avaa G_Air-säädin") : "")}</title>
+      <rect width={w} height={40} rx={6} fill={alarm ? "#7f1d1d" : C.panel} stroke={alarm ? C.off : selected ? ACCENT : wired ? C.stroke : C.na} strokeWidth={selected || alarm ? 2.5 : 1} strokeDasharray={wired ? undefined : "4 3"} />
+      {limits && <text x={w - 6} y={14} textAnchor="end" fontSize={8} fill={alarm ? "#fecaca" : C.muted} fontFamily="monospace">{limits}</text>}
       {selected && (
         <g transform={`translate(${w - 26},-7)`}>
           <rect width={26} height={14} rx={4} fill={ACCENT} />
@@ -221,6 +273,9 @@ function PlantsDashboardPage() {
   const ts = vals.level?.timestamp ?? vals.ec?.timestamp;
   const fan = v("fan");
   const pu = usePumput();
+  const ka = useKasAlarms(); const [alSig, setAlSig] = useState<string | null>(null);
+  const kAct = (k: string) => !!(ka.a?.active[`${k}:lo`] || ka.a?.active[`${k}:hi`]);
+  const kp = (k: string) => ({ onClick: () => setAlSig(k), clickHint: " – muokkaa hälytysrajoja", alarm: kAct(k), limits: limTxt(ka.a?.config.limits[k]) });
   const alarms = [["A_HumHH", "Kosteus HH"], ["A_Tayttovesi", "Täyttövesi"], ["EC_Below_Q", "EC alhainen (EC_Below)"]].filter(([k]) => pu.b(k));
   // HMI-ajastin (s) = FillingOnTime.ET (ms); HMI 5144 s ≈ ET 5 034 s luettaessa
   const fet = pu.n("FillingOnTime_ET");
@@ -301,10 +356,10 @@ function PlantsDashboardPage() {
 
           {/* Main tank */}
           <Tank x={300} y={320} w={130} h={200} level={v("level")} label="Ravinnesäiliö" />
-          <ValueBox x={442} y={330} w={100} label={pu.n("LVL_SP") !== undefined ? `Pinta · SP ${pu.n("LVL_SP")}` : "Pinta"} value={fmt(v("level"), 1)} unit="%" title={`${TAGS.level} Level`} />
-          <ValueBox x={442} y={376} w={100} label="Vesi" value={fmt(v("waterTemp"), 1)} unit="°C" title={`${TAGS.waterTemp} Water Temp`} />
-          <ValueBox x={442} y={422} w={100} label={pu.n("TDS_SP") !== undefined ? `EC · SP ${pu.n("TDS_SP")}` : "EC"} value={fmt(v("ec"), 0)} unit="ppm" title={`${TAGS.ec} ppm`} />
-          <ValueBox x={442} y={468} w={100} label="pH" value={fmt(v("ph"), 2)} title={`${TAGS.ph} pH`} />
+          <ValueBox x={442} y={330} w={100} label="Pinta" value={fmt(v("level"), 1)} unit="%" title={`${TAGS.level} Level · PLC SP ${pu.n("LVL_SP") ?? "—"} %`} {...kp("pinta")} />
+          <ValueBox x={442} y={376} w={100} label="Vesi" value={fmt(v("waterTemp"), 1)} unit="°C" title={`${TAGS.waterTemp} Water Temp`} {...kp("vesi")} />
+          <ValueBox x={442} y={422} w={100} label="EC" value={fmt(v("ec"), 0)} unit="ppm" title={`${TAGS.ec} ppm · PLC TDS_SP ${pu.n("TDS_SP") ?? "—"}`} {...kp("ec")} />
+          <ValueBox x={442} y={468} w={100} label="pH" value={fmt(v("ph"), 2)} title={`${TAGS.ph} pH`} {...kp("ph")} />
           <g opacity={0.55}>
             <title>Lämmitin: ei kytketty</title>
             <rect x={300} y={530} width={130} height={14} rx={3} fill={C.na} />
@@ -335,6 +390,7 @@ function PlantsDashboardPage() {
           <Tank x={840} y={420} w={90} h={100} label="" sub="Täyttövesi (Fill)" />
         </svg>
       </Card>
+      <AlarmDialog sig={alSig} data={ka.a} onClose={() => setAlSig(null)} onSaved={ka.setA} />
       <MeasurementPointWidget config={{ pointId: "GardenAir", name: "Kasvamo ilma · G_Air (PF-1)" }} open={fpOpen} onOpenChange={setFpOpen} dialogOnly />
       <div className="text-[11px] font-mono text-muted-foreground leading-relaxed">
         Harmaat katkoviivalla merkityt elementit: <b>ei kytketty</b> – signaalia ei ole tunnistettu Myko-datasta varmasti

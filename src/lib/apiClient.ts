@@ -587,6 +587,13 @@ export type PvFeed = {
 };
 export type PvFeedResponse = { key: string; feed: PvFeed; codes?: Record<string, string>; sources?: { topic: string; field: string; value: number; at: string; label?: string; dl?: string }[]; restricted?: boolean };
 export type PumputResponse = { at: string | null; stale: boolean; values: Record<string, number | boolean> };
+export type KasLimit = { lo: number | null; hi: number | null; hyst: number; enabled: boolean };
+export type KasvamoAlarms = { config: { enabled: boolean; delay_min: number; stale_min: number; limits: Record<string, KasLimit> }; active: Record<string, boolean>;
+  signals: Record<string, { dl: string; name: string; unit: string; range: [number, number] }> };
+export async function getKasvamoAlarms() { return requestJson<KasvamoAlarms>("/api/kasvamo/alarms"); }
+export async function putKasvamoAlarms(body: { delay_min?: number; limits?: Record<string, Partial<KasLimit>> }) {
+  return requestJson<KasvamoAlarms>("/api/kasvamo/alarms", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+}
 export async function getPumput() {
   return requestJson<PumputResponse>("/api/pumput");
 }
