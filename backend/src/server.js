@@ -13,6 +13,8 @@ import { registerAssistant } from "./assistant.js";
 import { registerProcessDoc } from "./processDoc.js";
 import { registerPvFeed } from "./pvfeed.js";
 import { registerAutoRecovery } from "./autoRecovery.js";
+import { registerIncidents } from "./incidents.js";
+import { kpLogAction, kpOpenIncidentFor, kq } from "./kunnossapito.js";
 import { tg, allowedChats } from "./telegram.js";
 import { normalizeOrigins, registerTraceRoutes, writeOrigins } from "./trace.js";
 
@@ -937,6 +939,12 @@ app.get(
       pid: ps ? { key: pidKey, at: new Date(ps.at).toISOString(), sp: ps.values?.SP ?? null, pv: ps.values?.PV ?? null, outHeat: ps.values?.OutHeat ?? null, outCool: ps.values?.OutCool ?? null, state: ps.values?.State ?? null, live: true } : null,
       related: rel.map((r) => ({ id: Number(r.id), pointId: r.point_id, pointName: names.get(r.point_id) ?? r.point_id, alarm: r.alarm, event: r.event, at: isoMs(r.at_iso), value: r.value === null ? null : Number(r.value), desc: r.event === "llm" ? r.alarm : alarmText(null, r.alarm).desc })),
       relatedLlm: await llmNear([pidKey, e.point_id, PID_POINTS[pidKey]].filter(Boolean), start),
+      incidents: await kq(`SELECT id, DATE_FORMAT(ts_start, '%Y-%m-%d %H:%i:%s') ts_start, DATE_FORMAT(ts_end, '%Y-%m-%d %H:%i:%s') ts_end, duration_s, alarm, device, status, resolved_by, signature, episodes,
+          LEFT(symptom, 300) symptom, LEFT(resolution, 300) resolution, (alarm_event_id = ?) this_alarm,
+          (SELECT COUNT(*) FROM actions a WHERE a.incident_id = incidents.id) n_actions,
+          (SELECT LEFT(GROUP_CONCAT(CONCAT(DATE_FORMAT(a.ts, '%H:%i'), ' ', a.actor, ': ', LEFT(a.action, 80)) ORDER BY a.ts DESC SEPARATOR '\n'), 600) FROM actions a WHERE a.incident_id = incidents.id) actions_txt
+        FROM incidents WHERE point_id IN (${fam.map(() => "?").join(",")}) OR device IN (?, ?) ORDER BY (alarm_event_id = ?) DESC, ts_start DESC LIMIT 8`,
+        [id, ...fam, pidKey ?? e.point_id, e.point_id, id]).then((rows) => rows.map((r) => ({ ...r, this_alarm: Boolean(Number(r.this_alarm)) }))).catch(() => []),
     });
   }),
 );
@@ -965,6 +973,7 @@ app.post(
       const r = await pidCommand(k, { ErrorAck: true }, "dashboard").catch((e) => ({ error: e.message }));
       await query("INSERT INTO alarm_events (point_id, alarm, bit, event, at, value, status_word) VALUES (?, ?, NULL, 'control', UTC_TIMESTAMP(3), NULL, NULL)",
         [PID_POINTS[k], `PID ErrorAck=true (Kuittaa PLC-viat)${r.error ? " (VIRHE)" : ""}`.slice(0, 80)]).catch(() => undefined);
+      kpLogPidCommand({ key: k, cmd: { ErrorAck: true }, result: r, label: `Kuittaa PLC-viat: ErrorAck ${k}` }).catch((e) => console.error("[kp] log", e.message));
       results.push({ key: k, error: r.error ?? null });
     }
     const okPoints = new Set(results.filter((r) => !r.error).map((r) => `${r.key}_PID`));
@@ -1097,10 +1106,19 @@ function publishRetained(topic, message) {
   });
 }
 // ---- OPC UA PID faceplates + PID alarm points: see pid.js ----
-const { pidCommand, pidState, setFeedAlarms, setHC, hcMode, pidActive, pidRestartAt, pidPvAt } = registerPidRoutes(app, { mqttClient: mqttPublisher, query, asyncRoute });
+// kunnossapito: log a manual PID command (UI / Kuittaa PLC-viat) as an action, linked to the PID's open auto-incident
+async function kpLogPidCommand({ key, cmd, result, actor = "myko-ui", label }) {
+  const incident_id = await kpOpenIncidentFor([`${key}_PID`, PID_POINTS[key]]);
+  const v = pidState(key)?.values ?? {};
+  await kpLogAction({ incident_id, actor, action: label ?? `PID ${key} command ${Object.entries(cmd).map(([a, b]) => `${a}=${b}`).join(", ")}`,
+    nodes: `/api/pid/${key}/cmd`, params: { cmd, before: { PV: v.PV, SP: v.CSP ?? v.SP, OutSum: v.OutSum, ErrBits: v.ErrBits, Warn: v.Warn, State: v.State, Mode: v.Mode } },
+    approved_by: "dashboard user", result: JSON.stringify(result ?? {}).slice(0, 1000), worked: result?.error ? 0 : null });
+}
+const { pidCommand, pidState, setFeedAlarms, setHC, hcMode, pidActive, pidRestartAt, pidPvAt, pidTrend, pidIntent, mqttConnected } = registerPidRoutes(app, { mqttClient: mqttPublisher, query, asyncRoute, onCommand: (a) => kpLogPidCommand(a) });
 // kunnossapito auto-recovery watcher (Telegram Tee/Älä, 10 min timeout -> autonomous); see autoRecovery.js
-registerAutoRecovery(app, { pidState, pidActive, pidRestartAt, pidPvAt, PID_POINTS, asyncRoute, port: Number(process.env.PORT || 3010),
+const autoRec = registerAutoRecovery(app, { pidState, pidActive, pidRestartAt, pidPvAt, PID_POINTS, asyncRoute, port: Number(process.env.PORT || 3010),
   notify: async (text, reply_markup) => { const out = []; for (const chat_id of await allowedChats()) out.push(await tg("sendMessage", { chat_id, text, ...(reply_markup ? { reply_markup } : {}) })); return out; } });
+registerIncidents({ query, PID_POINTS, PID_BY_POINT, pidState, pidActive, pidRestartAt, pidPvAt, pidTrend, pidIntent, mqttConnected, autoRecoveryMode: () => autoRec.mode() });
 startWeather({ query });
 registerFmiWeather(app, { query, asyncRoute });
 registerPidAi(app, { query, asyncRoute, pidState, PID_POINTS });

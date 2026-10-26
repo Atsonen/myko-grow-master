@@ -35,7 +35,7 @@ const INTENT_S = 60; // a Mode/ManualEnable command within this window makes a S
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const INTENT_FILE = path.join(DIR, "..", "pid-intent.json");
 
-export function registerPidRoutes(app, { mqttClient, query, asyncRoute }) {
+export function registerPidRoutes(app, { mqttClient, query, asyncRoute, onCommand }) {
   const state = {}; // key -> { at, values }
   const outSeen = {}; // key -> { v: last PidOutputSum, at: when it last changed }
   const trend = {}; // key -> [{t, pv, sp, out}]
@@ -230,6 +230,8 @@ export function registerPidRoutes(app, { mqttClient, query, asyncRoute }) {
         "INSERT INTO alarm_events (point_id, alarm, bit, event, at, value, status_word) VALUES (?, ?, NULL, 'control', UTC_TIMESTAMP(3), NULL, NULL)",
         [pointId, label],
       ).catch((e) => console.error("[pid] event log", e.message));
+      // kunnossapito action log (UI commands; auto-recovery logs its own and marks itself with x-myko-actor)
+      if (!req.get("x-myko-actor")) Promise.resolve(onCommand?.({ key, cmd, result: r, actor: "myko-ui" })).catch((e) => console.error("[pid] kp log", e.message));
       res.status(r.error ? 502 : 200).json(r);
     }),
   );
@@ -484,5 +486,5 @@ export function registerPidRoutes(app, { mqttClient, query, asyncRoute }) {
     res.json({ ...w, mode: "limits" });
   }));
 
-  return { pidCommand, setHC, hcMode: (k) => hc[k]?.mode ?? "bits", onHcMode: (f) => { hooks.onHcMode = f; }, pidState: (k) => state[k] ?? null, pidActive: (k) => [...(active[k] ?? [])], pidRestartAt: (k) => restartAt[k] ?? 0, pidPvAt: (k) => pvAt[k] ?? 0, setFeedAlarms: (f) => { hooks.feedAlarms = f; } };
+  return { pidCommand, setHC, hcMode: (k) => hc[k]?.mode ?? "bits", onHcMode: (f) => { hooks.onHcMode = f; }, pidState: (k) => state[k] ?? null, pidActive: (k) => [...(active[k] ?? [])], pidRestartAt: (k) => restartAt[k] ?? 0, pidPvAt: (k) => pvAt[k] ?? 0, pidTrend: (k) => trend[k] ?? [], pidIntent: (k) => intent[k] ?? null, mqttConnected: () => Boolean(c.connected), setFeedAlarms: (f) => { hooks.feedAlarms = f; } };
 }

@@ -8,7 +8,7 @@
 //  in a known_fix is refused. Max one attempt per PID per 30 min; a failed attempt is not retried until the symptoms clear.
 //  AUTORECOVERY_MODE=live|dryrun|off (default live). dryrun: everything except the PID commands (logged as DRY-RUN).
 import { randomUUID } from "node:crypto";
-import { kpMatch, kpLogIncident, kpUpdateIncident, kpLogAction, kpFixWorked, helNow } from "./kunnossapito.js";
+import { kpMatch, kpLogIncident, kpUpdateIncident, kpLogAction, kpFixWorked, kpFixFailed, kpOpenIncidentFor, helNow } from "./kunnossapito.js";
 
 export const ASK_MS = 10 * 60_000, DEBOUNCE_MS = 30 * 60_000, VERIFY_MS = 10 * 60_000, RESTART_WINDOW_MS = 30 * 60_000;
 export const ERRBITS_HOLD_MS = 30_000, SETTLE_MS = 60_000, PV_MIN = 10, PV_MAX = 35;
@@ -74,8 +74,15 @@ export function registerAutoRecovery(app, { pidState, pidActive, pidRestartAt, p
   const mode = () => (process.env.AUTORECOVERY_MODE || "live").toLowerCase();
   const errSince = {}, lastAttempt = {}, failedLock = {}, pending = new Map(); // id -> proposal
   const busy = {};
+  const noAct = {}; // k -> last logged "did nothing" reason (logged once per change per symptom episode)
+  const pidPoints = (k) => [`${k}_PID`, PID_POINTS[k]];
+  const logNoAction = async (k, reason, detail) => {
+    const key = reason.replace(/-?\d+(\.\d+)?/g, "#"); if (noAct[k] === key) return; noAct[k] = key;
+    const incident_id = await kpOpenIncidentFor(pidPoints(k)).catch(() => null);
+    await kpLogAction({ incident_id, actor: "myko-autorecovery", action: `No action: ${reason}`, result: detail ? String(detail).slice(0, 1500) : null, worked: null }).catch(() => undefined);
+  };
   const sendCmd = async (k, body) => {
-    const r = await fetch(`http://127.0.0.1:${port}/api/pid/${k}/cmd`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(15_000) });
+    const r = await fetch(`http://127.0.0.1:${port}/api/pid/${k}/cmd`, { method: "POST", headers: { "Content-Type": "application/json", "x-myko-actor": "myko-autorecovery" }, body: JSON.stringify(body), signal: AbortSignal.timeout(15_000) });
     const b = await r.json().catch(() => ({})); return { ok: r.ok && !b.error, body: b };
   };
   const say = (text, markup) => notify(text, markup).catch((e) => { console.error("[autorecovery] telegram", e.message); return []; });
@@ -88,24 +95,29 @@ export function registerAutoRecovery(app, { pidState, pidActive, pidRestartAt, p
       if (Number(v.ErrBits ?? 0) !== 0) errSince[k] ??= now; else delete errSince[k];
       const restartAt = pidRestartAt(k) ?? 0;
       const sym = s ? buildSymptom(k, v, pidActive(k), { errSince: errSince[k], restartAt, now }) : null;
-      if (!sym) { delete failedLock[k]; continue; }
+      if (!sym) { delete failedLock[k]; delete noAct[k]; continue; }
+      if (failedLock[k] && !busy[k]) { await logNoAction(k, "failed attempt lock (previous fix failed, no retry until symptoms clear)", sym.symptoms.join(", ")); continue; }
       if (busy[k] || failedLock[k] || [...pending.values()].some((p) => p.k === k) || now - (lastAttempt[k] ?? 0) < DEBOUNCE_MS) continue;
       const pre = checkPreconditions(v, { at: s.at, pvAt: pidPvAt(k), restartAt: restartAt && now - restartAt < RESTART_WINDOW_MS ? restartAt : 0, now });
-      if (!pre.ok) continue; // e.g. PV still invalid right after a restart: wait
-      const fix = (await kpMatch(sym).catch((e) => { console.error("[autorecovery] match", e.message); return []; })).find((f) => f.autonomy_eligible);
-      if (!fix) continue; // policy: never act without an eligible known fix
+      if (!pre.ok) { await logNoAction(k, `preconditions not met: ${pre.reasons.join("; ")}`, JSON.stringify({ sym, PV: v.PV, Mode: v.Mode, State: v.State, ManEn: v.ManEn })); continue; } // e.g. PV still invalid right after a restart: wait
+      const matches = await kpMatch(sym).catch((e) => { console.error("[autorecovery] match", e.message); return []; });
+      const fix = matches.find((f) => f.autonomy_eligible);
+      if (!fix) { await logNoAction(k, matches.length ? "no autonomy-eligible known fix (matches need approval / times_worked<1)" : "no matching known fix",
+        JSON.stringify({ sym, matches: matches.map((m) => ({ fix_id: m.fix_id, name: m.name, times_worked: m.times_worked, eligible: m.autonomy_eligible })) })); continue; } // policy: never act without an eligible known fix
       try { planFromSteps(fix.steps); } catch (e) { console.error(`[autorecovery] fix #${fix.fix_id} refused: ${e.message}`); lastAttempt[k] = now; continue; }
       lastAttempt[k] = now;
       const id = randomUUID().slice(0, 8), deadline = now + ASK_MS, dry = mode() === "dryrun";
-      const inc = await kpLogIncident({ system: "PLC_2", device: k, symptom: `Auto-detected: ${sym.symptoms.join(", ")}; PV ${v.PV}, SP ${v.CSP ?? v.SP}, OutSum ${v.OutSum}, ErrBits ${v.ErrBits}`,
+      const autoInc = await kpOpenIncidentFor(pidPoints(k)).catch(() => null);
+      const inc = autoInc ? { id: autoInc } : await kpLogIncident({ system: "PLC_2", device: k, symptom: `Auto-detected: ${sym.symptoms.join(", ")}; PV ${v.PV}, SP ${v.CSP ?? v.SP}, OutSum ${v.OutSum}, ErrBits ${v.ErrBits}`,
         conditions: [...sym.conditions, ...sym.symptoms], status: "open" }).catch(() => ({ id: null }));
-      const p = { id, k, fix, sym, incidentId: inc.id, createdAt: now, deadline, dry, status: "asked" };
+      const p = { id, k, fix, sym, incidentId: inc.id, ownIncident: !autoInc, createdAt: now, deadline, dry, status: "asked" };
       pending.set(id, p);
       await kpLogAction({ incident_id: inc.id, actor: "myko-autorecovery", action: `Proposed known_fix #${fix.fix_id} via Telegram (deadline ${hhmm(deadline)})`, known_fix_id: fix.fix_id, params: sym }).catch(() => undefined);
       await say(formatProposal({ k, v, sym, fix, deadline, dry }), proposalButtons(id));
       console.log(`[autorecovery] ${k} proposal ${id} fix #${fix.fix_id} (${mode()})`);
     }
-    for (const p of pending.values()) if (p.status === "asked" && now >= p.deadline) { p.status = "running"; execute(p, "autonomous (no reply 10 min)").catch((e) => console.error("[autorecovery] exec", e.message)); }
+    for (const p of pending.values()) if (p.status === "asked" && now >= p.deadline) { p.status = "running";
+      kpLogAction({ incident_id: p.incidentId, actor: "myko-autorecovery", action: `No Telegram reply within ${ASK_MS / 60_000} min -> executing known_fix #${p.fix.fix_id} autonomously`, approved_by: "autonomous (timeout)", known_fix_id: p.fix.fix_id }).catch(() => undefined); execute(p, "autonomous (no reply 10 min)").catch((e) => console.error("[autorecovery] exec", e.message)); }
   }
 
   async function execute(p, approvedBy) {
@@ -125,7 +137,7 @@ export function registerAutoRecovery(app, { pidState, pidActive, pidRestartAt, p
         const r = p.dry ? { ok: true, body: { dryRun: true } } : await sendCmd(k, st.body);
         await kpLogAction({ incident_id: p.incidentId, actor: "myko-autorecovery", action: `${p.dry ? "DRY-RUN " : ""}POST /api/pid/${k}/cmd`, nodes: `/api/pid/${k}/cmd`, params: st.body,
           approved_by: approvedBy, result: JSON.stringify(r.body).slice(0, 500), worked: null, known_fix_id: fix.fix_id });
-        if (!r.ok) { failedLock[k] = true; await say(`❌ ${NAMES[k]}: komento ${JSON.stringify(st.body)} epäonnistui: ${JSON.stringify(r.body).slice(0, 150)}. Ei uusintayritystä.`); await kpUpdateIncident(p.incidentId, { resolution: "auto-recovery command failed" }); return; }
+        if (!r.ok) { failedLock[k] = true; await kpFixFailed(fix.fix_id).catch(() => undefined); await say(`❌ ${NAMES[k]}: komento ${JSON.stringify(st.body)} epäonnistui: ${JSON.stringify(r.body).slice(0, 150)}. Ei uusintayritystä.`); await kpUpdateIncident(p.incidentId, { resolution: "auto-recovery command failed" }); return; }
       }
       if (p.dry) { await say(`[DRY-RUN] ${NAMES[k]}: korjaus #${fix.fix_id} simuloitu (${approvedBy}); PID-komentoja ei lähetetty.`); return; }
       await say(`▶️ ${NAMES[k]}: korjaus #${fix.fix_id} suoritettu (${approvedBy}). Tarkistan 10 min ajan…`);
@@ -137,8 +149,8 @@ export function registerAutoRecovery(app, { pidState, pidActive, pidRestartAt, p
       }
       const res = `ErrBits ${last.ErrBits}, OutSum ${out0}→${last.OutSum}, PV ${last.PV} after ${Math.round((Date.now() - t0) / 1000)} s`;
       await kpLogAction({ incident_id: p.incidentId, actor: "myko-autorecovery", action: `Verification of known_fix #${fix.fix_id}`, approved_by: approvedBy, result: res, worked: ok, known_fix_id: fix.fix_id });
-      if (ok) { await kpFixWorked(fix.fix_id); await kpUpdateIncident(p.incidentId, { ts_end: helNow(), status: "resolved", resolution: `Auto-recovery known_fix #${fix.fix_id} (${approvedBy}): ${res}` }); }
-      else { failedLock[k] = true; await kpUpdateIncident(p.incidentId, { resolution: `Auto-recovery known_fix #${fix.fix_id} did NOT verify: ${res}` }); }
+      if (ok) { await kpFixWorked(fix.fix_id); await kpUpdateIncident(p.incidentId, { ...(p.ownIncident ? { ts_end: helNow() } : {}), status: "resolved", resolved_by: "auto_recovery", resolution: `Auto-recovery known_fix #${fix.fix_id} (${approvedBy}): ${res}` }); }
+      else { failedLock[k] = true; await kpFixFailed(fix.fix_id).catch(() => undefined); await kpUpdateIncident(p.incidentId, { resolution: `Auto-recovery known_fix #${fix.fix_id} did NOT verify: ${res}` }); }
       await say(ok ? `✅ ${NAMES[k]} palautui: ${res}.` : `❌ ${NAMES[k]}: korjaus ei auttanut 10 min kuluessa (${res}). Ei uusintayritystä – tarkista käsin.`);
     } finally { busy[k] = false; p.status = "done"; pending.delete(p.id); lastAttempt[k] = Date.now(); }
   }
@@ -155,11 +167,12 @@ export function registerAutoRecovery(app, { pidState, pidActive, pidRestartAt, p
       return res.json({ ok: true, text: "Ohitettu – ei toimenpiteitä" });
     }
     if (decision !== "do") return res.status(400).json({ error: "decision do|skip" });
+    await kpLogAction({ incident_id: p.incidentId, actor: "myko-autorecovery", action: `User approved known_fix #${p.fix.fix_id} via Telegram`, approved_by: by ?? "telegram", known_fix_id: p.fix.fix_id }).catch(() => undefined);
     p.status = "running"; execute(p, `telegram (${by ?? "?"})`).catch((e) => console.error("[autorecovery] exec", e.message));
     res.json({ ok: true, text: "Suoritetaan…" });
   }));
   app.get("/api/autorecovery", (req, res) => res.json({ mode: mode(), pending: [...pending.values()].map(({ id, k, status, deadline, fix }) => ({ id, k, status, deadline: new Date(deadline).toISOString(), fix: fix.fix_id })),
     lastAttempt: Object.fromEntries(Object.entries(lastAttempt).map(([k, t]) => [k, new Date(t).toISOString()])), failedLock }));
   setTimeout(() => setInterval(() => tick().catch((e) => console.error("[autorecovery]", e.message)), 10_000).unref(), 30_000).unref();
-  return { tick, pending };
+  return { tick, pending, mode };
 }

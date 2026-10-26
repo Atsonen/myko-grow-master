@@ -93,6 +93,26 @@ export function AlarmDetailDialog({ id, onClose }: { id: number | null; onClose:
                   </ul>
                 )}
               </div>
+              {(d.incidents?.length ?? 0) > 0 && (
+                <div data-testid="al-detail-incidents">
+                  <div className="text-xs uppercase text-muted-foreground">Kunnossapito – liittyvät viat (uusimmat)</div>
+                  <ul className="mt-1 space-y-1.5">{d.incidents!.map((i) => (
+                    <li key={i.id} className={`rounded border px-2 py-1 ${i.this_alarm ? "border-amber-400/60" : "border-border"}`}>
+                      <div>
+                        <span className="font-mono">#{i.id}</span> <span className="tabular-nums text-muted-foreground">{i.ts_start}{i.ts_end ? ` → ${i.ts_end.slice(11)}` : ""}</span>
+                        {i.alarm ? <span className="ml-1 font-mono">{i.alarm}</span> : null}
+                        <span className={`ml-1.5 rounded px-1.5 py-px text-[11px] font-bold ${i.status === "open" ? "bg-red-700 text-white" : "bg-zinc-700 text-zinc-100"}`}>{i.status === "open" ? "avoin" : i.resolved_by === "cleared" ? "poistui itsestään" : i.resolved_by === "manual_action" ? "ratkesi toimenpiteellä" : i.resolved_by === "auto_recovery" ? "automaattikorjaus" : i.status}</span>
+                        {i.duration_s != null ? <span className="ml-1 text-muted-foreground">{Math.round(i.duration_s / 60)} min</span> : null}
+                        {i.episodes > 1 ? <span className="ml-1 text-muted-foreground">×{i.episodes}</span> : null}
+                        {i.this_alarm ? <span className="ml-1 text-amber-300">(tämä hälytys)</span> : null}
+                      </div>
+                      <div className="text-muted-foreground">{i.symptom}</div>
+                      {i.resolution ? <div className="text-muted-foreground">→ {i.resolution}</div> : null}
+                      {i.actions_txt ? <pre className="mt-0.5 whitespace-pre-wrap font-mono text-[11px] text-muted-foreground">{i.actions_txt}</pre> : null}
+                    </li>
+                  ))}</ul>
+                </div>
+              )}
               {d.relatedLlm.length > 0 && (
                 <div>
                   <div className="text-xs uppercase text-muted-foreground">DeepSeek-valvojan havainnot (±10 min)</div>

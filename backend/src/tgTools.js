@@ -5,7 +5,7 @@
 // ~/.local/state/myko/tg_ai_queries.log (JSONL). Never touches the PLC.
 import * as mariadb from "mariadb";
 import { readFileSync, appendFileSync, mkdirSync } from "node:fs";
-import { kpSearch, kpShowIncident, kpMatch, kpListFixes, kpPolicy, kpLogIncident, kpLogAction } from "./kunnossapito.js";
+import { kpSearch, kpShowIncident, kpMatch, kpListFixes, kpPolicy, kpLogIncident, kpLogAction, kpRecentIncidents, kpCandidates, kpStats } from "./kunnossapito.js";
 
 const RO_FILE = process.env.MYKO_DB_RO_ENV || "/home/atte/.config/myko/db_ro.env";
 const AUDIT_DIR = "/home/atte/.local/state/myko";
@@ -123,6 +123,11 @@ export const TOOLS = [
     conditions: { type: "array", items: { type: "string" }, description: "esim. ['PLC restart/download']" },
     symptoms: { type: "array", items: { type: "string" }, description: "esim. ['ERRORBITS','PID_LAHTO_JUMISSA','PID output frozen']" } }),
   fn("kp_list_fixes", "Listaa tunnetut korjaukset.", {}),
+  fn("kp_recent_incidents", "Viimeisimmät viat (myös Mykon automaattisesti avaamat hälytyksistä) täydellä kontekstilla: context_open/context_close (PID-arvot, 30 min/6 h trendi min/max/slope, PLC-restart, yhteydet, viimeisin komento, ulkolämpö, muut aktiiviset hälytykset), signature, kesto, resolved_by (cleared/manual_action/auto_recovery).", {
+    hours: { type: "integer", description: "oletus 72" }, device: { type: "string", description: "esim. T1, F1, G_Air tai piste-id" }, alarm: { type: "string", description: "esim. PID_VIKA" },
+    status: { type: "string", enum: ["open", "resolved", "info", "closed"] }, limit: { type: "integer", description: "max 50" } }),
+  fn("kp_candidates", "Korjausehdokkaat: käsin tehdyt toimenpiteet, joiden jälkeen hälytys poistui (ryhmitelty signaturen ja toimenpiteen mukaan). Ehdokas ei ole tunnettu korjaus; ylennys ja autonomia vaativat aina käyttäjän hyväksynnän.", {}),
+  fn("kp_stats", "Tilastot: viat hälytystyypeittäin (määrä, kesto, miten ratkesi), signaturet, tunnettujen korjausten onnistumiset/epäonnistumiset.", {}),
   fn("kp_policy", "Autonomisten toimenpiteiden politiikka.", {}),
   fn("kp_log_incident", "KIRJAA uusi vika kunnossapitoon (ei tee toimenpiteitä).", { system: { type: "string" }, device: { type: "string" }, symptom: { type: "string" },
     conditions: { type: "array", items: { type: "string" } }, root_cause: { type: "string" }, resolution: { type: "string" }, status: { type: "string", enum: ["open", "resolved", "info", "closed"] },
@@ -134,7 +139,8 @@ const kpPack = async (p) => pack(await p, "kunnossapito; ajat Europe/Helsinki");
 const IMPL = { get_measurements: getMeasurements, get_alarm_history: getAlarmHistory, list_tables: listTables, describe_table: describeTable, run_sql: runSql,
   kp_search: (a) => kpPack(kpSearch(a.text)), kp_show_incident: (a) => kpPack(kpShowIncident(a.id)),
   kp_match: (a) => kpPack(kpMatch({ system: a.system, device: a.device, conditions: a.conditions ?? [], symptoms: a.symptoms ?? [] })),
-  kp_list_fixes: () => kpPack(kpListFixes()), kp_policy: () => kpPack(kpPolicy()),
+  kp_list_fixes: () => kpPack(kpListFixes()),
+  kp_recent_incidents: (a) => kpPack(kpRecentIncidents(a ?? {})), kp_candidates: () => kpPack(kpCandidates()), kp_stats: () => kpPack(kpStats()), kp_policy: () => kpPack(kpPolicy()),
   kp_log_incident: (a) => kpPack(kpLogIncident(a)),
   kp_log_action: (a) => kpPack(kpLogAction({ ...a, actor: "deepseek-telegram", known_fix_id: null })) };
 export async function callTool(name, args, ctx = {}) {

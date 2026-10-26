@@ -51,7 +51,7 @@ export async function kpShowIncident(id) {
   return inc ? { incident: inc, actions: await kq("SELECT * FROM actions WHERE incident_id = ? ORDER BY ts", [Number(id)]) } : { error: "ei löydy" };
 }
 export async function kpGetFix(id) { const [f] = await kq("SELECT * FROM known_fixes WHERE id = ?", [Number(id)]); return f ? { ...f, steps: j(f.steps), trigger_conditions: j(f.trigger_conditions) } : null; }
-export async function kpListFixes() { return kq("SELECT id, name, times_worked, autonomy_allowed, preconditions, verification FROM known_fixes ORDER BY id"); }
+export async function kpListFixes() { return kq("SELECT id, name, times_worked, times_failed, last_worked, last_failed, autonomy_allowed, preconditions, verification FROM known_fixes ORDER BY id"); }
 export async function kpPolicy() { return kq("SELECT name, text FROM policy"); }
 const STATUSES = ["open", "resolved", "info", "closed"];
 export async function kpLogIncident(a) {
@@ -63,7 +63,7 @@ export async function kpLogIncident(a) {
 }
 export async function kpUpdateIncident(id, a) {
   const sets = [], p = [];
-  for (const k of ["ts_end", "root_cause", "resolution"]) if (a[k] !== undefined) { sets.push(`${k} = ?`); p.push(a[k]); }
+  for (const k of ["ts_end", "root_cause", "resolution", "resolved_by", "resolving_action_id"]) if (a[k] !== undefined) { sets.push(`${k} = ?`); p.push(a[k]); }
   if (a.status && STATUSES.includes(a.status)) { sets.push("status = ?"); p.push(a.status); }
   if (!sets.length) return { id };
   await kq(`UPDATE incidents SET ${sets.join(", ")} WHERE id = ?`, [...p, Number(id)]);
@@ -76,4 +76,33 @@ export async function kpLogAction(a) {
       a.approved_by ?? null, a.result ?? null, a.worked == null ? null : a.worked ? 1 : 0, a.known_fix_id ?? null]);
   return { id: Number(r.insertId) };
 }
-export async function kpFixWorked(fixId) { await kq("UPDATE known_fixes SET times_worked = times_worked + 1 WHERE id = ?", [Number(fixId)]); }
+export async function kpFixWorked(fixId) { await kq("UPDATE known_fixes SET times_worked = times_worked + 1, last_worked = ? WHERE id = ?", [helNow(), Number(fixId)]); }
+export async function kpFixFailed(fixId) { await kq("UPDATE known_fixes SET times_failed = times_failed + 1, last_failed = ? WHERE id = ?", [helNow(), Number(fixId)]); }
+/** Open auto-incident (myko-auto, not yet ended) for any of the given alarm point ids; PID fault types first. */
+export async function kpOpenIncidentFor(pointIds) {
+  const ids = (Array.isArray(pointIds) ? pointIds : [pointIds]).filter(Boolean);
+  if (!ids.length) return null;
+  const [r] = await kq(`SELECT id FROM incidents WHERE source = 'myko-auto' AND ts_end IS NULL AND point_id IN (${ids.map(() => "?").join(",")})
+    ORDER BY FIELD(alarm, 'PID_VIKA', 'ERRORBITS', 'PID_LAHTO_JUMISSA') DESC, id DESC LIMIT 1`, ids);
+  return r ? Number(r.id) : null;
+}
+// ---- read tools for the DeepSeek assistant ----
+export async function kpRecentIncidents({ hours = 72, device, alarm, limit = 20, status } = {}) {
+  const w = ["ts_start >= ? - INTERVAL ? HOUR"], p = [helNow(), Math.min(Number(hours) || 72, 24 * 90)];
+  if (device) { w.push("(device = ? OR point_id = ?)"); p.push(String(device), String(device)); }
+  if (alarm) { w.push("alarm = ?"); p.push(String(alarm)); }
+  if (status) { w.push("status = ?"); p.push(String(status)); }
+  const rows = await kq(`SELECT i.id, i.ts_start, i.ts_end, i.duration_s, i.source, i.\`system\`, i.device, i.point_id, i.alarm, i.status, i.resolved_by, i.resolving_action_id,
+      i.signature, i.episodes, i.symptom, i.resolution, i.context_open, i.context_close,
+      (SELECT COUNT(*) FROM actions a WHERE a.incident_id = i.id) n_actions
+    FROM incidents i WHERE ${w.join(" AND ")} ORDER BY i.ts_start DESC LIMIT ${Math.min(Number(limit) || 20, 50)}`, p);
+  return rows.map((r) => ({ ...r, context_open: j(r.context_open), context_close: j(r.context_close) }));
+}
+export async function kpCandidates() { return kq("SELECT * FROM known_fix_candidates ORDER BY times_resolved DESC, last_seen DESC LIMIT 50"); }
+export async function kpStats() {
+  return {
+    incidents_by_alarm: await kq("SELECT * FROM incident_stats ORDER BY n DESC"),
+    known_fixes: await kq("SELECT id, name, times_worked, times_failed, last_worked, last_failed, autonomy_allowed FROM known_fixes ORDER BY id"),
+    by_signature: await kq("SELECT signature, COUNT(*) n, SUM(resolved_by='cleared') cleared, SUM(resolved_by='manual_action') manual, SUM(resolved_by='auto_recovery') auto, ROUND(AVG(duration_s)) avg_s, MAX(ts_start) last FROM incidents WHERE signature IS NOT NULL GROUP BY signature ORDER BY n DESC LIMIT 30"),
+  };
+}

@@ -529,6 +529,10 @@ export async function plcErrorAckAll(dryRun = false) {
 }
 export interface AlarmDetailEvent { id: number; pointId: string; pointName: string; alarm: string; event: string; at: string; value: number | null; desc: string }
 export interface AlarmDetailLlm { id: number; at: string; severity: string; point: string; category: string; finding: string; suggestion: string; duplicate: boolean }
+export interface AlarmDetailIncident {
+  id: number; ts_start: string; ts_end: string | null; duration_s: number | null; alarm: string | null; device: string | null; status: string;
+  resolved_by: string | null; signature: string | null; episodes: number; symptom: string; resolution: string | null; this_alarm: boolean; n_actions: number; actions_txt: string | null;
+}
 export interface AlarmDetail {
   kind: "alarm" | "llm"; id: number; pointId?: string; pointName: string; unit?: string; alarm: string; bit?: number | null;
   desc: string; rule?: string | null; threshold?: string | null; level?: string | null; priority?: 1 | 2; source: "PLC" | "Myko" | "LLM";
@@ -536,7 +540,7 @@ export interface AlarmDetail {
   acked?: boolean; ackedAt?: string | null; ackedBy?: string | null;
   pid?: { key: string; at: string; sp: number | null; pv: number | null; outHeat: number | null; outCool: number | null; state: number | null; live: boolean } | null;
   finding?: string; suggestion?: string; severity?: string; category?: string; point?: string; trigger?: string; recommendReset?: boolean; whatsapp?: boolean | null;
-  related: AlarmDetailEvent[]; relatedLlm: AlarmDetailLlm[];
+  related: AlarmDetailEvent[]; relatedLlm: AlarmDetailLlm[]; incidents?: AlarmDetailIncident[];
 }
 export async function getAlarmDetail(id: number) {
   return requestJson<AlarmDetail>(`/api/alarms/detail/${id}`);
