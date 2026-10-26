@@ -16,7 +16,7 @@ try { st = { ...st, ...JSON.parse(fs.readFileSync(STATE, "utf8")) }; } catch { /
 const save = () => { try { fs.writeFileSync(STATE + ".tmp", JSON.stringify(st)); fs.renameSync(STATE + ".tmp", STATE); } catch (e) { console.warn("[kasvamo] state", e.message); } };
 async function cfg() {
   const [r] = await query("SELECT v FROM myko_settings WHERE k = 'kasvamo_alarms'");
-  let c = {}; try { c = r ? JSON.parse(r.v) : {}; } catch { /* default */ }
+  let c = {}; try { c = r ? (typeof r.v === "string" ? JSON.parse(r.v) : (r.v ?? {})) : {}; } catch { /* default */ }
   return { ...DEF, ...c, limits: Object.fromEntries(Object.keys(DEF.limits).map((k) => [k, { ...DEF.limits[k], ...(c.limits?.[k] ?? {}) }])) };
 }
 async function evaluate(c, port) {
