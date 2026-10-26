@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { Gauge } from "lucide-react";
 import { Card } from "@/components/ui/card";
-import { getDataloggerLatest, getPvFeed, type DataloggerLatest } from "@/lib/apiClient";
+import { getDataloggerLatest, getPumput, getPvFeed, type DataloggerLatest, type PumputResponse } from "@/lib/apiClient";
 import { DashboardDataProvider } from "@/components/dashboard/DashboardData";
 import { MeasurementPointWidget } from "@/components/dashboard/MeasurementPointWidget";
 import { usePid, PID_STATE } from "@/components/dashboard/PidFaceplate";
@@ -30,6 +30,22 @@ const TAGS = {
 } as const;
 type TagName = keyof typeof TAGS;
 const POLL_MS = 5000;
+
+// Pumput_DB (OPC UA, väliaikainen): vain luku. Kytketty vain yksiselitteiset signaalit.
+function usePumput() {
+  const [p, setP] = useState<PumputResponse | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const load = () => getPumput().then((d) => alive && setP(d)).catch(() => undefined);
+    load();
+    const t = setInterval(load, POLL_MS);
+    return () => { alive = false; clearInterval(t); };
+  }, []);
+  const ok = p && !p.stale;
+  const b = (k: string) => (ok && typeof p.values[k] === "boolean" ? (p.values[k] as boolean) : undefined);
+  const n = (k: string) => (ok && typeof p.values[k] === "number" ? (p.values[k] as number) : undefined);
+  return { ok, b, n };
+}
 
 function useLive() {
   const [vals, setVals] = useState<Partial<Record<TagName, DataloggerLatest>>>({});
@@ -153,15 +169,16 @@ function Tank({ x, y, w, h, level, label, sub }: { x: number; y: number; w: numb
   );
 }
 
-function Btn({ x, y, w, label, badge }: { x: number; y: number; w: number; label: string; badge?: string }) {
+function Btn({ x, y, w, label, badge, badgeColor, title }: { x: number; y: number; w: number; label: string; badge?: string; badgeColor?: string; title?: string }) {
+  const wired = !!title;
   return (
-    <g transform={`translate(${x},${y})`} opacity={0.5}>
-      <title>{`${label}: ei kytketty (vain näyttö)`}</title>
-      <rect width={w} height={26} rx={5} fill={C.panel} stroke={C.na} strokeDasharray="4 3" />
-      <text x={w / 2} y={17} textAnchor="middle" fontSize={11} fill={C.muted} fontFamily="monospace">{label}</text>
+    <g transform={`translate(${x},${y})`} opacity={wired ? 1 : 0.5}>
+      <title>{title ?? `${label}: ei kytketty (vain näyttö)`}</title>
+      <rect width={w} height={26} rx={5} fill={C.panel} stroke={wired ? C.stroke : C.na} strokeDasharray={wired ? undefined : "4 3"} />
+      <text x={w / 2} y={17} textAnchor="middle" fontSize={11} fill={wired ? C.text : C.muted} fontFamily="monospace">{label}</text>
       {badge !== undefined && (
         <g transform={`translate(${w - 4},-4)`}>
-          <circle r={9} fill={C.na} />
+          <circle r={9} fill={badgeColor ?? C.na} />
           <text y={3} textAnchor="middle" fontSize={8} fill="#fff" fontFamily="monospace">{badge}</text>
         </g>
       )}
@@ -203,6 +220,11 @@ function PlantsDashboardPage() {
   const v = (k: TagName) => vals[k]?.value ?? null;
   const ts = vals.level?.timestamp ?? vals.ec?.timestamp;
   const fan = v("fan");
+  const pu = usePumput();
+  const alarms = [["A_HumHH", "Kosteus HH"], ["A_Tayttovesi", "Täyttövesi"], ["EC_Below_Q", "EC alhainen (EC_Below)"]].filter(([k]) => pu.b(k));
+  // HMI-ajastin (s) = FillingOnTime.ET (ms); HMI 5144 s ≈ ET 5 034 s luettaessa
+  const fet = pu.n("FillingOnTime_ET");
+  const tmr = fet !== undefined ? `${Math.round(fet / 1000)} s` : undefined;
 
   return (
     <div className="p-4 space-y-3 max-w-6xl">
@@ -259,7 +281,8 @@ function PlantsDashboardPage() {
           <Btn x={118} y={16} w={50} label="EC" />
           <Btn x={176} y={16} w={50} label="PH" />
           <Btn x={20} y={50} w={28} label="S" />
-          <Btn x={840} y={110} w={90} label="Hälytykset" badge="?" />
+          <Btn x={840} y={110} w={90} label="Hälytykset" badge={pu.ok ? String(alarms.length) : "?"} badgeColor={pu.ok ? (alarms.length ? C.off : C.on) : undefined}
+            title={pu.ok ? `Pumput_DB-hälytykset: ${alarms.length ? alarms.map((a) => a[1]).join(", ") : "ei aktiivisia"} (A_HumHH.Active, Tayttovesi.Active, EC_Below.Q)` : undefined} />
           <Btn x={840} y={146} w={90} label="Kuittaus" />
           {/* yellow status bars */}
           <g opacity={0.5}>
@@ -271,16 +294,16 @@ function PlantsDashboardPage() {
           </g>
 
           {/* Pipes */}
-          <Pipe d="M 60 360 V 260 H 300 V 320" />
+          <Pipe d="M 60 360 V 260 H 300 V 320" active={pu.b("Circulation_L")} />
           <Pipe d="M 160 420 V 350 H 330" />
-          <Pipe d="M 360 320 V 230 H 800 V 360" />
-          <Pipe d="M 400 320 V 270 H 690 V 360" />
+          <Pipe d="M 360 320 V 230 H 800 V 360" active={pu.b("Filling")} />
+          <Pipe d="M 400 320 V 270 H 690 V 360" active={pu.b("Circulation_R")} />
 
           {/* Main tank */}
           <Tank x={300} y={320} w={130} h={200} level={v("level")} label="Ravinnesäiliö" />
-          <ValueBox x={442} y={330} w={100} label="Pinta" value={fmt(v("level"), 1)} unit="%" title={`${TAGS.level} Level`} />
+          <ValueBox x={442} y={330} w={100} label={pu.n("LVL_SP") !== undefined ? `Pinta · SP ${pu.n("LVL_SP")}` : "Pinta"} value={fmt(v("level"), 1)} unit="%" title={`${TAGS.level} Level`} />
           <ValueBox x={442} y={376} w={100} label="Vesi" value={fmt(v("waterTemp"), 1)} unit="°C" title={`${TAGS.waterTemp} Water Temp`} />
-          <ValueBox x={442} y={422} w={100} label="EC" value={fmt(v("ec"), 0)} unit="ppm" title={`${TAGS.ec} ppm`} />
+          <ValueBox x={442} y={422} w={100} label={pu.n("TDS_SP") !== undefined ? `EC · SP ${pu.n("TDS_SP")}` : "EC"} value={fmt(v("ec"), 0)} unit="ppm" title={`${TAGS.ec} ppm`} />
           <ValueBox x={442} y={468} w={100} label="pH" value={fmt(v("ph"), 2)} title={`${TAGS.ph} pH`} />
           <g opacity={0.55}>
             <title>Lämmitin: ei kytketty</title>
@@ -291,11 +314,12 @@ function PlantsDashboardPage() {
           {/* G1 temp + timer */}
           <ValueBox x={560} y={280} w={100} label="G1 lämpötila" value={fmt(v("g1Temp"), 1)} unit="°C" title={`${TAGS.g1Temp} G1 temp TT`} />
           <Btn x={666} y={287} w={28} label="S" />
-          <ValueBox x={560} y={226} w={100} label="Ajastin" wired={false} />
+          <ValueBox x={560} y={226} w={100} label="Ajastin" wired={!!tmr} value={tmr} title={`Pumput_DB FillingOnTime.ET / PT ${Math.round((pu.n("FillingOnTime_PT") ?? 0) / 1000)} s · kiertoajastin Työ ${pu.n("OnTime") ?? "—"} s / Tauko ${pu.n("OffTime") ?? "—"} s (${pu.b("Tyo_IN") ? "työ" : "tauko"} ${Math.round(((pu.b("Tyo_IN") ? pu.n("Tyo_ET") : pu.n("Tauko_ET")) ?? 0) / 1000)} s)`} />
+          <ValueBox x={120} y={84} w={100} label="Kosteus" wired={pu.n("G_Hum") !== undefined} value={fmt(pu.n("G_Hum"), 1)} unit="%" title={`Pumput_DB G_Hum (HH-raja ${pu.n("HumHH_SP") ?? "—"} %)`} />
 
           {/* Left: water tank + pumps */}
-          <Tank x={20} y={420} w={90} h={100} label="Vesisäiliö" sub="pinta ei kytketty" />
-          <Pump x={60} y={330} label="Vesipumppu" />
+          <Tank x={20} y={420} w={90} h={100} label="L" sub="pinta ei kytketty" />
+          <Pump x={60} y={330} label="Pumppu L" state={pu.b("Circulation_L")} />
           <Pump x={160} y={410} label="Lannoite" />
           <Tank x={135} y={470} w={50} h={50} label="" sub="Ferts" />
           <ValueBox x={200} y={470} w={92} label="Lämmitin T" wired={false} />
@@ -305,16 +329,17 @@ function PlantsDashboardPage() {
           <Pump x={670} y={430} label="pH−" color="#f43f5e" />
 
           {/* Right tanks */}
-          <Pump x={690} y={350} label="" />
-          <Tank x={730} y={420} w={90} h={100} label="" sub="Säiliö 2" />
-          <Pump x={800} y={350} label="" />
-          <Tank x={840} y={420} w={90} h={100} label="" sub="Säiliö 3" />
+          <Pump x={690} y={350} label="Pumppu R" state={pu.b("Circulation_R")} />
+          <Tank x={730} y={420} w={90} h={100} label="" sub="R" />
+          <Pump x={800} y={350} label="Täyttö" state={pu.b("Filling")} />
+          <Tank x={840} y={420} w={90} h={100} label="" sub="Täyttövesi (Fill)" />
         </svg>
       </Card>
       <MeasurementPointWidget config={{ pointId: "GardenAir", name: "Kasvamo ilma · G_Air (PF-1)" }} open={fpOpen} onOpenChange={setFpOpen} dialogOnly />
       <div className="text-[11px] font-mono text-muted-foreground leading-relaxed">
         Harmaat katkoviivalla merkityt elementit: <b>ei kytketty</b> – signaalia ei ole tunnistettu Myko-datasta varmasti
-        (pumppujen/lämmittimien tilat, hälytykset, ajastin, painikkeet). Kytketyt arvot: Datalogger {Object.values(TAGS).join(", ")}.
+        (lannoite, pH±, lämmittimet, vesisäiliön pinta, painikkeet). Kytketyt arvot: Datalogger {Object.values(TAGS).join(", ")};
+        OPC UA Pumput_DB {pu.ok ? "" : "(ei dataa) "}– pumput L/R (Circulation_L/R), täyttö (Filling), ajastin (FillingOnTime), hälytykset, kosteus, pinta/EC-asetusarvot. Vain luku.
       </div>
     </div>
   );

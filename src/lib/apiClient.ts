@@ -586,6 +586,10 @@ export type PvFeed = {
   shutdownMin: number; faultSince: number | null; shutdown: boolean; onState: boolean | null;
 };
 export type PvFeedResponse = { key: string; feed: PvFeed; codes?: Record<string, string>; sources?: { topic: string; field: string; value: number; at: string; label?: string; dl?: string }[]; restricted?: boolean };
+export type PumputResponse = { at: string | null; stale: boolean; values: Record<string, number | boolean> };
+export async function getPumput() {
+  return requestJson<PumputResponse>("/api/pumput");
+}
 export async function getPvFeed(key: string) {
   return requestJson<PvFeedResponse>(`/api/pid/${encodeURIComponent(key)}/feed`);
 }
