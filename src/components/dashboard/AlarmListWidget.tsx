@@ -40,7 +40,7 @@ const sortVal = (r: AlarmSummaryRow, k: SortKey): string | number => {
     case "duration": return r.durationSec;
   }
 };
-const SEL = "h-11 rounded-md border border-input bg-background px-2 text-sm";
+const SEL = "h-11 max-w-[16rem] rounded-md border border-input bg-background px-2 text-sm text-foreground [color-scheme:dark]";
 
 function Prio({ r, size = "h-5 w-5" }: { r: AlarmSummaryRow; size?: string }) {
   const lvl = r.priority === 1 ? "alarm" : "warn";
@@ -165,19 +165,21 @@ export function AlarmListWidget({ config }: { config: WidgetConfigMap["alarmList
           </DialogPrimitive.Content>
         </DialogPrimitive.Portal>
       </DialogPrimitive.Root>
-      <ChipGroup label="Mittauspiste" testId="al-points" allLabel="Kaikki pisteet" selected={points} onChange={setPoints}
-        options={data.points.map((p) => ({ value: p.id, label: p.name, badge: activeByPoint.get(p.id) }))} />
-      {allTypes.length > 0 && (
-        <ChipGroup label="Hälytystyyppi" testId="al-types" allLabel="Kaikki tyypit" selected={types} onChange={setTypes} mono
-          options={allTypes.map((t) => ({ value: t, label: t }))} />
-      )}
       <div className="flex flex-wrap items-center gap-2" data-testid="al-filters">
+        <select aria-label="Mittauspiste" title="Mittauspiste" value={points[0] ?? ""} onChange={(e) => setPoints(e.target.value ? [e.target.value] : [])} className={SEL} data-testid="al-points">
+          <option value="">Kaikki pisteet</option>
+          {data.points.map((p) => { const n = activeByPoint.get(p.id); return <option key={p.id} value={p.id}>{p.name}{n ? ` (${n} akt.)` : ""}</option>; })}
+        </select>
+        <select aria-label="Hälytystyyppi" title="Hälytystyyppi" value={types[0] ?? ""} onChange={(e) => setTypes(e.target.value ? [e.target.value] : [])} className={`${SEL} font-mono`} data-testid="al-types">
+          <option value="">Kaikki tyypit</option>
+          {allTypes.map((t) => <option key={t} value={t}>{t}</option>)}
+        </select>
         <select aria-label="Prioriteetti" value={prio} onChange={(e) => setPrio(e.target.value)} className={SEL}>
           <option value="">Kaikki prioriteetit</option>
           <option value="1">1 – hälytys</option>
           <option value="2">2 – varoitus</option>
         </select>
-        <select aria-label="Lähde" value={source} onChange={(e) => setSource(e.target.value as "" | "PLC" | "Myko" | "LLM")} className={SEL} data-testid="al-source">
+        <select aria-label="Lähde" title="Lähde" value={source} onChange={(e) => setSource(e.target.value as "" | "PLC" | "Myko" | "LLM")} className={SEL} data-testid="al-source">
           <option value="">Kaikki lähteet</option>
           <option value="PLC">PLC</option>
           <option value="Myko">Myko</option>
@@ -279,25 +281,3 @@ export function AlarmListWidget({ config }: { config: WidgetConfigMap["alarmList
   );
 }
 
-/** Multi-select as toggle chips (44 px). Empty selection = all. */
-function ChipGroup({ label, options, selected, onChange, allLabel, testId, mono }: {
-  label: string; options: { value: string; label: string; badge?: number }[]; selected: string[];
-  onChange: (v: string[]) => void; allLabel: string; testId: string; mono?: boolean;
-}) {
-  const toggle = (v: string) => onChange(selected.includes(v) ? selected.filter((x) => x !== v) : [...selected, v]);
-  const chip = (on: boolean) =>
-    `min-h-11 rounded-md border px-3 text-sm transition-colors ${on ? "border-zinc-300 bg-zinc-200 font-semibold text-zinc-900" : "border-border text-muted-foreground hover:text-foreground"}`;
-  return (
-    <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label={label} data-testid={testId}>
-      <span className="w-full text-xs uppercase text-muted-foreground @md:w-auto @md:pr-1">{label}</span>
-      <button type="button" aria-pressed={selected.length === 0} onClick={() => onChange([])} className={chip(selected.length === 0)}>{allLabel}</button>
-      {options.map((o) => (
-        <button key={o.value} type="button" aria-pressed={selected.includes(o.value)} onClick={() => toggle(o.value)}
-          className={`${chip(selected.includes(o.value))} ${mono ? "font-mono" : ""} inline-flex items-center gap-1.5`}>
-          {o.label}
-          {o.badge ? <span className="rounded bg-red-600 px-1.5 text-xs font-bold text-white" title={`${o.badge} aktiivista`}>{o.badge}</span> : null}
-        </button>
-      ))}
-    </div>
-  );
-}
