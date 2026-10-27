@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouterState } from "@tanstack/react-router";
 import { MessageSquare, X, Paperclip, Send, Check, Ban, Printer } from "lucide-react";
 import { requestJson } from "@/lib/apiClient";
+import { MicButton } from "./MicButton";
 
 type Card = { id: string; action: "create" | "move" | "event"; body: any; preview: any };
 type Msg = { role: "user" | "assistant" | "system"; text: string; cards?: Card[]; labels?: string[] };
@@ -74,9 +75,10 @@ export function AssistantChat() {
   if (!(path === "/" || path.startsWith("/plants"))) return null;
 
   const push = (m: Msg) => setMsgs((x) => [...x, m]);
-  async function send() {
-    if (!text.trim() && !uploads.length) return;
-    const t = text.trim() || "Katso liitetty kuva.";
+  async function send(override?: string) {
+    const src = override ?? text;
+    if (!src.trim() && !uploads.length) return;
+    const t = src.trim() || "Katso liitetty kuva.";
     push({ role: "user", text: t + (uploads.length ? `  📎 ${uploads.map((u) => u.name).join(", ")}` : "") });
     setText(""); setBusy(true);
     try {
@@ -143,7 +145,8 @@ export function AssistantChat() {
         <button onClick={() => fileRef.current?.click()} title="Liitä kuva" className="px-2"><Paperclip className="h-4 w-4" /></button>
         <textarea data-testid="as-input" rows={2} value={text} onChange={(e) => setText(e.target.value)} placeholder="esim. luo viisi purkkia…" className="flex-1 resize-none rounded border bg-background px-2 py-1 text-sm"
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (!busy) send(); } }} />
-        <button data-testid="as-send" disabled={busy} onClick={send} className="px-2"><Send className="h-4 w-4" /></button>
+        <MicButton disabled={busy} onText={(t, auto) => { const v = (text.trim() ? text.trim() + " " : "") + t; if (auto) { setText(""); send(v); } else setText(v); }} />
+        <button data-testid="as-send" disabled={busy} onClick={() => send()} className="px-2"><Send className="h-4 w-4" /></button>
       </div>
     </div>
   );
