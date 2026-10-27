@@ -1,0 +1,21 @@
+// OB1 (tai syklinen OB) – kutsu. Instanssi-DB: "FB_FertDose_DB" (luodaan automaattisesti).
+// Poista/ohita vanha lannoitelogiikka (EC_Below TON, tilakone 0..3, FertPumpTime/-Delay,
+// FertsJalj_% -laskenta, FertsFilled-kuittaus) ennen käyttöönottoa.
+"FB_FertDose_DB"(Enable     := "FertDose_DB".Enable,
+                 FertSel    := "FertDose_DB".FertSel,
+                 DoseReq_ms := "FertDose_DB".DoseReq_ms,
+                 DoseTrig   := "FertDose_DB".DoseTrig,
+                 Heartbeat  := "FertDose_DB".Heartbeat,
+                 HbTimeout  := T#45S,
+                 MaxDose_ms := 5000,
+                 PumpA      => "FertPumpA",      // fyysinen lähtö, esim. %Q0.x (PLC-tagitaulu)
+                 PumpB      => "FertPumpB",      // fyysinen lähtö, esim. %Q0.y
+                 DoseActive => "FertDose_DB".DoseActive,
+                 DoseDone   => "FertDose_DB".DoseDone,
+                 DoseCount  => "FertDose_DB".DoseCount,
+                 LastDose_ms=> "FertDose_DB".LastDose_ms,
+                 LastFert   => "FertDose_DB".LastFert,
+                 RunTimeA_ms=> "FertDose_DB".RunTimeA_ms,
+                 RunTimeB_ms=> "FertDose_DB".RunTimeB_ms,
+                 HB_OK      => "FertDose_DB".HB_OK,
+                 Status     => "FertDose_DB".Status);

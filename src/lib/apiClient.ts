@@ -623,3 +623,8 @@ export const startPidAiApply = (key: string, analysisId: number, params: Record<
 export const startPidAiRestore = (key: string) => requestJson<PidAiJob>(aiUrl(key, "ai-restore"), post());
 export const startPidParamsApply = (key: string, params: Record<string, number>, confirmLarge: boolean) =>
   requestJson<PidAiJob>(aiUrl(key, "params-apply"), post({ params, confirmLarge }));
+export type FertDoseStatus = { mode: string; heartbeat: string; config: { fert: string; dose_s: number; below_min: number; pause_min: number };
+  ec: { value: number; at: string } | null; sp: number | null; belowSince: string | null; lastDoseAt: string | null; reason: string;
+  cumulative: { fert: string; mode: string; n: number; req_ms: number; act_ms: number }[];
+  recent: { ts: string; fert: string; requested_ms: number; mode: string; reason: string }[] };
+export async function getFertDose() { return requestJson<FertDoseStatus>("/api/fertdose"); }

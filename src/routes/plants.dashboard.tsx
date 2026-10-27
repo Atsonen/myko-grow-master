@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { Gauge } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { getDataloggerLatest, getKasvamoAlarms, putKasvamoAlarms, type KasvamoAlarms, type KasLimit, getPumput, getPvFeed, type DataloggerLatest, type PumputResponse } from "@/lib/apiClient";
+import { getDataloggerLatest, getKasvamoAlarms, putKasvamoAlarms, type KasvamoAlarms, type KasLimit, getPumput, getPvFeed, getFertDose, type FertDoseStatus, type DataloggerLatest, type PumputResponse } from "@/lib/apiClient";
 import { DashboardDataProvider } from "@/components/dashboard/DashboardData";
 import { MeasurementPointWidget } from "@/components/dashboard/MeasurementPointWidget";
 import { usePid, PID_STATE } from "@/components/dashboard/PidFaceplate";
@@ -49,6 +49,25 @@ function usePumput() {
 }
 
 // Kasvamo-hälytysrajat (Myko-asetus kasvamo_alarms, backend kasvamoAlarms.js). Ei PLC-kirjoituksia.
+function useFertDose() {
+  const [d, setD] = useState<FertDoseStatus | null>(null);
+  useEffect(() => { const l = () => getFertDose().then(setD).catch(() => undefined); l(); const t = setInterval(l, 15_000); return () => clearInterval(t); }, []);
+  return d;
+}
+function FertDoseLine({ d }: { d: FertDoseStatus | null }) {
+  if (!d) return <div className="mt-2 font-mono text-xs text-muted-foreground">Lannoiteannostelu: ei dataa</div>;
+  const hm = (iso: string | null) => (iso ? new Date(iso).toLocaleTimeString("fi-FI", { hour: "2-digit", minute: "2-digit" }) : "—");
+  const cum = (f: string) => d.cumulative.filter((c) => c.fert === f).reduce((a, c) => a + c.req_ms, 0) / 1000;
+  const last = d.recent[0];
+  return (
+    <div className="mt-2 rounded border border-border px-3 py-2 font-mono text-xs">
+      <b>Lannoiteannostelu</b> · <span className={d.mode === "dry-run" ? "text-amber-400" : "text-red-400"}>{d.mode === "dry-run" ? "EHDOTUS (dry-run, ei PLC-kirjoitusta)" : d.mode}</span>
+      {" "}· heartbeat {d.heartbeat === "off" ? "pois" : d.heartbeat} · valittu {d.config.fert}, annos {d.config.dose_s} s ≈ {d.config.dose_s} ml
+      <div className="text-muted-foreground">Tila: {d.reason} · viimeisin {last ? `${hm(last.ts)} ${last.fert} ${last.requested_ms / 1000} s (${last.mode})` : "—"} · kumul. (ehdotetut) A {cum("A")} s / B {cum("B")} s</div>
+    </div>
+  );
+}
+
 function useKasAlarms() {
   const [a, setA] = useState<KasvamoAlarms | null>(null);
   const load = () => getKasvamoAlarms().then(setA).catch(() => undefined);
@@ -273,7 +292,7 @@ function PlantsDashboardPage() {
   const ts = vals.level?.timestamp ?? vals.ec?.timestamp;
   const fan = v("fan");
   const pu = usePumput();
-  const ka = useKasAlarms(); const [alSig, setAlSig] = useState<string | null>(null);
+  const ka = useKasAlarms(); const fd = useFertDose(); const [alSig, setAlSig] = useState<string | null>(null);
   const kAct = (k: string) => !!(ka.a?.active[`${k}:lo`] || ka.a?.active[`${k}:hi`]);
   const kp = (k: string) => ({ onClick: () => setAlSig(k), clickHint: " – muokkaa hälytysrajoja", alarm: kAct(k), limits: limTxt(ka.a?.config.limits[k]) });
   const alarms = [["A_HumHH", "Kosteus HH"], ["A_Tayttovesi", "Täyttövesi"], ["EC_Below_Q", "EC alhainen (EC_Below)"]].filter(([k]) => pu.b(k));
@@ -392,6 +411,7 @@ function PlantsDashboardPage() {
       </Card>
       <AlarmDialog sig={alSig} data={ka.a} onClose={() => setAlSig(null)} onSaved={ka.setA} />
       <MeasurementPointWidget config={{ pointId: "GardenAir", name: "Kasvamo ilma · G_Air (PF-1)" }} open={fpOpen} onOpenChange={setFpOpen} dialogOnly />
+      <FertDoseLine d={fd} />
       <div className="text-[11px] font-mono text-muted-foreground leading-relaxed">
         Harmaat katkoviivalla merkityt elementit: <b>ei kytketty</b> – signaalia ei ole tunnistettu Myko-datasta varmasti
         (lannoite, pH±, lämmittimet, vesisäiliön pinta, painikkeet). Kytketyt arvot: Datalogger {Object.values(TAGS).join(", ")};
