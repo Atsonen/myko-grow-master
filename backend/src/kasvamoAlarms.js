@@ -27,6 +27,7 @@ async function evaluate(c, port) {
     const newest = Math.max(0, ...Object.values(rows).map((r) => Date.parse(r.timestamp) || 0));
     out.stale = [now - newest > c.stale_min * 60_000, `⚠️ Kasvamo: ei uutta dataloggerdataa ${Math.round((now - newest) / 60000)} min`];
     for (const [id, [dl, name, unit]] of Object.entries(SIG)) {
+      if (id === "ec") continue; // EC: SP-suhteelliset rajat fertDose.js:ssä (hälytys+lukitus), ei tuplailmoitusta
       const r = rows[dl]; if (!r || r.value == null) continue;
       const v = Number(r.value); const L = c.limits[id];
       for (const side of ["lo", "hi"]) {

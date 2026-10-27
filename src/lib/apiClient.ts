@@ -623,10 +623,18 @@ export const startPidAiApply = (key: string, analysisId: number, params: Record<
 export const startPidAiRestore = (key: string) => requestJson<PidAiJob>(aiUrl(key, "ai-restore"), post());
 export const startPidParamsApply = (key: string, params: Record<string, number>, confirmLarge: boolean) =>
   requestJson<PidAiJob>(aiUrl(key, "params-apply"), post({ params, confirmLarge }));
-export type FertDoseStatus = { mode: string; heartbeat: string; config: { fert: string; dose_s: number; below_min: number; pause_min: number };
-  ec: { value: number; at: string } | null; sp: number | null; belowSince: string | null; lastDoseAt: string | null; reason: string;
+export type FertEcAlarm = { enabled: boolean; lo_off: number; hi_off: number; warn_lo_off: number; warn_hi_off: number; hyst: number; delay_min: number };
+export type FertEvent = { id?: number; code?: string; level: "alarm" | "warning"; text: string; ts?: string; since?: string; cleared_ts?: string | null; active?: boolean };
+export type FertDoseStatus = { mode: string; heartbeat: string; hbValue: number; interlock: boolean;
+  config: { live: boolean; hb_enabled: boolean; plc_enable: boolean; auto: boolean; fert: string; dose_s: number; below_min: number; pause_min: number; ec_alarm: FertEcAlarm };
+  plc: { present: boolean; fresh: boolean; statusText: string | null; Status?: number; Enable?: boolean; HB_OK?: boolean; DoseActive?: boolean; DoseCount?: number; LastDose_ms?: number; RunTime_ms?: number; Heartbeat?: number };
+  ec: { value: number; at: string } | null; sp: number | null; belowSince: string | null; lastDoseAt: string | null; nextAllowedAt: string | null; reason: string;
+  active: FertEvent[]; events: FertEvent[];
   cumulative: { fert: string; mode: string; n: number; req_ms: number; act_ms: number }[];
-  recent: { ts: string; fert: string; requested_ms: number; mode: string; reason: string }[] };
+  recent: { ts: string; fert: string; requested_ms: number; actual_ms: number | null; mode: string; reason: string }[] };
+export async function postFertDose() {
+  return requestJson<{ ok: boolean; mode?: string; error?: string }>("/api/fertdose/dose", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirm: true }) });
+}
 export async function getFertDose() { return requestJson<FertDoseStatus>("/api/fertdose"); }
 export async function putFertDoseSettings(body: Record<string, unknown>) {
   return requestJson<{ config: FertDoseStatus["config"] }>("/api/fertdose/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });

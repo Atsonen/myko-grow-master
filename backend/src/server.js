@@ -1111,7 +1111,7 @@ function publishRetained(topic, message) {
 // ---- OPC UA PID faceplates + PID alarm points: see pid.js ----
 registerPumputRoutes(app, { mqttClient: mqttPublisher }); // Pumput_DB, read-only
 startKasvamoAlarms({ port: PORT }); registerKasvamoAlarmRoutes(app); // Kasvamo raja-arvohälytykset -> Valvomo-botti
-startFertDose({ port: PORT }); registerFertDoseRoutes(app); // lannoiteannostelu: DRY-RUN, ei PLC-kirjoituksia
+startFertDose({ port: PORT, mqttUrl: process.env.MQTT_URL || "mqtt://192.168.1.51:1883" }); registerFertDoseRoutes(app); // lannoiteannostelu: live-ohjaus bridgen kautta (hyväksytty 27.10.2026)
 // kunnossapito: log a manual PID command (UI / Kuittaa PLC-viat) as an action, linked to the PID's open auto-incident
 async function kpLogPidCommand({ key, cmd, result, actor = "myko-ui", label }) {
   const incident_id = await kpOpenIncidentFor([`${key}_PID`, PID_POINTS[key]]);

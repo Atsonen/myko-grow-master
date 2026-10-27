@@ -49,3 +49,8 @@ Sama pumppu ja letku; letku siirretään käsin säiliöstä toiseen. Valinta on
 1. TIA-muutokset ja download PLC:lle (käyttäjä).
 2. Bridgeen FertDose_DB-solmut (luku) + kirjoituskomennot Enable/DoseReq_ms/DoseTrig/Heartbeat.
 3. Valvomon heartbeat-kirjoitin ja annospyyntökirjoitin (ei toteutettu tässä versiossa tarkoituksella) → live=true.
+
+## Live-ohjaus (hyväksytty 27.10.2026 11:20, lähtö forsattu 0 testivaiheessa)
+- Bridge (`~/opcua-bridge`, config `fertdose:`): lukee FertDose_DB:n Read-palvelulla 2 s välein → MQTT `Sensors/PLC_2/FertDose` (`present:false` kunnes DB löytyy; uudelleenhaku 30 s välein). Kirjoitus `Myko/Cmd/FertDose` (whitelist Enable, DoseReq_ms 0–5000, Heartbeat, DoseTrig "pulse" 1 s; DoseTrig aina viimeisenä). Puuttuva DB → ack `error: DB puuttuu`.
+- Myko: heartbeat 5 s välein (kun live + hb_enabled + DB löytyy), Enable-synkronointi asetuksesta `plc_enable`, automaattiannos + "Annostele nyt" (vahvistusdialogi, tauko 20 min, max 5 s). Kaikki annokset/kirjoitukset `fert_dose_log` (mode live / live-fail / blocked / dry-run), toteutunut aika PLC:n LastDose_ms:stä DoseCount-muutoksella.
+- EC-hälytys/-varoitus ± TDS_SP (asetus `ec_alarm`, muokattavissa klikkaamalla EC-ruutua): HÄLYTYS → Telegram (Valvomo) alku + palautuminen, annostelulukitus (ei pyyntöjä, Enable=FALSE). VAROITUS → vain lista. Tapahtumat `fert_events`. Kasvamo-hälytysten absoluuttinen EC-raja poistettu käytöstä (korvattu tällä).
