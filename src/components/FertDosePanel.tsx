@@ -1,4 +1,5 @@
 // Lannoiteannostelu: kompakti tilarivi + iso EC-paneeli (EC vs SP, ±SP-rajat, ohjaus, PLC, luotettavuus, trendi, tapahtumaloki).
+import { DisableDuration, untilLabel, useNow, reEnableAlarm } from "@/lib/alarmDisable";
 import { useEffect, useMemo, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ackAlarms, getFertDose, postFertDose, putFertDoseSettings, type FertDoseStatus } from "@/lib/apiClient";
@@ -94,12 +95,12 @@ function SpEditor({ d, reload }: { d: FertDoseStatus; reload: () => void }) {
 function LimitsEditor({ d, reload }: { d: FertDoseStatus; reload: () => void }) {
   const A = d.config.ec_alarm;
   const init = () => ({ enabled: A.enabled, lo_off: String(A.lo_off), hi_off: String(A.hi_off), warn_lo_off: String(A.warn_lo_off), warn_hi_off: String(A.warn_hi_off), hyst: String(A.hyst), delay_min: String(A.delay_min) });
-  const [f, setF] = useState(init); const [msg, setMsg] = useState<string | null>(null); const [busy, setBusy] = useState(false);
+  const [f, setF] = useState(init); const [msg, setMsg] = useState<string | null>(null); const [busy, setBusy] = useState(false); const [disMin, setDisMin] = useState(60); const now = useNow(15_000);
   const n = (v: string) => Number(v.replace(",", "."));
   const dirty = JSON.stringify(f) !== JSON.stringify(init());
   const save = async () => {
     setBusy(true); setMsg(null);
-    try { await putFertDoseSettings({ ec_alarm: { enabled: f.enabled, lo_off: n(f.lo_off), hi_off: n(f.hi_off), warn_lo_off: n(f.warn_lo_off), warn_hi_off: n(f.warn_hi_off), hyst: n(f.hyst), delay_min: n(f.delay_min) } }); setMsg("Tallennettu"); reload(); }
+    try { await putFertDoseSettings({ ec_alarm: { enabled: f.enabled, ...(!f.enabled && A.enabled ? { disable_min: disMin } : {}), lo_off: n(f.lo_off), hi_off: n(f.hi_off), warn_lo_off: n(f.warn_lo_off), warn_hi_off: n(f.warn_hi_off), hyst: n(f.hyst), delay_min: n(f.delay_min) } }); setMsg("Tallennettu"); reload(); }
     catch (e) { setMsg(errMsg(e)); } finally { setBusy(false); }
   };
   const sp = d.sp; const abs = (o: string) => (sp != null && o.trim() !== "" && Number.isFinite(n(o)) ? `= ${sp + n(o)} ppm` : "");
@@ -116,6 +117,12 @@ function LimitsEditor({ d, reload }: { d: FertDoseStatus; reload: () => void }) 
         {F("warn_lo_off", "Varoitus ala (SP −)")}{F("warn_hi_off", "Varoitus ylä (SP +)")}
         {F("hyst", "Hystereesi (ppm)", " ")}{F("delay_min", "Viive (min)", " ")}
       </div>
+      {!A.enabled && A.disabled_until && (
+        <div className="mb-2 flex items-center justify-between gap-2 rounded-md border border-amber-500/50 bg-amber-500/10 px-2 py-1.5 text-xs text-amber-300" data-testid="fd-dis-until">
+          <span>🔕 EC-hälytys {untilLabel(A.disabled_until, now)} · EC epäluotettava/vanha estää silti annostelun</span>
+          <button type="button" disabled={busy} className="rounded border border-amber-400 px-2 py-0.5" onClick={async () => { setBusy(true); try { await reEnableAlarm("fert", "ec"); setMsg("Tallennettu"); reload(); } catch (e) { setMsg(errMsg(e)); } finally { setBusy(false); } }}>Päälle nyt</button>
+        </div>)}
+      {!f.enabled && A.enabled && <div className="mb-2"><DisableDuration value={disMin} onChange={setDisMin} /></div>}
       <div className="mt-2 text-[11px] text-muted-foreground">Hälytys → Telegram (Valvomo) + lukitus (Enable OFF). Varoitus → vain listaan.</div>
       <div className="mt-2 flex items-center justify-end gap-2">
         {msg && <span className={`text-xs ${msg === "Tallennettu" ? "text-emerald-400" : "text-red-400"}`}>{msg}</span>}

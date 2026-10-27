@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { DisableDuration, untilLabel, useNow, reEnableAlarm } from "@/lib/alarmDisable";
 import { useEffect, useState } from "react";
 import { Gauge } from "lucide-react";
 import { Card } from "@/components/ui/card";
@@ -57,11 +58,11 @@ function useKasAlarms() {
   useEffect(() => { load(); const t = setInterval(load, 15_000); return () => clearInterval(t); }, []);
   return { a, setA, load };
 }
-const limTxt = (L?: KasLimit) => (!L ? undefined : !L.enabled ? "pois" : `${L.lo ?? ""}–${L.hi ?? ""}`);
+const limTxt = (L?: KasLimit) => (!L ? undefined : !L.enabled ? (L.disabled_until ? untilLabel(L.disabled_until).replace(/ \(.*\)$/, "") : "pois") : `${L.lo ?? ""}–${L.hi ?? ""}`);
 
 function AlarmDialog({ sig, data, onClose, onSaved }: { sig: string | null; data: KasvamoAlarms | null; onClose: () => void; onSaved: (d: KasvamoAlarms) => void }) {
   const L = sig && data ? data.config.limits[sig] : undefined; const S = sig && data ? data.signals[sig] : undefined;
-  const [f, setF] = useState({ lo: "", hi: "", hyst: "", enabled: true, delay: "" });
+  const [f, setF] = useState({ lo: "", hi: "", hyst: "", enabled: true, delay: "" }); const [disMin, setDisMin] = useState(60); const now = useNow(15_000);
   const [err, setErr] = useState<string | null>(null); const [busy, setBusy] = useState(false);
   useEffect(() => {
     if (L && data) setF({ lo: L.lo == null ? "" : String(L.lo), hi: L.hi == null ? "" : String(L.hi), hyst: String(L.hyst ?? 0), enabled: L.enabled !== false, delay: String(data.config.delay_min) });
@@ -71,7 +72,7 @@ function AlarmDialog({ sig, data, onClose, onSaved }: { sig: string | null; data
     if (!sig) return; setBusy(true); setErr(null);
     const n = (v: string) => (v.trim() === "" ? null : Number(v.replace(",", ".")));
     try {
-      const d = await putKasvamoAlarms({ delay_min: Number(f.delay.replace(",", ".")), limits: { [sig]: { lo: n(f.lo), hi: n(f.hi), hyst: n(f.hyst) ?? 0, enabled: f.enabled } } });
+      const d = await putKasvamoAlarms({ delay_min: Number(f.delay.replace(",", ".")), disable_min: !f.enabled && L?.enabled !== false ? disMin : undefined, limits: { [sig]: { lo: n(f.lo), hi: n(f.hi), hyst: n(f.hyst) ?? 0, enabled: f.enabled } } });
       onSaved(d); onClose();
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
   };
@@ -82,6 +83,12 @@ function AlarmDialog({ sig, data, onClose, onSaved }: { sig: string | null; data
         <DialogHeader><DialogTitle className="text-base">Hälytysrajat · {S?.name} {S?.unit && `(${S.unit})`}</DialogTitle></DialogHeader>
         <div className="space-y-2 text-sm">
           <label className="flex items-center gap-2"><input type="checkbox" checked={f.enabled} onChange={(e) => setF({ ...f, enabled: e.target.checked })} /> Hälytys käytössä</label>
+          {L?.enabled === false && L.disabled_until && (
+            <div className="flex items-center justify-between gap-2 rounded border border-amber-500/50 bg-amber-500/10 px-2 py-1 text-xs text-amber-300" data-testid="kas-dis-until">
+              <span>🔕 {untilLabel(L.disabled_until, now)}</span>
+              <button type="button" className="rounded border border-amber-400 px-2 py-0.5" disabled={busy} onClick={async () => { setBusy(true); try { onSaved(await reEnableAlarm("kasvamo", sig!) as KasvamoAlarms); onClose(); } catch (e) { setErr(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); } }}>Päälle nyt</button>
+            </div>)}
+          {!f.enabled && L?.enabled !== false && <DisableDuration value={disMin} onChange={setDisMin} />}
           <div className="grid grid-cols-3 gap-2">
             <label>Alaraja<input className={inp} value={f.lo} placeholder="ei" onChange={(e) => setF({ ...f, lo: e.target.value })} /></label>
             <label>Yläraja<input className={inp} value={f.hi} placeholder="ei" onChange={(e) => setF({ ...f, hi: e.target.value })} /></label>

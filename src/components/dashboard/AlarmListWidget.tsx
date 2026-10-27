@@ -6,6 +6,7 @@ import { ackAlarms, getAlarmSummary, plcErrorAckAll, type AlarmSummary, type Ala
 import { useDashboardTick } from "./DashboardData";
 import { AlarmIndicator } from "./MeasurementPointWidget";
 import { AlarmDetailDialog } from "./AlarmDetailDialog";
+import { reEnableAlarm } from "@/lib/alarmDisable";
 import type { WidgetConfigMap } from "./types";
 
 /** "Hälytyslista": SCADA-style alarm summary across all points (ISA-101: neutral, colour only for active alarms). */
@@ -255,7 +256,8 @@ export function AlarmListWidget({ config, storageKey = "main" }: { config: Widge
                     <td className={`px-2 py-1.5 ${r.active ? "text-foreground" : "text-muted-foreground"}`}>
                       {r.active ? "Aktiivinen" : <span title={r.end ? `Poistunut ${fmtTime(r.end)}` : ""}>Poistunut</span>}
                       {!r.acked && <span className="ml-1 text-xs text-amber-300" title="Kuittaamaton">●</span>}
-                      {!r.acked && r.source === "Kasvamo" && <button type="button" data-testid="al-kas-ack" onClick={async (e) => { e.stopPropagation(); await ackAlarms([r.id]); setReload((x) => x + 1); }} className="ml-2 rounded border border-red-500/70 px-1.5 text-[11px] font-semibold text-red-200 hover:bg-red-500/20">Kuittaa</button>}
+                      {r.disabledUntil && <button type="button" data-testid="al-reenable" onClick={async (e) => { e.stopPropagation(); try { await reEnableAlarm(r.disableKind!, r.disableKey!); toast.success("Hälytys kytketty päälle"); } catch (err) { toast.error(String(err)); } setReload((x) => x + 1); }} className="ml-2 rounded border border-amber-400 px-2 py-0.5 text-xs text-amber-300">Päälle nyt</button>}
+                    {!r.acked && r.source === "Kasvamo" && <button type="button" data-testid="al-kas-ack" onClick={async (e) => { e.stopPropagation(); await ackAlarms([r.id]); setReload((x) => x + 1); }} className="ml-2 rounded border border-red-500/70 px-1.5 text-[11px] font-semibold text-red-200 hover:bg-red-500/20">Kuittaa</button>}
                     </td>
                     <td className="px-2 py-1.5 text-right tabular-nums">{r.value === null ? "—" : `${r.value.toFixed(1)} ${r.unit}`}</td>
                     <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground">{fmtDuration(r.durationSec)}</td>
@@ -290,6 +292,7 @@ export function AlarmListWidget({ config, storageKey = "main" }: { config: Widge
                     <div className="text-xs tabular-nums text-muted-foreground">
                       {fmtTime(r.start)} · {fmtDuration(r.durationSec)}{r.value !== null ? ` · ${r.value.toFixed(1)} ${r.unit}` : ""}
                     </div>
+                    {r.disabledUntil && <button type="button" data-testid="al-reenable" onClick={async (e) => { e.stopPropagation(); try { await reEnableAlarm(r.disableKind!, r.disableKey!); toast.success("Hälytys kytketty päälle"); } catch (err) { toast.error(String(err)); } setReload((x) => x + 1); }} className="ml-2 rounded border border-amber-400 px-2 py-0.5 text-xs text-amber-300">Päälle nyt</button>}
                     {!r.acked && r.source === "Kasvamo" && <button type="button" data-testid="al-kas-ack" onClick={async (e) => { e.stopPropagation(); await ackAlarms([r.id]); setReload((x) => x + 1); }}
                       className="mt-1 rounded border border-red-500/70 px-2 py-px text-[11px] font-semibold text-red-200 hover:bg-red-500/20">Kuittaa</button>}
                   </div>

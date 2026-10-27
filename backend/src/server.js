@@ -8,8 +8,9 @@ import { startWeather } from "./weather.js";
 import { registerFmiWeather } from "./fmiWeather.js";
 import { registerPidAi } from "./pidAi.js";
 import { registerPumputRoutes } from "./pumput.js";
-import { startKasvamoAlarms, registerKasvamoAlarmRoutes, kasvamoAlarmRows, kasvamoAck } from "./kasvamoAlarms.js";
-import { startFertDose, registerFertDoseRoutes, fertAlarmRows, fertAck } from "./fertDose.js";
+import { startKasvamoAlarms, registerKasvamoAlarmRoutes, kasvamoAlarmRows, kasvamoAck, kasvamoDisabledRows } from "./kasvamoAlarms.js";
+import { startFertDose, registerFertDoseRoutes, fertAlarmRows, fertAck, fertDisabledRows } from "./fertDose.js";
+import { untilTxt } from "./alarmDisable.js";
 import { registerMykoDb } from "./mykoDb.js";
 import { registerAnomaly } from "./anomaly.js";
 import { registerAssistant } from "./assistant.js";
@@ -875,6 +876,11 @@ app.get(
       });
     } catch (e) { console.error("[alarms] llm rows", e.message); }
     try { rows.push(...(await fertAlarmRows(hours)), ...kasvamoAlarmRows()); } catch (e) { console.error("[alarms] kasvamo rows", e.message); }
+    // Väliaikaisesti poiskytketyt hälytykset (aikaraja) näkyvät listassa aktiivisina info-riveinä
+    for (const [i, d] of [...fertDisabledRows().map((d) => ({ ...d, kind: "fert" })), ...kasvamoDisabledRows().map((d) => ({ ...d, kind: "kasvamo" }))].entries()) rows.push({
+      id: -(1_800_000_000 + i), pointId: d.kind === "fert" ? "Kasvamo_EC" : "Kasvamo", pointName: d.name, unit: "", alarm: "POIS_KAYTOSTA", bit: null, priority: 3,
+      start: new Date().toISOString(), end: null, active: true, value: null, endValue: null, source: "Kasvamo", desc: `🔕 Hälytys ${d.name} pois päältä ${untilTxt(d.until)} asti`,
+      acked: true, ackedAt: null, ackedBy: null, disabledUntil: d.until, disableKind: d.kind, disableKey: d.key });
     const out = rows
       .filter((r) => r.active || new Date(r.start).getTime() >= from || (r.end && new Date(r.end).getTime() >= from))
       .map((r) => ({ ...r, durationSec: Math.round(((r.end ? new Date(r.end).getTime() : now) - new Date(r.start).getTime()) / 1000) }))

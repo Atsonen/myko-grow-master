@@ -8,6 +8,7 @@
 import mqtt from "mqtt";
 import { query } from "./db.js";
 import { tg, allowedChats } from "./telegram.js";
+import { disableMinutes, untilTxt, logToggle, DIS_DEFAULT_MIN } from "./alarmDisable.js";
 
 const DEF = {
   live: true, hb_enabled: true, plc_enable: false, auto: true, fert: "A", dose_s: 1,
@@ -109,8 +110,28 @@ async function evalEcAlarm(code, c, ec, reliable, raise, inside, lo, hi) {
   delete S.clrSince[code];
   await setEvent(code, "alarm", false, "", { ...c, recoveryText: `✅ Palautui: EC ${ec} ppm, takaisin rajoissa (${lo}–${hi}) – annostelulukitus poistui` });
 }
+async function ecDisableCheck(c) {
+  const A = c.ec_alarm; if (A.enabled) return;
+  if (!A.disabled_until) { // vanha pysyvä poiskytkentä -> aikaraja oletuksella
+    A.disabled_until = new Date(Date.now() + DIS_DEFAULT_MIN * 60_000).toISOString(); await saveCfg({ ...c, ec_alarm: A });
+    await logToggle("ec", "disable", A.disabled_until, "auto-aikaraja");
+    await notify(`🔕 Hälytys EC (lannoite) pois päältä ${untilTxt(A.disabled_until)} asti`);
+  } else if (Date.now() >= Date.parse(A.disabled_until)) {
+    A.enabled = true; delete A.disabled_until; await saveCfg({ ...c, ec_alarm: A });
+    await logToggle("ec", "auto-enable", null, "ajastin");
+    await notify("🔔 Hälytys EC (lannoite) kytketty takaisin päälle");
+  }
+}
+async function clearEcAlarmsDisabled() {
+  for (const code of ["ec_alarm_lo", "ec_alarm_hi"]) if (S.ev[code]?.active) {
+    await setEvent(code, "alarm", false, "", {}); delete S.evSince[code]; delete S.clrSince?.[code];
+    await logRow(CFG.fert, 0, S.samples.at(-1)?.v, S.sp, `${code} kuitattu: hälytys kytketty pois käyttäjän toimesta (aikaraja) – lukitus vapautettu`, "live");
+  }
+}
 async function evalAlarms(c, ec, sp, reliable) {
+  await ecDisableCheck(c);
   const A = c.ec_alarm;
+  if (!A.enabled) await clearEcAlarmsDisabled();
   const on = A.enabled && reliable && ec != null && sp != null;
   const h = (code) => (S.ev[code]?.active ? Number(A.hyst) || 0 : 0);
   const hA = Math.min(50, Math.max(20, Number(A.hyst) || 0)); // hälytyksen kuittaushystereesi 20–50 ppm
@@ -208,6 +229,9 @@ async function tick(port) {
 }
 
 // Rivit Myko-hälytyslistaan (/api/alarms/summary), lähde "Kasvamo".
+export function fertDisabledRows() {
+  const A = CFG.ec_alarm; return !A.enabled && A.disabled_until ? [{ key: "ec", name: "EC (lannoite)", until: A.disabled_until }] : [];
+}
 export async function fertAlarmRows(hours) {
   const ev = await query("SELECT id, DATE_FORMAT(ts, '%Y-%m-%dT%H:%i:%sZ') ts, DATE_FORMAT(cleared_ts, '%Y-%m-%dT%H:%i:%sZ') cl, level, code, text, acked_ts FROM fert_events WHERE ts > UTC_TIMESTAMP() - INTERVAL ? HOUR OR cleared_ts IS NULL ORDER BY id DESC LIMIT 300", [hours]);
   return ev.map((e) => ({ id: -(2_000_000_000 + Number(e.id)), pointId: "Kasvamo_EC", pointName: "Kasvamo · EC / lannoitus", unit: "ppm", alarm: String(e.code).toUpperCase(),
@@ -288,14 +312,22 @@ export function registerFertDoseRoutes(app) {
       if (b.sp_source !== undefined) { if (!["plc", "manual"].includes(b.sp_source)) return res.status(400).json({ error: "sp_source plc/manual" }); next.sp_source = b.sp_source; }
       if (b.ec_alarm && typeof b.ec_alarm === "object") {
         const A = { ...next.ec_alarm };
-        if (b.ec_alarm.enabled !== undefined) A.enabled = !!b.ec_alarm.enabled;
+        if (b.ec_alarm.enabled === false && (cur.ec_alarm.enabled || b.ec_alarm.disable_min !== undefined)) {
+          let m; try { m = disableMinutes(b.ec_alarm.disable_min); } catch (e) { return res.status(400).json({ error: e.message }); }
+          A.enabled = false; A.disabled_until = new Date(Date.now() + m * 60_000).toISOString(); A._dis = true;
+        } else if (b.ec_alarm.enabled === true && !cur.ec_alarm.enabled) { A.enabled = true; delete A.disabled_until; A._en = true; }
         for (const k of ["lo_off", "warn_lo_off"]) if (b.ec_alarm[k] !== undefined) { const v = Number(b.ec_alarm[k]); if (!(v <= 0 && v >= -5000)) return res.status(400).json({ error: `${k}: -5000…0` }); A[k] = v; }
         for (const k of ["hi_off", "warn_hi_off"]) if (b.ec_alarm[k] !== undefined) { const v = Number(b.ec_alarm[k]); if (!(v >= 0 && v <= 5000)) return res.status(400).json({ error: `${k}: 0…5000` }); A[k] = v; }
         for (const [k, lo, hi] of [["hyst", 0, 1000], ["delay_min", 0, 120]]) if (b.ec_alarm[k] !== undefined) { const v = Number(b.ec_alarm[k]); if (!(v >= lo && v <= hi)) return res.status(400).json({ error: `${k} ${lo}–${hi}` }); A[k] = v; }
         if (A.lo_off > A.warn_lo_off || A.hi_off < A.warn_hi_off) return res.status(400).json({ error: "hälytysraja oltava varoitusrajaa kauempana SP:stä" });
-        next.ec_alarm = A;
+        const dis = A._dis, en = A._en; delete A._dis; delete A._en;
+        next.ec_alarm = A; next._toggle = dis ? "dis" : en ? "en" : null;
       }
+      const tg = next._toggle; delete next._toggle;
       await saveCfg(next);
+      const by = String(req.body?.by ?? "ui");
+      if (tg === "dis") { await logToggle("ec", "disable", next.ec_alarm.disabled_until, by); await clearEcAlarmsDisabled(); await notify(`🔕 Hälytys EC (lannoite) pois päältä ${untilTxt(next.ec_alarm.disabled_until)} asti`); }
+      if (tg === "en") { await logToggle("ec", "enable", null, by); await notify("🔔 Hälytys EC (lannoite) kytketty takaisin päälle"); }
       res.json({ config: next });
     } catch (e) { res.status(500).json({ error: e.message }); }
   });

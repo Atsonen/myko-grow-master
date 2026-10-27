@@ -5,6 +5,7 @@
 import fs from "node:fs";
 import { query } from "./db.js";
 import { tg, allowedChats } from "./telegram.js";
+import { disableMinutes, untilTxt, logToggle, DIS_DEFAULT_MIN } from "./alarmDisable.js";
 const STATE = "/home/atte/.config/myko/kasvamo_alarm_state.json";
 const DEF = { enabled: true, delay_min: 5, stale_min: 20, limits: {
   pinta: { lo: 20, hi: null, hyst: 2, enabled: true }, vesi: { lo: 15, hi: 26, hyst: 0.5, enabled: true }, ec: { lo: 500, hi: 2500, hyst: 100, enabled: true }, ph: { lo: 5.0, hi: 7.0, hyst: 0.2, enabled: true } } };
@@ -20,6 +21,28 @@ async function cfg() {
   let c = {}; try { c = r ? (typeof r.v === "string" ? JSON.parse(r.v) : (r.v ?? {})) : {}; } catch { /* default */ }
   return { ...DEF, ...c, limits: Object.fromEntries(Object.keys(DEF.limits).map((k) => [k, { ...DEF.limits[k], ...(c.limits?.[k] ?? {}) }])) };
 }
+const NAME = (k) => (k === "all" ? "Kasvamo (kaikki)" : `Kasvamo ${SIG[k]?.[1] ?? k}`);
+const saveKas = (next) => query("INSERT INTO myko_settings (k, v, updated_by) VALUES ('kasvamo_alarms', ?, 'ui') ON DUPLICATE KEY UPDATE v = VALUES(v), updated_by = VALUES(updated_by)", [JSON.stringify(next)]);
+async function notifySafe(t) { for (let i = 0; i < 3; i++) { try { await notify(t); return; } catch (e) { console.warn("[kasvamo] telegram", e.message); await new Promise((r) => setTimeout(r, 5000 * (i + 1))); } } }
+// Poiskytkentöjen aikarajat: puuttuva aikaraja -> oletus, erääntynyt -> takaisin päälle + loki + Telegram.
+async function disableCheck(c) {
+  let dirty = false; const now = Date.now();
+  const objs = [["all", c], ...Object.entries(c.limits)];
+  for (const [k, o] of objs) {
+    if (o.enabled !== false) continue;
+    if (!o.disabled_until) { o.disabled_until = new Date(now + DIS_DEFAULT_MIN * 60_000).toISOString(); dirty = true; await logToggle(`kasvamo:${k}`, "disable", o.disabled_until, "auto-aikaraja"); await notifySafe(`🔕 Hälytys ${NAME(k)} pois päältä ${untilTxt(o.disabled_until)} asti`); }
+    else if (now >= Date.parse(o.disabled_until)) { o.enabled = true; delete o.disabled_until; dirty = true; await logToggle(`kasvamo:${k}`, "auto-enable", null, "ajastin"); await notifySafe(`🔔 Hälytys ${NAME(k)} kytketty takaisin päälle`); }
+  }
+  if (dirty) await saveKas(c);
+}
+function clearDisabled(k) { // poiskytketyn signaalin aktiiviset hälytykset kuitataan hiljaa (ei "Palautui")
+  for (const key of Object.keys(st.active)) if ((k === "all" || key.startsWith(k + ":")) && st.active[key]) { st.active[key] = false; delete st.since[key]; console.log(`[kasvamo] clear ${key} (hälytys kytketty pois)`); }
+  save();
+}
+export function kasvamoDisabledRows() {
+  return cfgCache ? [["all", cfgCache], ...Object.entries(cfgCache.limits)].filter(([, o]) => o.enabled === false && o.disabled_until).map(([k, o]) => ({ key: k, name: NAME(k), until: o.disabled_until })) : [];
+}
+let cfgCache = null;
 async function evaluate(c, port) {
   const out = {}; const now = Date.now();
   const get = async (p) => (await fetch(`http://127.0.0.1:${port}${p}`, { signal: AbortSignal.timeout(10_000) })).json();
@@ -61,7 +84,9 @@ export function kasvamoAck(ids, by) {
 export function kasvamoActive() { return Object.entries(st.active).filter(([, v]) => v).map(([k]) => st.msg[k] ?? k); }
 export function startKasvamoAlarms({ port }) {
   const tick = async () => {
-    const c = await cfg(); if (!c.enabled) return;
+    const c = await cfg(); await disableCheck(c); cfgCache = c;
+    for (const [k, L] of Object.entries(c.limits)) if (L.enabled === false) clearDisabled(k);
+    if (!c.enabled) { clearDisabled("all"); return; }
     const now = Date.now(); const delay = c.delay_min * 60_000;
     for (const [key, [bad, msg]] of Object.entries(await evaluate(c, port))) {
       if (bad && !st.active[key]) {
@@ -95,21 +120,30 @@ export function registerKasvamoAlarmRoutes(app) {
         const d = Number(b.delay_min); if (!Number.isFinite(d) || d < 0 || d > 120) return res.status(400).json({ error: "viive 0–120 min" });
         next.delay_min = d;
       }
-      if (b.enabled !== undefined) next.enabled = !!b.enabled;
+      const toggles = []; // [k, "dis"|"en"]
+      const tog = (k, obj, curObj, v) => {
+        if (v === false && (curObj.enabled !== false || v.disable_min !== undefined || b.disable_min !== undefined)) { obj.enabled = false; obj.disabled_until = new Date(Date.now() + disableMinutes(b.disable_min) * 60_000).toISOString(); toggles.push([k, "dis", obj.disabled_until]); }
+        else if (v === true && curObj.enabled === false) { obj.enabled = true; delete obj.disabled_until; toggles.push([k, "en"]); }
+      };
+      try { if (b.enabled !== undefined) tog("all", next, cur, !!b.enabled); } catch (e) { return res.status(400).json({ error: e.message }); }
       for (const [k, v] of Object.entries(b.limits ?? {})) {
         if (!SIG[k]) return res.status(400).json({ error: `tuntematon signaali ${k}` });
         const [mn, mx] = RANGE[k]; const L = { ...cur.limits[k] };
         if ("lo" in v) L.lo = num(v.lo);
         if ("hi" in v) L.hi = num(v.hi);
         if ("hyst" in v) L.hyst = num(v.hyst) ?? 0;
-        if ("enabled" in v) L.enabled = !!v.enabled;
+        if ("enabled" in v) { try { tog(k, L, cur.limits[k], !!v.enabled); } catch (e) { return res.status(400).json({ error: e.message }); } }
         for (const x of ["lo", "hi"]) if (L[x] !== null && (!Number.isFinite(L[x]) || L[x] < mn || L[x] > mx)) return res.status(400).json({ error: `${SIG[k][1]}: raja ${mn}–${mx}` });
         if (L.lo !== null && L.hi !== null && L.lo >= L.hi) return res.status(400).json({ error: `${SIG[k][1]}: alaraja < yläraja` });
         if (!Number.isFinite(L.hyst) || L.hyst < 0 || (L.lo !== null && L.hi !== null && L.hyst * 2 >= L.hi - L.lo) || L.hyst > mx - mn) return res.status(400).json({ error: `${SIG[k][1]}: hystereesi ≥ 0 ja pienempi kuin puolet rajojen välistä` });
         next.limits[k] = L;
       }
-      await query("INSERT INTO myko_settings (k, v, updated_by) VALUES ('kasvamo_alarms', ?, 'ui') ON DUPLICATE KEY UPDATE v = VALUES(v), updated_by = VALUES(updated_by)", [JSON.stringify(next)]);
+      await saveKas(next); cfgCache = next;
       console.log("[kasvamo] asetukset päivitetty", JSON.stringify(b));
+      for (const [k, a, until] of toggles) {
+        await logToggle(`kasvamo:${k}`, a === "dis" ? "disable" : "enable", until ?? null, String(b.by ?? "ui"));
+        if (a === "dis") { clearDisabled(k); notifySafe(`🔕 Hälytys ${NAME(k)} pois päältä ${untilTxt(until)} asti`); } else notifySafe(`🔔 Hälytys ${NAME(k)} kytketty takaisin päälle`);
+      }
       res.json(await view());
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
