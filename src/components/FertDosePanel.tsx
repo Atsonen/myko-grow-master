@@ -56,6 +56,12 @@ function Trend({ d }: { d: FertDoseStatus }) {
   const y = (v: number) => H - P - ((v - lo) / (hi - lo)) * (H - 2 * P);
   const line = pts.map((p, i) => `${i ? "L" : "M"}${x(p[0]).toFixed(1)},${y(p[1]).toFixed(1)}`).join(" ");
   const band = (a: number, b: number, fill: string) => { const ya = y(Math.min(hi, Math.max(lo, b))), yb = y(Math.min(hi, Math.max(lo, a))); return <rect x={0} y={ya} width={W} height={Math.max(0, yb - ya)} fill={fill} />; };
+  // Live-annokset trendivälillä: merkki + tooltip (aika, A/B, ml). 1 s ≈ 1 ml.
+  const doses = (d.recent ?? []).filter((r) => r.mode === "live" && (r.requested_ms ?? 0) > 0).map((r) => {
+    const ts = Date.parse(r.ts); const ml = (r.actual_ms ?? r.requested_ms) / 1000;
+    const nearest = pts.reduce((best, p) => Math.abs(p[0] - ts) < Math.abs(best[0] - ts) ? p : best, pts[0]);
+    return { ts, fert: r.fert, ml, ec: nearest[1], inRange: ts >= t0 - 60_000 && ts <= t1 + 60_000 };
+  }).filter((r) => r.inRange);
   return (
     <div>
       <svg viewBox={`0 0 ${W} ${H}`} className="h-36 w-full" preserveAspectRatio="none" data-testid="fd-trend">
@@ -63,10 +69,18 @@ function Trend({ d }: { d: FertDoseStatus }) {
         {sp != null && <line x1={0} x2={W} y1={y(sp)} y2={y(sp)} stroke="#a1a1aa" strokeDasharray="4 4" strokeWidth={1} />}
         {bands.map((b, i) => b > lo && b < hi && <line key={i} x1={0} x2={W} y1={y(b)} y2={y(b)} stroke="#ef4444" strokeDasharray="2 3" strokeWidth={1} />)}
         <path d={line} fill="none" stroke="#38bdf8" strokeWidth={2} vectorEffect="non-scaling-stroke" />
+        {doses.map((r) => (
+          <g key={r.ts} data-testid="fd-trend-dose">
+            <title>{`${new Date(r.ts).toLocaleTimeString("fi-FI", { hour: "2-digit", minute: "2-digit", second: "2-digit" })} · ${r.fert} · ${r.ml.toFixed(1)} ml`}</title>
+            <line x1={x(r.ts)} x2={x(r.ts)} y1={y(r.ec) - 10} y2={H - P} stroke="#f59e0b" strokeWidth={1} strokeDasharray="2 2" vectorEffect="non-scaling-stroke" />
+            <circle cx={x(r.ts)} cy={y(r.ec)} r={4} fill="#f59e0b" stroke="#18181b" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+            <text x={x(r.ts) + 5} y={Math.max(10, y(r.ec) - 8)} fill="#fbbf24" fontSize="9" style={{ fontFamily: "ui-monospace, monospace" }}>{`${r.fert} ${r.ml.toFixed(0)}ml`}</text>
+          </g>
+        ))}
       </svg>
       <div className="flex justify-between text-[11px] text-muted-foreground">
         <span>{new Date(t0).toLocaleTimeString("fi-FI", { hour: "2-digit", minute: "2-digit" })}</span>
-        <span><span className="text-sky-400">━</span> EC · <span>┅</span> SP · <span className="text-emerald-400">▮</span> varoitusalue · <span className="text-red-400">┅</span> hälytysraja</span>
+        <span><span className="text-sky-400">━</span> EC · <span>┅</span> SP · <span className="text-amber-400">●</span> annos · <span className="text-emerald-400">▮</span> varoitusalue · <span className="text-red-400">┅</span> hälytysraja</span>
         <span>{new Date(t1).toLocaleTimeString("fi-FI", { hour: "2-digit", minute: "2-digit" })}</span>
       </div>
     </div>
@@ -231,8 +245,9 @@ export function FertEcModal({ open, d, reload, onClose }: { open: boolean; d: Fe
               <KV k="Tila" v={d.reason} />
               <KV k="Alle SP alkaen" v={hm(d.belowSince)} />
               <KV k="Viimeisin annos" v={hm(d.lastDoseAt)} />
-              <KV k="Seuraava aikaisintaan" v={hm(d.nextAllowedAt)} />
-              <KV k="Ehdot" v={`alle SP ${c.below_min} min · tauko ${c.pause_min} min`} />
+              <KV k="Seuraava auto aikaisintaan" v={hm(d.nextAllowedAt)} />
+              <KV k="Ehdot (auto)" v={`alle SP ${c.below_min} min · tauko ${c.pause_min} min`} />
+              <KV k="Käsiannos" v="ohittaa tauon · käynnistää tauon alusta" />
             </div>
             {msg && <div className="mt-2 rounded border border-amber-500/50 bg-amber-500/10 px-2 py-1 text-xs text-amber-200">{msg}</div>}
           </Section>
@@ -265,7 +280,7 @@ export function FertEcModal({ open, d, reload, onClose }: { open: boolean; d: Fe
           <DialogContent className="max-w-sm font-mono">
             <DialogHeader><DialogTitle className="text-base">Vahvista käsiannos</DialogTitle></DialogHeader>
             <div className="space-y-3 text-sm">
-              <div>Lannoite <b>{c.fert}</b> (letku oikeassa säiliössä?), {c.dose_s} s ≈ {c.dose_s} ml. Tauko {c.pause_min} min ja EC-lukitus tarkistetaan. {c.live ? "Lähetetään PLC:lle." : "Dry-run: vain lokiin."}</div>
+              <div>Lannoite <b>{c.fert}</b> (letku oikeassa säiliössä?), {c.dose_s} s ≈ {c.dose_s} ml. EC-lukitus ja PLC-turvaehdot tarkistetaan; auto-tauko ohitetaan (käsiannos käynnistää {c.pause_min} min tauon alusta). {c.live ? "Lähetetään PLC:lle." : "Dry-run: vain lokiin."}</div>
               <div className="flex justify-end gap-2">
                 <button type="button" className="rounded-md border border-border px-3 py-1.5" onClick={() => setConfirm(false)}>Peruuta</button>
                 <button type="button" data-testid="fd-dose-confirm" className="rounded-md bg-amber-500 px-4 py-1.5 font-semibold text-zinc-900 disabled:opacity-50" disabled={busy} onClick={doseNow}>{busy ? "Lähetetään…" : "Annostele"}</button>

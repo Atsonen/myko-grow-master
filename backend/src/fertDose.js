@@ -260,11 +260,16 @@ export function startFertDose({ port, mqttUrl }) {
     if (topic === "Sensors/PLC_2/FertDose") { S.plc = d; S.plcAt = Date.now(); }
     else { S.lastAck = d; const f = S.pending.get(d.id); if (f) { S.pending.delete(d.id); f(d); } }
   });
-  // Heartbeat 5 s välein (vain kun live + hb_enabled + DB olemassa)
+  // Heartbeat 5 s välein (vain kun live + hb_enabled + DB olemassa).
+  // Älä pinoudu: jos edellinen vielä auki, jätä tämä kerta väliin. Timeout 8 s (sillan pollauskuorma).
+  let hbBusy = false;
   setInterval(async () => {
-    if (!CFG.live || !CFG.hb_enabled || !S.plc.present) return;
-    S.hb = (S.hb + 1) % 65536; const a = await cmd({ Heartbeat: S.hb }, 4000);
-    S.hbErr = okRes(a, "Heartbeat") ? null : errTxt(a); if (!S.hbErr) S.hbAt = Date.now();
+    if (!CFG.live || !CFG.hb_enabled || !S.plc.present || hbBusy) return;
+    hbBusy = true;
+    try {
+      S.hb = (S.hb + 1) % 65536; const a = await cmd({ Heartbeat: S.hb }, 8000);
+      S.hbErr = okRes(a, "Heartbeat") ? null : errTxt(a); if (!S.hbErr) S.hbAt = Date.now();
+    } finally { hbBusy = false; }
   }, 5000);
   ensureTables().catch((e) => console.warn("[fertdose] table", e.message)).finally(async () => {
     const c = await cfg().catch(() => DEF);
@@ -292,13 +297,12 @@ export function registerFertDoseRoutes(app) {
         cumulative: cum.map((r) => ({ ...r, n: Number(r.n), req_ms: Number(r.req_ms), act_ms: Number(r.act_ms) })), recent });
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
-  // Käsiannos: vaatii confirm=true (UI-vahvistus), noudattaa taukoa, max 5 s ja EC-hälytyslukitusta.
+  // Käsiannos: vaatii confirm=true. Ohittaa auto-tauon (pause_min), mutta HI-lukitus + PLC-turvaehdot
+  // estävät edelleen. Onnistunut käsiannos käynnistää tauon alusta (dose() asettaa lastDoseAt).
   app.post("/api/fertdose/dose", async (req, res) => {
     try {
       const c = await cfg();
       if (req.body?.confirm !== true) return res.status(400).json({ error: "vahvistus puuttuu" });
-      const since = S.lastDoseAt ? (Date.now() - S.lastDoseAt) / 60000 : Infinity;
-      if (since < c.pause_min) return res.status(409).json({ error: `tauko kesken (${since.toFixed(1)}/${c.pause_min} min)` });
       const r = await dose(c, "käsiannos (Annostele nyt)", "manual");
       res.status(r.ok ? 200 : 409).json(r);
     } catch (e) { res.status(500).json({ error: e.message }); }
