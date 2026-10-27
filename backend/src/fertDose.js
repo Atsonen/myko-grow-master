@@ -3,8 +3,9 @@
 // Kirjoitukset vain bridgen kautta: MQTT Myko/Cmd/FertDose (whitelist Enable, DoseReq_ms, DoseTrig pulse, Heartbeat).
 // Asetukset: myko_settings k='fert_dose'. Loki: fert_dose_log. Hälytykset/varoitukset: fert_events.
 // Lannoite A/B = sama pumppu, letku siirretään käsin: fert on vain Myko-asetus, kirjataan jokaiselle annokselle.
-// EC-hälytys/-varoitus = ± poikkeama TDS_SP:stä. HÄLYTYS -> Telegram (Valvomo-botti, alku + palautuminen) + LUKITUS
-// (ei annospyyntöjä, Enable=false PLC:lle). VAROITUS -> vain UI/hälytyslista.
+// EC-hälytys/-varoitus = ± poikkeama TDS_SP:stä. EC_ALARM_HI -> Telegram + LUKITUS (Enable=false).
+// EC_ALARM_LO -> Telegram, EI lukitusta (annostelua tarvitaan). Kuittaus Valvomossa vapauttaa HI-lukituksen.
+// VAROITUS -> vain UI/hälytyslista. HI/LO palautuvat kukin oman rajansa perusteella (eivät jumita toisiaan).
 import mqtt from "mqtt";
 import { query } from "./db.js";
 import { tg, allowedChats } from "./telegram.js";
@@ -47,7 +48,7 @@ async function ensureTables() {
   await query("UPDATE fert_events SET cleared_ts = UTC_TIMESTAMP() WHERE cleared_ts IS NULL AND NOT (level = 'alarm' AND code LIKE 'ec_alarm_%')");
   for (const r of await query("SELECT id, code, level, text, ts, acked_ts FROM fert_events WHERE cleared_ts IS NULL AND level = 'alarm' AND code LIKE 'ec_alarm_%' ORDER BY id")) {
     S.ev[r.code] = { level: "alarm", active: true, text: r.text, since: new Date(r.ts).toISOString(), id: Number(r.id), acked: !!r.acked_ts };
-    console.log(`[fertdose] palautettu aktiivinen hälytys ${r.code} (#${r.id}) – lukitus voimassa`);
+    console.log(`[fertdose] palautettu aktiivinen hälytys ${r.code} (#${r.id})${r.code === 'ec_alarm_hi' && !r.acked_ts ? ' – lukitus voimassa' : ''}`);
   }
   const [last] = await query("SELECT TIMESTAMPDIFF(SECOND, ts, UTC_TIMESTAMP()) age_s FROM fert_dose_log WHERE mode IN ('live','dry-run') AND requested_ms > 0 ORDER BY id DESC LIMIT 1");
   if (last) S.lastDoseAt = Date.now() - Number(last.age_s) * 1000;
@@ -75,7 +76,8 @@ const errTxt = (a) => a?.error ?? Object.entries(a?.results ?? {}).filter(([, v]
 const plcFresh = () => S.plc.present && Date.now() - S.plcAt < 15_000;
 
 // ---------- Hälytykset / varoitukset ----------
-function alarmActive() { return Object.entries(S.ev).some(([k, e]) => e.level === "alarm" && e.active && k.startsWith("ec_")); }
+// Lukitus VAIN EC_ALARM_HI (liian väkevä). LO = annostelua tarvitaan -> ei koskaan lukitse. Käyttäjän kuittaus vapauttaa lukituksen.
+function alarmActive() { const e = S.ev.ec_alarm_hi; return Boolean(e?.active && e.level === "alarm" && !e.acked); }
 async function setEvent(code, level, active, text, c) {
   const e = S.ev[code];
   if (active) {
@@ -86,7 +88,7 @@ async function setEvent(code, level, active, text, c) {
     const r = await query("INSERT INTO fert_events (ts, level, code, text) VALUES (UTC_TIMESTAMP(), ?, ?, ?)", [level, code, text.slice(0, 250)]);
     S.ev[code] = { level, active: true, text, since: new Date().toISOString(), id: Number(r.insertId), acked: level !== "alarm" };
     console.log(`[fertdose] ${level.toUpperCase()} ${code}: ${text}`);
-    if (level === "alarm") await notify(`🚨 ${text} – annostelu LUKITTU (ilmoitetaan kerran, palautumisesta erikseen)`);
+    if (level === "alarm") await notify(`🚨 ${text}${code === "ec_alarm_hi" ? " – annostelu LUKITTU" : " – annostelu sallittu"} (ilmoitetaan kerran, palautumisesta erikseen)`);
   } else {
     delete S.evSince[code];
     if (!e?.active) return;
@@ -108,7 +110,7 @@ async function evalEcAlarm(code, c, ec, reliable, raise, inside, lo, hi) {
   const need = Math.max(1, Number(c.ec_alarm.clear_min) || 3) * 60_000;
   if (Date.now() - S.clrSince[code] < need) return;
   delete S.clrSince[code];
-  await setEvent(code, "alarm", false, "", { ...c, recoveryText: `✅ Palautui: EC ${ec} ppm, takaisin rajoissa (${lo}–${hi}) – annostelulukitus poistui` });
+  await setEvent(code, "alarm", false, "", { ...c, recoveryText: `✅ Palautui: EC ${ec} ppm, takaisin rajoissa (${lo}–${hi}) – ${code === "ec_alarm_hi" ? "annostelulukitus poistui" : "alaraja OK"}` });
 }
 async function ecDisableCheck(c) {
   const A = c.ec_alarm; if (A.enabled) return;
@@ -138,10 +140,11 @@ async function evalAlarms(c, ec, sp, reliable) {
   const lim = { alo: sp + A.lo_off, ahi: sp + A.hi_off, wlo: sp + A.warn_lo_off, whi: sp + A.warn_hi_off };
   const t = (lvl, side, l) => `Lannoite EC ${ec} ppm ${side === "lo" ? "alle" : "yli"} ${lvl}rajan ${l} (SP ${sp} ${side === "lo" ? A[lvl === "hälytys" ? "lo_off" : "warn_lo_off"] : "+" + A[lvl === "hälytys" ? "hi_off" : "warn_hi_off"]})`;
   const okLo = on && ec >= lim.alo + hA, okHi = on && ec <= lim.ahi - hA;
-  await evalEcAlarm("ec_alarm_lo", c, ec, on, on && ec < lim.alo ? t("hälytys", "lo", lim.alo) : null, okLo && okHi, lim.alo, lim.ahi);
-  await evalEcAlarm("ec_alarm_hi", c, ec, on, on && ec > lim.ahi ? t("hälytys", "hi", lim.ahi) : null, okLo && okHi, lim.alo, lim.ahi);
-  await setEvent("ec_warn_lo", "warning", on && ec < lim.wlo + h("ec_warn_lo") && !(ec < lim.alo), t("varoitus", "lo", lim.wlo), c);
-  await setEvent("ec_warn_hi", "warning", on && ec > lim.whi - h("ec_warn_hi") && !(ec > lim.ahi), t("varoitus", "hi", lim.whi), c);
+  await evalEcAlarm("ec_alarm_lo", c, ec, on, on && ec < lim.alo ? t("hälytys", "lo", lim.alo) : null, okLo, lim.alo, lim.ahi);
+  // Kumpikin puoli palautuu OMAN rajansa perusteella (ennen vaadittiin okLo && okHi -> HI jumittui, kun EC laski alle LO-rajan).
+  await evalEcAlarm("ec_alarm_hi", c, ec, on, on && ec > lim.ahi ? t("hälytys", "hi", lim.ahi) : null, okHi, lim.alo, lim.ahi);
+  await setEvent("ec_warn_lo", "warning", on && ec < lim.wlo + h("ec_warn_lo") && ec < sp && !(ec < lim.alo), t("varoitus", "lo", lim.wlo), c);
+  await setEvent("ec_warn_hi", "warning", on && ec > lim.whi - h("ec_warn_hi") && ec > sp && !(ec > lim.ahi), t("varoitus", "hi", lim.whi), c);
   // järjestelmävaroitukset (vain UI)
   await setEvent("plc_db", "warning", c.live && !S.plc.present, "FertDose_DB puuttuu OPC UA:sta (ei ladattu PLC:lle?) – ohjaus ei käytössä", c);
   await setEvent("plc_hb", "warning", c.live && c.hb_enabled && plcFresh() && S.plc.HB_OK === false, "PLC: heartbeat ei kunnossa (HB_OK = FALSE)", c);
@@ -332,3 +335,4 @@ export function registerFertDoseRoutes(app) {
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 }
+export const __test = { S, evalAlarms, alarmActive, DEF };
