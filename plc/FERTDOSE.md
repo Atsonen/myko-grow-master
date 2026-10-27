@@ -36,7 +36,7 @@ Sama pumppu ja letku; letku siirretään käsin säiliöstä toiseen. Valinta on
 2. FB_FertDose_DB (instanssi): Accessible/Visible from HMI/OPC UA; **Writable** vain Input.Enable, Input.DoseReq_ms, Input.DoseTrig, Input.Heartbeat.
 3. FB_FertDose_DB OPC UA server interfaceen "Controls" (tehty 27.10.).
 4. Tagitaulu: `FertPump` fyysiseen lähtöön (vanhan FertPumps-lähdön osoite).
-5. OB1: lisää kutsu (`OB1_FertDose_call.scl`) – vain `Pump => "FertPump"`, inputit KYTKEMÄTTÄ (muuten kirjoitukset ylikirjoittuvat joka kierros), poista vanha lannoitelogiikka/FertPumps-ohjaus (ettei kaksi logiikkaa ohjaa samaa lähtöä).
+5. Kutsu FB (missä tahansa syklisesti ajettavassa lohkossa, esim. olemassa olevan ohjelman sisällä): `"FB_FertDose_DB"(Pump => "FertPump");` – vain Pump kytketty, inputit KYTKEMÄTTÄ (muuten Valvomon kirjoitukset ylikirjoittuvat joka kierros), poista vanha lannoitelogiikka/FertPumps-ohjaus (ettei kaksi logiikkaa ohjaa samaa lähtöä).
 6. Compile + download + testaa: ilman heartbeatia HB_OK = FALSE → pumppu ei käy (turvallinen oletus).
 
 ## Valvomo
