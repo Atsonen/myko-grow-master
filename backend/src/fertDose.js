@@ -14,7 +14,7 @@ const DEF = {
   ec_key: "dl23", sp_source: "plc", sp_manual: 4800, ec_sp: 4800,
   below_min: 10, pause_min: 20, stale_s: 120, min_uptime_min: 10,
   range: [100, 9000], spike_ppm: 400, n_samples: 6, poll_s: 10,
-  ec_alarm: { enabled: true, lo_off: -1500, hi_off: 1500, warn_lo_off: -700, warn_hi_off: 700, hyst: 100, delay_min: 5 },
+  ec_alarm: { enabled: true, lo_off: -1500, hi_off: 1500, warn_lo_off: -700, warn_hi_off: 700, hyst: 100, delay_min: 5, clear_min: 3 },
 };
 const STATUS_TXT = { 0: "valmis", 1: "annostelee", 2: "annos valmis", 3: "annos valmis (rajattu 5 s)", 10: "hylätty: Enable pois", 11: "heartbeat puuttuu", 13: "hylätty: virheellinen pyyntö", 14: "katkaistu: Enable pudotettu", 15: "katkaistu: turvakatkaisu" };
 const S = { samples: [], validSince: null, belowSince: null, lastDoseAt: null, reason: "init", sp: null,
@@ -42,12 +42,22 @@ async function ensureTables() {
     level VARCHAR(8) NOT NULL, code VARCHAR(32) NOT NULL, text VARCHAR(250) NOT NULL, INDEX idx_fert_events_ts (ts)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
   await query("ALTER TABLE fert_events ADD COLUMN IF NOT EXISTS acked_ts DATETIME NULL, ADD COLUMN IF NOT EXISTS acked_by VARCHAR(80) NULL");
-  await query("UPDATE fert_events SET cleared_ts = UTC_TIMESTAMP() WHERE cleared_ts IS NULL"); // tila rakennetaan uudelleen käynnistyksessä
+  // Varoitukset rakennetaan uudelleen; aktiiviset EC-HÄLYTYKSET säilyvät uudelleenkäynnistyksen yli (fail-safe: lukitus pysyy).
+  await query("UPDATE fert_events SET cleared_ts = UTC_TIMESTAMP() WHERE cleared_ts IS NULL AND NOT (level = 'alarm' AND code LIKE 'ec_alarm_%')");
+  for (const r of await query("SELECT id, code, level, text, ts, acked_ts FROM fert_events WHERE cleared_ts IS NULL AND level = 'alarm' AND code LIKE 'ec_alarm_%' ORDER BY id")) {
+    S.ev[r.code] = { level: "alarm", active: true, text: r.text, since: new Date(r.ts).toISOString(), id: Number(r.id), acked: !!r.acked_ts };
+    console.log(`[fertdose] palautettu aktiivinen hälytys ${r.code} (#${r.id}) – lukitus voimassa`);
+  }
   const [last] = await query("SELECT TIMESTAMPDIFF(SECOND, ts, UTC_TIMESTAMP()) age_s FROM fert_dose_log WHERE mode IN ('live','dry-run') AND requested_ms > 0 ORDER BY id DESC LIMIT 1");
   if (last) S.lastDoseAt = Date.now() - Number(last.age_s) * 1000;
 }
 const logRow = (fert, ms, ec, sp, reason, mode) => query("INSERT INTO fert_dose_log (ts, fert, requested_ms, actual_ms, ec_before, ec_sp, reason, mode) VALUES (UTC_TIMESTAMP(), ?, ?, NULL, ?, ?, ?, ?)", [fert, ms, ec ?? null, sp ?? null, String(reason).slice(0, 200), mode]);
-async function notify(text) { try { for (const chat_id of await allowedChats()) await tg("sendMessage", { chat_id, text }); } catch (e) { console.warn("[fertdose] telegram", e.message); } }
+async function notify(text) {
+  for (let i = 0; i < 4; i++) {
+    try { for (const chat_id of await allowedChats()) await tg("sendMessage", { chat_id, text }); return; }
+    catch (e) { console.warn(`[fertdose] telegram (yritys ${i + 1}/4)`, e.message); await new Promise((r) => setTimeout(r, 5000 * (i + 1))); }
+  }
+}
 
 // ---------- MQTT / bridge ----------
 function cmd(body, timeoutMs = 6000) {
@@ -81,18 +91,34 @@ async function setEvent(code, level, active, text, c) {
     if (!e?.active) return;
     e.active = false; await query("UPDATE fert_events SET cleared_ts = UTC_TIMESTAMP() WHERE id = ?", [e.id]);
     console.log(`[fertdose] clear ${code}`);
-    if (level === "alarm") await notify(`✅ Palautui: ${e.text} – annostelulukitus poistui`);
+    if (level === "alarm" && c?.recoveryText) await notify(c.recoveryText);
     delete S.ev[code];
   }
+}
+// EC-hälytyksen kuittautuminen (fail-safe): vain kun LUOTETTAVA EC on ollut rajojen sisällä hystereesin verran
+// vähintään clear_min minuuttia. Epäluotettava/vanha mittaus ei koskaan poista hälytystä eikä lukitusta.
+async function evalEcAlarm(code, c, ec, reliable, raise, inside, lo, hi) {
+  const e = S.ev[code];
+  if (!e?.active) { delete S.clrSince?.[code]; if (raise) await setEvent(code, "alarm", true, raise, c); else delete S.evSince[code]; return; }
+  S.clrSince ??= {};
+  if (raise) { e.text = raise; delete S.clrSince[code]; return; }
+  if (!reliable || ec == null || !inside) { delete S.clrSince[code]; return; } // pidä hälytys + lukitus
+  S.clrSince[code] ??= Date.now();
+  const need = Math.max(1, Number(c.ec_alarm.clear_min) || 3) * 60_000;
+  if (Date.now() - S.clrSince[code] < need) return;
+  delete S.clrSince[code];
+  await setEvent(code, "alarm", false, "", { ...c, recoveryText: `✅ Palautui: EC ${ec} ppm, takaisin rajoissa (${lo}–${hi}) – annostelulukitus poistui` });
 }
 async function evalAlarms(c, ec, sp, reliable) {
   const A = c.ec_alarm;
   const on = A.enabled && reliable && ec != null && sp != null;
   const h = (code) => (S.ev[code]?.active ? Number(A.hyst) || 0 : 0);
+  const hA = Math.min(50, Math.max(20, Number(A.hyst) || 0)); // hälytyksen kuittaushystereesi 20–50 ppm
   const lim = { alo: sp + A.lo_off, ahi: sp + A.hi_off, wlo: sp + A.warn_lo_off, whi: sp + A.warn_hi_off };
   const t = (lvl, side, l) => `Lannoite EC ${ec} ppm ${side === "lo" ? "alle" : "yli"} ${lvl}rajan ${l} (SP ${sp} ${side === "lo" ? A[lvl === "hälytys" ? "lo_off" : "warn_lo_off"] : "+" + A[lvl === "hälytys" ? "hi_off" : "warn_hi_off"]})`;
-  await setEvent("ec_alarm_lo", "alarm", on && ec < lim.alo + h("ec_alarm_lo"), t("hälytys", "lo", lim.alo), c);
-  await setEvent("ec_alarm_hi", "alarm", on && ec > lim.ahi - h("ec_alarm_hi"), t("hälytys", "hi", lim.ahi), c);
+  const okLo = on && ec >= lim.alo + hA, okHi = on && ec <= lim.ahi - hA;
+  await evalEcAlarm("ec_alarm_lo", c, ec, on, on && ec < lim.alo ? t("hälytys", "lo", lim.alo) : null, okLo && okHi, lim.alo, lim.ahi);
+  await evalEcAlarm("ec_alarm_hi", c, ec, on, on && ec > lim.ahi ? t("hälytys", "hi", lim.ahi) : null, okLo && okHi, lim.alo, lim.ahi);
   await setEvent("ec_warn_lo", "warning", on && ec < lim.wlo + h("ec_warn_lo") && !(ec < lim.alo), t("varoitus", "lo", lim.wlo), c);
   await setEvent("ec_warn_hi", "warning", on && ec > lim.whi - h("ec_warn_hi") && !(ec > lim.ahi), t("varoitus", "hi", lim.whi), c);
   // järjestelmävaroitukset (vain UI)
