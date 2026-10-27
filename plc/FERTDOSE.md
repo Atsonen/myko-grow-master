@@ -16,7 +16,7 @@ Poistetaan PLC:stä: EC_Below TON / EC-vertailu, 20 min FertPumpDelay, tilakone 
 ## Lannoite A/B
 Sama pumppu ja letku; letku siirretään käsin säiliöstä toiseen. Valinta on vain Myko-asetus (`fert_dose.fert`, vaihdettavissa Kasvamo-näkymässä), joka kirjataan jokaiselle annokselle `fert_dose_log.fert`. Lannoitekohtainen kumulatiivinen aika lasketaan Mykossa lokista; PLC:n RunTime_ms on pumpun kokonaisaika.
 
-## OPC UA -muuttujat (FertDose_DB)
+## OPC UA -muuttujat (instanssi-DB FB_FertDose_DB, Input/* ja Output/*)
 | Muuttuja | Tyyppi | Suunta | Writable | Kuvaus |
 |---|---|---|---|---|
 | Enable | Bool | Valvomo→PLC | ✔ | Annostelu sallittu |
@@ -32,11 +32,11 @@ Sama pumppu ja letku; letku siirretään käsin säiliöstä toiseen. Valinta on
 | Status | Int | PLC→Valvomo | – | 0 idle, 1 active, 2 done, 3 limited, 10 not enabled, 11 HB lost, 13 bad request, 14 aborted (Enable pois), 15 aborted (turvakatkaisu) |
 
 ## TIA-työt (käyttäjä)
-1. External source files → Add `FB_FertDose.scl`, `FertDose_DB.db` → "Generate blocks from source".
-2. FertDose_DB: Accessible/Visible from HMI/OPC UA kaikille; **Writable** vain Enable, DoseReq_ms, DoseTrig, Heartbeat.
-3. Lisää FertDose_DB OPC UA server interfaceen (esim. "Controls", jossa Pumput_DB) tai salli standard-DB-näkyvyys.
+1. External source files → Add `FB_FertDose.scl` → "Generate blocks from source". Ei erillistä globaalia DB:tä (päätös 27.10.2026).
+2. FB_FertDose_DB (instanssi): Accessible/Visible from HMI/OPC UA; **Writable** vain Input.Enable, Input.DoseReq_ms, Input.DoseTrig, Input.Heartbeat.
+3. FB_FertDose_DB OPC UA server interfaceen "Controls" (tehty 27.10.).
 4. Tagitaulu: `FertPump` fyysiseen lähtöön (vanhan FertPumps-lähdön osoite).
-5. OB1: lisää kutsu (`OB1_FertDose_call.scl`), poista vanha lannoitelogiikka/FertPumps-ohjaus (ettei kaksi logiikkaa ohjaa samaa lähtöä).
+5. OB1: lisää kutsu (`OB1_FertDose_call.scl`) – vain `Pump => "FertPump"`, inputit KYTKEMÄTTÄ (muuten kirjoitukset ylikirjoittuvat joka kierros), poista vanha lannoitelogiikka/FertPumps-ohjaus (ettei kaksi logiikkaa ohjaa samaa lähtöä).
 6. Compile + download + testaa: ilman heartbeatia HB_OK = FALSE → pumppu ei käy (turvallinen oletus).
 
 ## Valvomo
@@ -51,6 +51,6 @@ Sama pumppu ja letku; letku siirretään käsin säiliöstä toiseen. Valinta on
 3. Valvomon heartbeat-kirjoitin ja annospyyntökirjoitin (ei toteutettu tässä versiossa tarkoituksella) → live=true.
 
 ## Live-ohjaus (hyväksytty 27.10.2026 11:20, lähtö forsattu 0 testivaiheessa)
-- Bridge (`~/opcua-bridge`, config `fertdose:`): lukee FertDose_DB:n Read-palvelulla 2 s välein → MQTT `Sensors/PLC_2/FertDose` (`present:false` kunnes DB löytyy; uudelleenhaku 30 s välein). Kirjoitus `Myko/Cmd/FertDose` (whitelist Enable, DoseReq_ms 0–5000, Heartbeat, DoseTrig "pulse" 1 s; DoseTrig aina viimeisenä). Puuttuva DB → ack `error: DB puuttuu`.
+- Bridge (`~/opcua-bridge`, config `fertdose:`): lukee FB_FertDose_DB:n (Input/*, Output/*) Read-palvelulla 2 s välein → MQTT `Sensors/PLC_2/FertDose` (`present:false` kunnes DB löytyy; uudelleenhaku 30 s välein). Kirjoitus `Myko/Cmd/FertDose` → `FB_FertDose_DB/Input/*` (whitelist Enable, DoseReq_ms 0–5000, Heartbeat, DoseTrig "pulse" 1 s; DoseTrig aina viimeisenä). Puuttuva DB → ack `error: DB puuttuu`.
 - Myko: heartbeat 5 s välein (kun live + hb_enabled + DB löytyy), Enable-synkronointi asetuksesta `plc_enable`, automaattiannos + "Annostele nyt" (vahvistusdialogi, tauko 20 min, max 5 s). Kaikki annokset/kirjoitukset `fert_dose_log` (mode live / live-fail / blocked / dry-run), toteutunut aika PLC:n LastDose_ms:stä DoseCount-muutoksella.
 - EC-hälytys/-varoitus ± TDS_SP (asetus `ec_alarm`, muokattavissa klikkaamalla EC-ruutua): HÄLYTYS → Telegram (Valvomo) alku + palautuminen, annostelulukitus (ei pyyntöjä, Enable=FALSE). VAROITUS → vain lista. Tapahtumat `fert_events`. Kasvamo-hälytysten absoluuttinen EC-raja poistettu käytöstä (korvattu tällä).

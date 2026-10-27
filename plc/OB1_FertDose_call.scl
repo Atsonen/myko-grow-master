@@ -1,17 +1,7 @@
-// OB1 (tai syklinen OB) – kutsu. Instanssi-DB: "FB_FertDose_DB" (luodaan automaattisesti).
+// OB1 (tai syklinen OB) – kutsu. Instanssi-DB: "FB_FertDose_DB" (ei erillistä globaalia DB:tä).
+// TÄRKEÄÄ: inputit (Enable, DoseReq_ms, DoseTrig, Heartbeat) JÄTETÄÄN KYTKEMÄTTÄ, jotta Valvomon
+// OPC UA -kirjoitukset FB_FertDose_DB.Input.* -kenttiin säilyvät (kytketty actual parameter ylikirjoittaisi ne joka kierros).
+// HbTimeout ja MaxDose_ms käyttävät FB:n oletusarvoja (T#45S, 5000).
 // Poista/ohita vanha lannoitelogiikka (EC_Below TON, tilakone 0..3, FertPumpTime/-Delay,
 // FertsJalj_% -laskenta, FertsFilled-kuittaus) ennen käyttöönottoa.
-"FB_FertDose_DB"(Enable     := "FertDose_DB".Enable,
-                 DoseReq_ms := "FertDose_DB".DoseReq_ms,
-                 DoseTrig   := "FertDose_DB".DoseTrig,
-                 Heartbeat  := "FertDose_DB".Heartbeat,
-                 HbTimeout  := T#45S,
-                 MaxDose_ms := 5000,
-                 Pump       => "FertPump",       // fyysinen lähtö (vanhan FertPumps-lähdön osoite)
-                 DoseActive => "FertDose_DB".DoseActive,
-                 DoseDone   => "FertDose_DB".DoseDone,
-                 DoseCount  => "FertDose_DB".DoseCount,
-                 LastDose_ms=> "FertDose_DB".LastDose_ms,
-                 RunTime_ms => "FertDose_DB".RunTime_ms,
-                 HB_OK      => "FertDose_DB".HB_OK,
-                 Status     => "FertDose_DB".Status);
+"FB_FertDose_DB"(Pump => "FertPump");   // fyysinen lähtö (vanhan FertPumps-lähdön osoite)
