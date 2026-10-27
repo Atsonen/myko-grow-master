@@ -48,9 +48,15 @@ async function evaluate(c, port) {
 }
 async function notify(text) { for (const chat_id of await allowedChats()) await tg("sendMessage", { chat_id, text }); }
 export function kasvamoAlarmRows() {
-  return Object.entries(st.active).filter(([, v]) => v).map(([k], i) => ({ id: -(1_900_000_000 + i), pointId: "Kasvamo", pointName: "Kasvamo", unit: "", alarm: k.toUpperCase(),
+  return Object.entries(st.active).filter(([, v]) => v).map(([k]) => ({ id: kId(k), pointId: "Kasvamo", pointName: "Kasvamo", unit: "", alarm: k.toUpperCase(),
     bit: null, priority: 1, start: new Date(st.at?.[k] ?? Date.now()).toISOString(), end: null, active: true, value: null, endValue: null,
-    source: "Kasvamo", desc: String(st.msg[k] ?? k).replace("🌱 ", ""), acked: true, ackedAt: null, ackedBy: null }));
+    source: "Kasvamo", desc: String(st.msg[k] ?? k).replace("🌱 ", ""), acked: Boolean(st.acked?.[k]), ackedAt: st.acked?.[k]?.at ?? null, ackedBy: st.acked?.[k]?.by ?? null }));
+}
+const kId = (k) => { let h = 0; for (const ch of k) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return -(1_900_000_000 + (h % 100_000_000)); };
+export function kasvamoAck(ids, by) {
+  let n = 0; st.acked ??= {};
+  for (const [k, v] of Object.entries(st.active)) if (v && !st.acked[k] && ids.includes(kId(k))) { st.acked[k] = { at: new Date().toISOString(), by: String(by ?? "dashboard").slice(0, 80) }; n++; console.log(`[kasvamo] ack ${k} by ${by}`); }
+  if (n) save(); return n;
 }
 export function kasvamoActive() { return Object.entries(st.active).filter(([, v]) => v).map(([k]) => st.msg[k] ?? k); }
 export function startKasvamoAlarms({ port }) {
@@ -61,7 +67,7 @@ export function startKasvamoAlarms({ port }) {
       if (bad && !st.active[key]) {
         st.since[key] ??= now;
         if (now - st.since[key] >= delay) {
-          st.active[key] = true; st.msg[key] = msg; (st.at ??= {})[key] = now; console.log(`[kasvamo] ALARM ${key}: ${msg}`);
+          st.active[key] = true; st.msg[key] = msg; (st.at ??= {})[key] = now; if (st.acked) delete st.acked[key]; console.log(`[kasvamo] ALARM ${key}: ${msg}`);
           try { await notify(msg + " (ilmoitetaan kerran, palautumisesta erikseen)"); } catch (e) { console.warn("[kasvamo] telegram", e.message); }
         }
       } else if (!bad) {
@@ -79,7 +85,7 @@ export function startKasvamoAlarms({ port }) {
 
 // GET/PUT /api/kasvamo/alarms – rajojen muokkaus prosessinäkymästä (vain Myko-asetus, ei PLC). Moottori lukee asetukset joka minuutti.
 export function registerKasvamoAlarmRoutes(app) {
-  const view = async () => ({ config: await cfg(), active: { ...st.active }, signals: Object.fromEntries(Object.entries(SIG).map(([k, [dl, name, unit]]) => [k, { dl, name, unit, range: RANGE[k] }])) });
+  const view = async () => ({ config: await cfg(), active: { ...st.active }, acked: Object.fromEntries(Object.entries(st.acked ?? {}).map(([k, v]) => [k, v.at])), ids: Object.fromEntries(Object.keys(st.active).map((k) => [k, kId(k)])), signals: Object.fromEntries(Object.entries(SIG).map(([k, [dl, name, unit]]) => [k, { dl, name, unit, range: RANGE[k] }])) });
   app.get("/api/kasvamo/alarms", async (_req, res) => { try { res.json(await view()); } catch (e) { res.status(500).json({ error: e.message }); } });
   app.put("/api/kasvamo/alarms", async (req, res) => {
     try {

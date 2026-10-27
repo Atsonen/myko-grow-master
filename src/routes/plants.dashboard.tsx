@@ -149,17 +149,22 @@ function fmt(v: number | null | undefined, d: number) {
 }
 
 const ACCENT = "#f59e0b";
-function ValueBox({ x, y, w = 92, label, value, unit, wired = true, title, onClick, selected = false, alarm = false, limits, clickHint }: {
+type BoxState = "alarm" | "alarmAck" | "warning" | undefined;
+function ValueBox({ x, y, w = 92, label, value, unit, wired = true, title, onClick, selected = false, alarm = false, state, limits, clickHint }: {
   x: number; y: number; w?: number; label: string; value?: string; unit?: string; wired?: boolean; title?: string;
-  onClick?: () => void; selected?: boolean; alarm?: boolean; limits?: string; clickHint?: string;
+  onClick?: () => void; selected?: boolean; alarm?: boolean; state?: BoxState; limits?: string; clickHint?: string;
 }) {
+  const st: BoxState = state ?? (alarm ? "alarm" : undefined);
+  // kuittaamaton hälytys = punasävy + punainen kehys; kuitattu = vain punainen kehys; varoitus = oranssi kehys
+  const fill = st === "alarm" ? "#4a1d22" : C.panel;
+  const stroke = st === "alarm" || st === "alarmAck" ? "#ef4444" : st === "warning" ? "#f59e0b" : selected ? ACCENT : wired ? C.stroke : C.na;
   return (
     <g transform={`translate(${x},${y})`} opacity={wired ? 1 : 0.55} onClick={onClick}
       style={onClick ? { cursor: "pointer" } : undefined} role={onClick ? "button" : undefined}
       data-testid={onClick ? `pd-click-${label}` : undefined}>
       <title>{(title ?? label) + (onClick ? (clickHint ?? " – avaa G_Air-säädin") : "")}</title>
-      <rect width={w} height={40} rx={6} fill={alarm ? "#7f1d1d" : C.panel} stroke={alarm ? C.off : selected ? ACCENT : wired ? C.stroke : C.na} strokeWidth={selected || alarm ? 2.5 : 1} strokeDasharray={wired ? undefined : "4 3"} />
-      {limits && <text x={w - 6} y={14} textAnchor="end" fontSize={8} fill={alarm ? "#fecaca" : C.muted} fontFamily="monospace">{limits}</text>}
+      <rect width={w} height={40} rx={6} fill={fill} stroke={stroke} strokeWidth={selected || st ? 2.5 : 1} data-state={st ?? ""} strokeDasharray={wired ? undefined : "4 3"} />
+      {limits && <text x={w - 6} y={14} textAnchor="end" fontSize={8} fill={st === "alarm" ? "#fecaca" : C.muted} fontFamily="monospace">{limits}</text>}
       {selected && (
         <g transform={`translate(${w - 26},-7)`}>
           <rect width={26} height={14} rx={4} fill={ACCENT} />
@@ -276,8 +281,10 @@ function PlantsDashboardPage() {
   const fan = v("fan");
   const pu = usePumput();
   const ka = useKasAlarms(); const fd = useFertDose(); const [alSig, setAlSig] = useState<string | null>(null); const [ecDlg, setEcDlg] = useState(false);
-  const kAct = (k: string) => !!(ka.a?.active[`${k}:lo`] || ka.a?.active[`${k}:hi`]);
-  const kp = (k: string) => ({ onClick: () => setAlSig(k), clickHint: " – muokkaa hälytysrajoja", alarm: kAct(k), limits: limTxt(ka.a?.config.limits[k]) });
+  const kState = (k: string): BoxState => { const ks = [`${k}:lo`, `${k}:hi`].filter((x) => ka.a?.active[x]); return !ks.length ? undefined : ks.some((x) => !ka.a?.acked?.[x]) ? "alarm" : "alarmAck"; };
+  const ecEv = (fd.d?.active ?? []).filter((e) => e.code?.startsWith("ec_"));
+  const ecState: BoxState = ecEv.some((e) => e.level === "alarm" && !e.acked) ? "alarm" : ecEv.some((e) => e.level === "alarm") ? "alarmAck" : ecEv.length ? "warning" : undefined;
+  const kp = (k: string) => ({ onClick: () => setAlSig(k), clickHint: " – muokkaa hälytysrajoja", state: kState(k), limits: limTxt(ka.a?.config.limits[k]) });
   const alarms = [["A_HumHH", "Kosteus HH"], ["A_Tayttovesi", "Täyttövesi"], ["EC_Below_Q", "EC alhainen (EC_Below)"]].filter(([k]) => pu.b(k));
   // HMI-ajastin (s) = FillingOnTime.ET (ms); HMI 5144 s ≈ ET 5 034 s luettaessa
   const fet = pu.n("FillingOnTime_ET");
@@ -362,7 +369,7 @@ function PlantsDashboardPage() {
           <Tank x={300} y={320} w={130} h={200} level={v("level")} label="Ravinnesäiliö" />
           <ValueBox x={442} y={330} w={100} label="Pinta" value={fmt(v("level"), 1)} unit="%" title={`${TAGS.level} Level · PLC SP ${pu.n("LVL_SP") ?? "—"} %`} {...kp("pinta")} />
           <ValueBox x={442} y={376} w={100} label="Vesi" value={fmt(v("waterTemp"), 1)} unit="°C" title={`${TAGS.waterTemp} Water Temp`} {...kp("vesi")} />
-          <ValueBox x={442} y={422} w={100} label="EC" value={fmt(v("ec"), 0)} unit="ppm" title={`${TAGS.ec} ppm · PLC TDS_SP ${pu.n("TDS_SP") ?? "—"}`} {...kp("ec")} onClick={() => setEcDlg(true)} alarm={!!fd.d?.active.some((e) => e.level === "alarm" && e.code?.startsWith("ec_"))} limits={fd.d?.config.ec_alarm ? (fd.d.config.ec_alarm.enabled ? `SP${fd.d.config.ec_alarm.lo_off}/+${fd.d.config.ec_alarm.hi_off}` : "pois") : undefined} />
+          <ValueBox x={442} y={422} w={100} label="EC" value={fmt(v("ec"), 0)} unit="ppm" title={`${TAGS.ec} ppm · PLC TDS_SP ${pu.n("TDS_SP") ?? "—"}`} {...kp("ec")} onClick={() => setEcDlg(true)} state={ecState} limits={fd.d?.config.ec_alarm ? (fd.d.config.ec_alarm.enabled ? `SP${fd.d.config.ec_alarm.lo_off}/+${fd.d.config.ec_alarm.hi_off}` : "pois") : undefined} />
           <ValueBox x={442} y={468} w={100} label="pH" value={fmt(v("ph"), 2)} title={`${TAGS.ph} pH`} {...kp("ph")} />
           <g opacity={0.55}>
             <title>Lämmitin: ei kytketty</title>

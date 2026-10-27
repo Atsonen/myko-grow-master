@@ -255,6 +255,7 @@ export function AlarmListWidget({ config, storageKey = "main" }: { config: Widge
                     <td className={`px-2 py-1.5 ${r.active ? "text-foreground" : "text-muted-foreground"}`}>
                       {r.active ? "Aktiivinen" : <span title={r.end ? `Poistunut ${fmtTime(r.end)}` : ""}>Poistunut</span>}
                       {!r.acked && <span className="ml-1 text-xs text-amber-300" title="Kuittaamaton">●</span>}
+                      {!r.acked && r.source === "Kasvamo" && <button type="button" data-testid="al-kas-ack" onClick={async (e) => { e.stopPropagation(); await ackAlarms([r.id]); setReload((x) => x + 1); }} className="ml-2 rounded border border-red-500/70 px-1.5 text-[11px] font-semibold text-red-200 hover:bg-red-500/20">Kuittaa</button>}
                     </td>
                     <td className="px-2 py-1.5 text-right tabular-nums">{r.value === null ? "—" : `${r.value.toFixed(1)} ${r.unit}`}</td>
                     <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground">{fmtDuration(r.durationSec)}</td>
@@ -289,6 +290,8 @@ export function AlarmListWidget({ config, storageKey = "main" }: { config: Widge
                     <div className="text-xs tabular-nums text-muted-foreground">
                       {fmtTime(r.start)} · {fmtDuration(r.durationSec)}{r.value !== null ? ` · ${r.value.toFixed(1)} ${r.unit}` : ""}
                     </div>
+                    {!r.acked && r.source === "Kasvamo" && <button type="button" data-testid="al-kas-ack" onClick={async (e) => { e.stopPropagation(); await ackAlarms([r.id]); setReload((x) => x + 1); }}
+                      className="mt-1 rounded border border-red-500/70 px-2 py-px text-[11px] font-semibold text-red-200 hover:bg-red-500/20">Kuittaa</button>}
                   </div>
                 </li>
               ))}

@@ -1,7 +1,10 @@
 // Lannoiteannostelu: kompakti tilarivi + iso EC-paneeli (EC vs SP, ±SP-rajat, ohjaus, PLC, luotettavuus, trendi, tapahtumaloki).
 import { useEffect, useMemo, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { getFertDose, postFertDose, putFertDoseSettings, type FertDoseStatus } from "@/lib/apiClient";
+import { ackAlarms, getFertDose, postFertDose, putFertDoseSettings, type FertDoseStatus } from "@/lib/apiClient";
+
+const FERT_ID = (id: number) => -(2_000_000_000 + id);
+export async function ackFert(ids: number[]) { return ackAlarms(ids.map(FERT_ID)); }
 
 export function useFertDose() {
   const [d, setD] = useState<FertDoseStatus | null>(null);
@@ -69,6 +72,25 @@ function Trend({ d }: { d: FertDoseStatus }) {
   );
 }
 
+function SpEditor({ d, reload }: { d: FertDoseStatus; reload: () => void }) {
+  const cur = d.config.ec_sp ?? d.sp ?? 0;
+  const [v, setV] = useState(String(cur)); const [msg, setMsg] = useState<string | null>(null); const [busy, setBusy] = useState(false);
+  const n = Number(v.replace(",", ".")); const ok = Number.isFinite(n) && n >= 100 && n <= 9000;
+  const save = async () => { setBusy(true); setMsg(null); try { await putFertDoseSettings({ ec_sp: Math.round(n) }); setMsg("Tallennettu"); reload(); } catch (e) { setMsg(errMsg(e)); } finally { setBusy(false); } };
+  return (
+    <div className="mt-3 rounded-md border border-border/70 bg-black/20 p-2">
+      <div className="text-[11px] uppercase tracking-wider text-muted-foreground">EC-asetusarvo (Myko)</div>
+      <div className="mt-1 flex items-center gap-2">
+        <input data-testid="fd-sp" inputMode="numeric" value={v} onChange={(e) => setV(e.target.value)} onKeyDown={(e) => e.key === "Enter" && ok && n !== cur && save()}
+          className={`w-24 rounded-md border bg-background px-2 py-1 font-mono text-sm tabular-nums focus:outline-none ${ok ? "border-border focus:border-sky-500" : "border-red-500"}`} />
+        <span className="text-xs text-muted-foreground">ppm</span>
+        <button type="button" data-testid="fd-sp-save" disabled={!ok || busy || n === cur} onClick={save} className="rounded-md bg-sky-600 px-3 py-1 text-xs font-semibold text-white disabled:opacity-40">Tallenna</button>
+      </div>
+      <div className="mt-1 text-[11px] text-muted-foreground">{!ok ? <span className="text-red-400">100–9000 ppm</span> : msg ? <span className={msg === "Tallennettu" ? "text-emerald-400" : "text-red-400"}>{msg}</span> : "Ohjaa annostelua ja ±SP-rajoja."} PLC TDS_SP (vain vertailu): <b>{d.spPlc ?? "—"}</b></div>
+    </div>
+  );
+}
+
 function LimitsEditor({ d, reload }: { d: FertDoseStatus; reload: () => void }) {
   const A = d.config.ec_alarm;
   const init = () => ({ enabled: A.enabled, lo_off: String(A.lo_off), hi_off: String(A.hi_off), warn_lo_off: String(A.warn_lo_off), warn_hi_off: String(A.warn_hi_off), hyst: String(A.hyst), delay_min: String(A.delay_min) });
@@ -104,13 +126,13 @@ function LimitsEditor({ d, reload }: { d: FertDoseStatus; reload: () => void }) 
   );
 }
 
-type LogRow = { key: string; ts: string; end?: string | null; kind: "alarm" | "warning" | "dose"; active: boolean; text: string; mode?: string };
-function EventLog({ d }: { d: FertDoseStatus }) {
+type LogRow = { key: string; id?: number; ts: string; end?: string | null; kind: "alarm" | "warning" | "dose"; active: boolean; text: string; mode?: string; acked?: string | null; ackedBy?: string | null };
+function EventLog({ d, reload }: { d: FertDoseStatus; reload: () => void }) {
   const [flt, setFlt] = useState<"all" | "alarm" | "warning" | "dose">(() => { try { return (localStorage.getItem("myko.fertLog.kind") as never) || "all"; } catch { return "all"; } });
   const [activeOnly, setActiveOnly] = useState(() => { try { return localStorage.getItem("myko.fertLog.active") === "1"; } catch { return false; } });
   useEffect(() => { try { localStorage.setItem("myko.fertLog.kind", flt); localStorage.setItem("myko.fertLog.active", activeOnly ? "1" : "0"); } catch { /* */ } }, [flt, activeOnly]);
   const rows = useMemo<LogRow[]>(() => {
-    const ev: LogRow[] = d.events.map((e) => ({ key: `e${e.id}`, ts: e.ts ?? "", end: e.cleared_ts, kind: e.level, active: !e.cleared_ts, text: e.text }));
+    const ev: LogRow[] = d.events.map((e) => ({ key: `e${e.id}`, id: e.id, ts: e.ts ?? "", end: e.cleared_ts, kind: e.level, active: !e.cleared_ts, text: e.text, acked: e.acked_ts, ackedBy: e.acked_by }));
     const dz: LogRow[] = d.recent.map((r, i) => ({ key: `d${i}${r.ts}`, ts: r.ts, kind: "dose", active: false, mode: r.mode,
       text: `${r.fert} ${(r.requested_ms / 1000).toFixed(1)} s${r.actual_ms != null ? ` (tot. ${(r.actual_ms / 1000).toFixed(1)} s)` : ""}${r.ec_before != null ? ` · EC ${r.ec_before}/${r.ec_sp ?? "—"}` : ""} · ${r.reason}` }));
     return [...ev, ...dz].filter((r) => (flt === "all" || r.kind === flt) && (!activeOnly || r.active)).sort((a, b) => b.ts.localeCompare(a.ts));
@@ -131,7 +153,8 @@ function EventLog({ d }: { d: FertDoseStatus }) {
                 <td className="whitespace-nowrap px-2 py-1 tabular-nums">{hm(r.ts)}{r.end ? <div className="text-[11px] text-muted-foreground">→ {hm(r.end)}</div> : null}</td>
                 <td className="px-2 py-1">{r.kind === "alarm" ? <Badge kind="alarm">Hälytys</Badge> : r.kind === "warning" ? <Badge kind="warning">Varoitus</Badge> : <Badge kind={modeKind(r.mode)}>Annos · {r.mode}</Badge>}</td>
                 <td className="px-2 py-1">{r.kind === "dose" ? "—" : r.active ? <Badge kind={r.kind === "alarm" ? "alarm" : "warning"}>Aktiivinen</Badge> : <Badge kind="muted">Poistunut</Badge>}</td>
-                <td className="px-2 py-1">{r.text}</td>
+                <td className="px-2 py-1">{r.text}{r.kind === "alarm" && (r.acked ? <div className="text-[11px] text-muted-foreground">kuitattu {hm(r.acked)}{r.ackedBy ? ` · ${r.ackedBy}` : ""}</div>
+                  : <button type="button" data-testid="fd-ack-row" onClick={async () => { if (r.id) { await ackFert([r.id]); reload(); } }} className="ml-2 rounded border border-red-500/70 px-2 py-px text-[11px] font-semibold text-red-200 hover:bg-red-500/20">Kuittaa</button>)}</td>
               </tr>
             ))}
           </tbody>
@@ -153,6 +176,7 @@ export function FertEcModal({ open, d, reload, onClose }: { open: boolean; d: Fe
   const tot = (f: string, k: "act_ms" | "req_ms", mode = "live") => d.cumulative.filter((x) => x.fert === f && x.mode === mode).reduce((a, x) => a + (x[k] || 0), 0) / 1000;
   const cnt = (f: string, mode = "live") => d.cumulative.filter((x) => x.fert === f && x.mode === mode).reduce((a, x) => a + x.n, 0);
   const rel = d.reliable;
+  const unacked = d.events.filter((e) => e.level === "alarm" && !e.acked_ts && e.id).map((e) => e.id as number);
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-h-[92vh] w-[min(96vw,1100px)] max-w-none overflow-y-auto border-zinc-700 bg-zinc-950 p-0 font-mono" data-testid="fd-modal">
@@ -162,6 +186,7 @@ export function FertEcModal({ open, d, reload, onClose }: { open: boolean; d: Fe
             <Badge kind={c.live ? "live" : "muted"}>{c.live ? "Live" : "Dry-run"}</Badge>
             {d.interlock && <Badge kind="alarm">Lukittu: EC-hälytys</Badge>}
             {d.active.map((a) => <Badge key={a.code} kind={a.level === "alarm" ? "alarm" : "warning"}>{a.code}</Badge>)}
+            {unacked.length > 0 && <button type="button" data-testid="fd-ack" onClick={async () => { await ackFert(unacked); reload(); }} className="ml-auto mr-8 rounded-md border border-red-500 bg-red-600/20 px-3 py-1 text-xs font-bold text-red-100 hover:bg-red-600/40">Kuittaa ({unacked.length})</button>}
           </DialogTitle>
         </DialogHeader>
         <div className="grid gap-3 p-4 lg:grid-cols-3">
@@ -170,6 +195,7 @@ export function FertEcModal({ open, d, reload, onClose }: { open: boolean; d: Fe
             <div className={`text-5xl font-bold tabular-nums ${sevCls}`} data-testid="fd-ec">{ec ?? "—"}<span className="ml-1 text-lg text-muted-foreground">ppm</span></div>
             <div className="mt-1 text-sm">SP <b className="tabular-nums">{sp ?? "—"}</b> · poikkeama <b className={`tabular-nums ${sevCls}`}>{dev == null ? "—" : `${dev > 0 ? "+" : ""}${dev}`}</b></div>
             <div className="mt-1 text-[11px] text-muted-foreground">mitattu {hm(d.ec?.at)}</div>
+            <SpEditor key={String(c.ec_sp ?? sp)} d={d} reload={reload} />
             {sp != null && <div className="mt-3 space-y-0.5 text-xs">
               <KV k="Hälytys" v={`${sp + A.lo_off} … ${sp + A.hi_off}`} cls="text-red-300" />
               <KV k="Varoitus" v={`${sp + A.warn_lo_off} … ${sp + A.warn_hi_off}`} cls="text-amber-200" />
@@ -226,7 +252,7 @@ export function FertEcModal({ open, d, reload, onClose }: { open: boolean; d: Fe
           </Section>
 
           <div className="lg:col-span-1"><LimitsEditor key={JSON.stringify(A)} d={d} reload={reload} /></div>
-          <div className="lg:col-span-2"><EventLog d={d} /></div>
+          <div className="lg:col-span-2"><EventLog d={d} reload={reload} /></div>
         </div>
         <Dialog open={confirm} onOpenChange={(o) => !o && setConfirm(false)}>
           <DialogContent className="max-w-sm font-mono">

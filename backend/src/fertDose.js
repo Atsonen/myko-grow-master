@@ -11,7 +11,7 @@ import { tg, allowedChats } from "./telegram.js";
 
 const DEF = {
   live: true, hb_enabled: true, plc_enable: false, auto: true, fert: "A", dose_s: 1,
-  ec_key: "dl23", sp_source: "plc", sp_manual: 4800,
+  ec_key: "dl23", sp_source: "plc", sp_manual: 4800, ec_sp: 4800,
   below_min: 10, pause_min: 20, stale_s: 120, min_uptime_min: 10,
   range: [100, 9000], spike_ppm: 400, n_samples: 6, poll_s: 10,
   ec_alarm: { enabled: true, lo_off: -1500, hi_off: 1500, warn_lo_off: -700, warn_hi_off: 700, hyst: 100, delay_min: 5 },
@@ -41,6 +41,7 @@ async function ensureTables() {
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY, ts DATETIME NOT NULL, cleared_ts DATETIME NULL,
     level VARCHAR(8) NOT NULL, code VARCHAR(32) NOT NULL, text VARCHAR(250) NOT NULL, INDEX idx_fert_events_ts (ts)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+  await query("ALTER TABLE fert_events ADD COLUMN IF NOT EXISTS acked_ts DATETIME NULL, ADD COLUMN IF NOT EXISTS acked_by VARCHAR(80) NULL");
   await query("UPDATE fert_events SET cleared_ts = UTC_TIMESTAMP() WHERE cleared_ts IS NULL"); // tila rakennetaan uudelleen käynnistyksessä
   const [last] = await query("SELECT TIMESTAMPDIFF(SECOND, ts, UTC_TIMESTAMP()) age_s FROM fert_dose_log WHERE mode IN ('live','dry-run') AND requested_ms > 0 ORDER BY id DESC LIMIT 1");
   if (last) S.lastDoseAt = Date.now() - Number(last.age_s) * 1000;
@@ -72,7 +73,7 @@ async function setEvent(code, level, active, text, c) {
     const delay = level === "alarm" ? (Number(c.ec_alarm.delay_min) || 0) * 60_000 : 0;
     if (Date.now() - S.evSince[code] < delay) return;
     const r = await query("INSERT INTO fert_events (ts, level, code, text) VALUES (UTC_TIMESTAMP(), ?, ?, ?)", [level, code, text.slice(0, 250)]);
-    S.ev[code] = { level, active: true, text, since: new Date().toISOString(), id: Number(r.insertId) };
+    S.ev[code] = { level, active: true, text, since: new Date().toISOString(), id: Number(r.insertId), acked: level !== "alarm" };
     console.log(`[fertdose] ${level.toUpperCase()} ${code}: ${text}`);
     if (level === "alarm") await notify(`🚨 ${text} – annostelu LUKITTU (ilmoitetaan kerran, palautumisesta erikseen)`);
   } else {
@@ -141,8 +142,9 @@ async function tick(port) {
       if (!S.samples.length || S.samples[S.samples.length - 1].t !== t) { S.samples.push({ t, v }); S.samples = S.samples.slice(-120);
         const m = Math.floor(t / 60000) * 60000; const tr = S.trend ??= []; if (!tr.length || tr[tr.length - 1].t !== m) { tr.push({ t: m, v }); S.trend = tr.slice(-360); } else tr[tr.length - 1].v = v; }
     }
-    let sp = Number(c.sp_manual);
-    if (c.sp_source === "plc") { const pu = await get("/api/pumput"); sp = pu?.stale ? NaN : Number(pu?.values?.TDS_SP); }
+    // SP on Myko-asetus (fert_dose.ec_sp). PLC:n Pumput_DB.TDS_SP vain vertailuksi (ei kirjoiteta).
+    try { const pu = await get("/api/pumput"); const v = Number(pu?.values?.TDS_SP); S.spPlc = !pu?.stale && Number.isFinite(v) ? v : null; } catch { S.spPlc = null; }
+    const sp = Number(c.ec_sp ?? c.sp_manual);
     S.sp = Number.isFinite(sp) ? sp : null;
     const lastS = S.samples[S.samples.length - 1];
     const basicOk = lastS && now - lastS.t <= c.stale_s * 1000 && lastS.v >= c.range[0] && lastS.v <= c.range[1];
@@ -181,10 +183,18 @@ async function tick(port) {
 
 // Rivit Myko-hälytyslistaan (/api/alarms/summary), lähde "Kasvamo".
 export async function fertAlarmRows(hours) {
-  const ev = await query("SELECT id, DATE_FORMAT(ts, '%Y-%m-%dT%H:%i:%sZ') ts, DATE_FORMAT(cleared_ts, '%Y-%m-%dT%H:%i:%sZ') cl, level, code, text FROM fert_events WHERE ts > UTC_TIMESTAMP() - INTERVAL ? HOUR OR cleared_ts IS NULL ORDER BY id DESC LIMIT 300", [hours]);
+  const ev = await query("SELECT id, DATE_FORMAT(ts, '%Y-%m-%dT%H:%i:%sZ') ts, DATE_FORMAT(cleared_ts, '%Y-%m-%dT%H:%i:%sZ') cl, level, code, text, acked_ts FROM fert_events WHERE ts > UTC_TIMESTAMP() - INTERVAL ? HOUR OR cleared_ts IS NULL ORDER BY id DESC LIMIT 300", [hours]);
   return ev.map((e) => ({ id: -(2_000_000_000 + Number(e.id)), pointId: "Kasvamo_EC", pointName: "Kasvamo · EC / lannoitus", unit: "ppm", alarm: String(e.code).toUpperCase(),
     bit: null, priority: e.level === "alarm" ? 1 : 2, start: e.ts, end: e.cl, active: !e.cl && Boolean(S.ev[e.code]?.active), value: null, endValue: null,
-    source: "Kasvamo", desc: e.text, acked: true, ackedAt: null, ackedBy: null })).map((r) => (r.active || r.end ? r : { ...r, end: r.start }));
+    source: "Kasvamo", desc: e.text, acked: e.level !== "alarm" || e.acked_ts != null, ackedAt: null, ackedBy: null })).map((r) => (r.active || r.end ? r : { ...r, end: r.start }));
+}
+// Kuittaus (vain hälytykset; varoitukset eivät vaadi kuittausta). ids = fert_events.id
+export async function fertAck(ids, by) {
+  const n = ids.map(Number).filter((x) => Number.isInteger(x) && x > 0); if (!n.length) return 0;
+  const r = await query(`UPDATE fert_events SET acked_ts = UTC_TIMESTAMP(), acked_by = ? WHERE level = 'alarm' AND acked_ts IS NULL AND id IN (${n.map(() => "?").join(",")})`, [String(by ?? "dashboard").slice(0, 80), ...n]);
+  for (const e of Object.values(S.ev)) if (n.includes(e.id)) e.acked = true;
+  console.log(`[fertdose] ack ${n.join(",")} by ${by}`);
+  return Number(r.affectedRows ?? 0);
 }
 export function fertDoseActive() { return Object.values(S.ev).filter((e) => e.active && e.level === "alarm").map((e) => e.text); }
 
@@ -217,7 +227,7 @@ export function registerFertDoseRoutes(app) {
       const c = await cfg();
       const cum = await query("SELECT fert, mode, COUNT(*) n, SUM(requested_ms) req_ms, SUM(COALESCE(actual_ms,0)) act_ms FROM fert_dose_log WHERE requested_ms > 0 GROUP BY fert, mode");
       const recent = await query("SELECT DATE_FORMAT(ts, '%Y-%m-%dT%H:%i:%sZ') ts, fert, requested_ms, actual_ms, ec_before, ec_sp, reason, mode FROM fert_dose_log ORDER BY id DESC LIMIT 200");
-      const events = await query("SELECT id, DATE_FORMAT(ts, '%Y-%m-%dT%H:%i:%sZ') ts, DATE_FORMAT(cleared_ts, '%Y-%m-%dT%H:%i:%sZ') cleared_ts, level, code, text FROM fert_events ORDER BY id DESC LIMIT 200");
+      const events = await query("SELECT id, DATE_FORMAT(ts, '%Y-%m-%dT%H:%i:%sZ') ts, DATE_FORMAT(cleared_ts, '%Y-%m-%dT%H:%i:%sZ') cleared_ts, level, code, text, DATE_FORMAT(acked_ts, '%Y-%m-%dT%H:%i:%sZ') acked_ts, acked_by FROM fert_events ORDER BY id DESC LIMIT 200");
       const lastS = S.samples[S.samples.length - 1];
       res.json({ config: c, mode: c.live ? "live" : "dry-run", heartbeat: !c.hb_enabled ? "off" : !S.plc.present ? "odottaa DB:tä" : S.hbErr ? `virhe: ${S.hbErr}` : "ok",
         hbValue: S.hb, plc: { ...S.plc, fresh: plcFresh(), statusText: STATUS_TXT[S.plc.Status] ?? (S.plc.Status != null ? `koodi ${S.plc.Status}` : null) },
@@ -225,7 +235,7 @@ export function registerFertDoseRoutes(app) {
         belowSince: S.belowSince ? new Date(S.belowSince).toISOString() : null, lastDoseAt: S.lastDoseAt ? new Date(S.lastDoseAt).toISOString() : null,
         nextAllowedAt: S.lastDoseAt ? new Date(S.lastDoseAt + c.pause_min * 60_000).toISOString() : null,
         reason: S.reason, active: Object.entries(S.ev).filter(([, e]) => e.active).map(([code, e]) => ({ code, ...e })), events: events.map((e) => ({ ...e, id: Number(e.id) })),
-        reliable: { ok: Boolean(S.relOk), why: S.relWhy ?? null }, validSince: S.validSince ? new Date(S.validSince).toISOString() : null, trend: (S.trend ?? []).map((p) => [p.t, p.v]), spNow: S.sp,
+        reliable: { ok: Boolean(S.relOk), why: S.relWhy ?? null }, validSince: S.validSince ? new Date(S.validSince).toISOString() : null, spPlc: S.spPlc ?? null, trend: (S.trend ?? []).map((p) => [p.t, p.v]), spNow: S.sp,
         cumulative: cum.map((r) => ({ ...r, n: Number(r.n), req_ms: Number(r.req_ms), act_ms: Number(r.act_ms) })), recent });
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
@@ -246,7 +256,7 @@ export function registerFertDoseRoutes(app) {
       if (b.fert !== undefined) { if (!["A", "B"].includes(b.fert)) return res.status(400).json({ error: "fert A/B" }); next.fert = b.fert; }
       if (b.dose_s !== undefined) { const d = Number(b.dose_s); if (!(d > 0 && d <= 5)) return res.status(400).json({ error: "annos 0–5 s" }); next.dose_s = d; }
       for (const k of ["live", "hb_enabled", "plc_enable", "auto"]) if (b[k] !== undefined) { if (typeof b[k] !== "boolean") return res.status(400).json({ error: `${k} bool` }); next[k] = b[k]; }
-      for (const [k, lo, hi] of [["below_min", 1, 120], ["pause_min", 5, 240], ["spike_ppm", 10, 5000], ["min_uptime_min", 0, 120], ["stale_s", 20, 900], ["sp_manual", 100, 9000]]) {
+      for (const [k, lo, hi] of [["below_min", 1, 120], ["pause_min", 5, 240], ["spike_ppm", 10, 5000], ["min_uptime_min", 0, 120], ["stale_s", 20, 900], ["sp_manual", 100, 9000], ["ec_sp", 100, 9000]]) {
         if (b[k] !== undefined) { const v = Number(b[k]); if (!(v >= lo && v <= hi)) return res.status(400).json({ error: `${k} ${lo}–${hi}` }); next[k] = v; }
       }
       if (b.sp_source !== undefined) { if (!["plc", "manual"].includes(b.sp_source)) return res.status(400).json({ error: "sp_source plc/manual" }); next.sp_source = b.sp_source; }

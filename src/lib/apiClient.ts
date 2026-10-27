@@ -588,7 +588,7 @@ export type PvFeed = {
 export type PvFeedResponse = { key: string; feed: PvFeed; codes?: Record<string, string>; sources?: { topic: string; field: string; value: number; at: string; label?: string; dl?: string }[]; restricted?: boolean };
 export type PumputResponse = { at: string | null; stale: boolean; values: Record<string, number | boolean> };
 export type KasLimit = { lo: number | null; hi: number | null; hyst: number; enabled: boolean };
-export type KasvamoAlarms = { config: { enabled: boolean; delay_min: number; stale_min: number; limits: Record<string, KasLimit> }; active: Record<string, boolean>;
+export type KasvamoAlarms = { config: { enabled: boolean; delay_min: number; stale_min: number; limits: Record<string, KasLimit> }; active: Record<string, boolean>; acked?: Record<string, string>; ids?: Record<string, number>;
   signals: Record<string, { dl: string; name: string; unit: string; range: [number, number] }> };
 export async function getKasvamoAlarms() { return requestJson<KasvamoAlarms>("/api/kasvamo/alarms"); }
 export async function putKasvamoAlarms(body: { delay_min?: number; limits?: Record<string, Partial<KasLimit>> }) {
@@ -624,15 +624,15 @@ export const startPidAiRestore = (key: string) => requestJson<PidAiJob>(aiUrl(ke
 export const startPidParamsApply = (key: string, params: Record<string, number>, confirmLarge: boolean) =>
   requestJson<PidAiJob>(aiUrl(key, "params-apply"), post({ params, confirmLarge }));
 export type FertEcAlarm = { enabled: boolean; lo_off: number; hi_off: number; warn_lo_off: number; warn_hi_off: number; hyst: number; delay_min: number };
-export type FertEvent = { id?: number; code?: string; level: "alarm" | "warning"; text: string; ts?: string; since?: string; cleared_ts?: string | null; active?: boolean };
+export type FertEvent = { id?: number; code?: string; level: "alarm" | "warning"; text: string; ts?: string; since?: string; cleared_ts?: string | null; active?: boolean; acked?: boolean; acked_ts?: string | null; acked_by?: string | null };
 export type FertDoseStatus = { mode: string; heartbeat: string; hbValue: number; interlock: boolean;
-  config: { live: boolean; hb_enabled: boolean; plc_enable: boolean; auto: boolean; fert: string; dose_s: number; below_min: number; pause_min: number; ec_alarm: FertEcAlarm };
+  config: { live: boolean; hb_enabled: boolean; plc_enable: boolean; auto: boolean; fert: string; dose_s: number; ec_sp?: number; below_min: number; pause_min: number; ec_alarm: FertEcAlarm };
   plc: { present: boolean; fresh: boolean; statusText: string | null; Status?: number; Enable?: boolean; HB_OK?: boolean; DoseActive?: boolean; DoseCount?: number; LastDose_ms?: number; RunTime_ms?: number; Heartbeat?: number };
   ec: { value: number; at: string } | null; sp: number | null; belowSince: string | null; lastDoseAt: string | null; nextAllowedAt: string | null; reason: string;
   active: FertEvent[]; events: FertEvent[];
   cumulative: { fert: string; mode: string; n: number; req_ms: number; act_ms: number }[];
   recent: { ts: string; fert: string; requested_ms: number; actual_ms: number | null; ec_before?: number | null; ec_sp?: number | null; mode: string; reason: string }[];
-  reliable?: { ok: boolean; why: string | null }; validSince?: string | null; trend?: [number, number][] };
+  reliable?: { ok: boolean; why: string | null }; spPlc?: number | null; validSince?: string | null; trend?: [number, number][] };
 export async function postFertDose() {
   return requestJson<{ ok: boolean; mode?: string; error?: string }>("/api/fertdose/dose", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirm: true }) });
 }

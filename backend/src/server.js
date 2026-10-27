@@ -8,8 +8,8 @@ import { startWeather } from "./weather.js";
 import { registerFmiWeather } from "./fmiWeather.js";
 import { registerPidAi } from "./pidAi.js";
 import { registerPumputRoutes } from "./pumput.js";
-import { startKasvamoAlarms, registerKasvamoAlarmRoutes, kasvamoAlarmRows } from "./kasvamoAlarms.js";
-import { startFertDose, registerFertDoseRoutes, fertAlarmRows } from "./fertDose.js";
+import { startKasvamoAlarms, registerKasvamoAlarmRoutes, kasvamoAlarmRows, kasvamoAck } from "./kasvamoAlarms.js";
+import { startFertDose, registerFertDoseRoutes, fertAlarmRows, fertAck } from "./fertDose.js";
 import { registerMykoDb } from "./mykoDb.js";
 import { registerAnomaly } from "./anomaly.js";
 import { registerAssistant } from "./assistant.js";
@@ -1028,7 +1028,12 @@ app.post(
   asyncRoute(async (req, res) => {
     const ids = req.body?.ids;
     if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: "ids[] required" });
-    res.json(await ackAlarms(ids, String(req.body?.by ?? "dashboard").slice(0, 80), Boolean(req.body?.dryRun)));
+    const by = String(req.body?.by ?? "dashboard").slice(0, 80); const dry = Boolean(req.body?.dryRun);
+    const num = ids.map(Number); const fert = num.filter((x) => x <= -2_000_000_000).map((x) => -x - 2_000_000_000);
+    const kas = num.filter((x) => x <= -1_900_000_000 && x > -2_000_000_000); const rest = ids.filter((_, i) => num[i] > -1_900_000_000);
+    let extra = 0; if (!dry) { extra += await fertAck(fert, by); extra += kasvamoAck(kas, by); }
+    const r = rest.length ? await ackAlarms(rest, by, dry) : { acked: 0 };
+    res.json({ ...r, kasvamoAcked: extra, ...(typeof r.acked === "number" ? { acked: r.acked + extra } : {}) });
   }),
 );
 
