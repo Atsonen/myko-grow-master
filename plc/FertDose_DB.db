@@ -10,7 +10,6 @@ NON_RETAIN
    STRUCT
       // ---- Valvomo -> PLC  [W] ----
       Enable : Bool;          // [W] annostelu sallittu (yksi bitti, korvaa ON + Dozing_ON)
-      FertSel : USInt;        // [W] 0 = A, 1 = B
       DoseReq_ms : DInt;      // [W] pyydetty annos ms (1000 ms = 1 ml), PLC leikkaa max 5000
       DoseTrig : Bool;        // [W] nouseva reuna käynnistää; Valvomo palauttaa FALSE
       Heartbeat : UInt;       // [W] Valvomo kasvattaa ~5 s välein
@@ -19,11 +18,9 @@ NON_RETAIN
       DoseDone : Bool;        // [R] 1 kierroksen pulssi (luotettavampi: DoseCount)
       DoseCount : UDInt;      // [R]
       LastDose_ms : DInt;     // [R]
-      LastFert : USInt;       // [R] 0 = A, 1 = B
-      RunTimeA_ms : UDInt;    // [R] kumulatiivinen (retain FB:n instanssissa)
-      RunTimeB_ms : UDInt;    // [R]
+      RunTime_ms : UDInt;     // [R] kumulatiivinen käyntiaika (retain FB:n instanssissa)
       HB_OK : Bool;           // [R]
-      Status : Int;           // [R] 0 idle,1 active,2 done,3 limited,10 not enabled,11 HB lost,12 bad sel,13 bad req,14 abort disable,15 abort hard
+      Status : Int;           // [R] 0 idle,1 active,2 done,3 limited,10 not enabled,11 HB lost,13 bad req,14 abort disable,15 abort hard
    END_STRUCT;
 BEGIN
 END_DATA_BLOCK

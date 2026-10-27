@@ -3,6 +3,7 @@
 //   - live=true ei vielä tee kirjoitusta (writer puuttuu tarkoituksella) -> lokiin "live-blocked".
 //   - heartbeat-kirjoitin ei ole toteutettu kirjoittamaan; hb_enabled näkyy vain tilana.
 // Asetukset: myko_settings k='fert_dose'. Loki: fert_dose_log.
+// Lannoite A/B = sama pumppu, letku siirretään käsin: fert on vain Myko-asetus, kirjataan jokaiselle annokselle; kumulatiivinen per lannoite lasketaan lokista.
 import { query } from "./db.js";
 
 const DEF = {

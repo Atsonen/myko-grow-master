@@ -628,3 +628,6 @@ export type FertDoseStatus = { mode: string; heartbeat: string; config: { fert: 
   cumulative: { fert: string; mode: string; n: number; req_ms: number; act_ms: number }[];
   recent: { ts: string; fert: string; requested_ms: number; mode: string; reason: string }[] };
 export async function getFertDose() { return requestJson<FertDoseStatus>("/api/fertdose"); }
+export async function putFertDoseSettings(body: Record<string, unknown>) {
+  return requestJson<{ config: FertDoseStatus["config"] }>("/api/fertdose/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+}

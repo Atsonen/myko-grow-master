@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { Gauge } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { getDataloggerLatest, getKasvamoAlarms, putKasvamoAlarms, type KasvamoAlarms, type KasLimit, getPumput, getPvFeed, getFertDose, type FertDoseStatus, type DataloggerLatest, type PumputResponse } from "@/lib/apiClient";
+import { getDataloggerLatest, getKasvamoAlarms, putKasvamoAlarms, type KasvamoAlarms, type KasLimit, getPumput, getPvFeed, getFertDose, putFertDoseSettings, type FertDoseStatus, type DataloggerLatest, type PumputResponse } from "@/lib/apiClient";
 import { DashboardDataProvider } from "@/components/dashboard/DashboardData";
 import { MeasurementPointWidget } from "@/components/dashboard/MeasurementPointWidget";
 import { usePid, PID_STATE } from "@/components/dashboard/PidFaceplate";
@@ -51,10 +51,13 @@ function usePumput() {
 // Kasvamo-hälytysrajat (Myko-asetus kasvamo_alarms, backend kasvamoAlarms.js). Ei PLC-kirjoituksia.
 function useFertDose() {
   const [d, setD] = useState<FertDoseStatus | null>(null);
-  useEffect(() => { const l = () => getFertDose().then(setD).catch(() => undefined); l(); const t = setInterval(l, 15_000); return () => clearInterval(t); }, []);
-  return d;
+  const load = () => getFertDose().then(setD).catch(() => undefined);
+  useEffect(() => { load(); const t = setInterval(load, 15_000); return () => clearInterval(t); }, []);
+  return { d, load };
 }
-function FertDoseLine({ d }: { d: FertDoseStatus | null }) {
+function FertDoseLine({ d, reload }: { d: FertDoseStatus | null; reload: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const pick = async (f: "A" | "B") => { setBusy(true); try { await putFertDoseSettings({ fert: f }); await reload(); } finally { setBusy(false); } };
   if (!d) return <div className="mt-2 font-mono text-xs text-muted-foreground">Lannoiteannostelu: ei dataa</div>;
   const hm = (iso: string | null) => (iso ? new Date(iso).toLocaleTimeString("fi-FI", { hour: "2-digit", minute: "2-digit" }) : "—");
   const cum = (f: string) => d.cumulative.filter((c) => c.fert === f).reduce((a, c) => a + c.req_ms, 0) / 1000;
@@ -62,7 +65,12 @@ function FertDoseLine({ d }: { d: FertDoseStatus | null }) {
   return (
     <div className="mt-2 rounded border border-border px-3 py-2 font-mono text-xs">
       <b>Lannoiteannostelu</b> · <span className={d.mode === "dry-run" ? "text-amber-400" : "text-red-400"}>{d.mode === "dry-run" ? "EHDOTUS (dry-run, ei PLC-kirjoitusta)" : d.mode}</span>
-      {" "}· heartbeat {d.heartbeat === "off" ? "pois" : d.heartbeat} · valittu {d.config.fert}, annos {d.config.dose_s} s ≈ {d.config.dose_s} ml
+      {" "}· heartbeat {d.heartbeat === "off" ? "pois" : d.heartbeat} · letku säiliössä{" "}
+      {(["A", "B"] as const).map((f) => (
+        <button key={f} disabled={busy} title="Sama pumppu – letku siirretään käsin. Valinta vain kirjanpitoa varten (Myko)." onClick={() => pick(f)}
+          className={`mx-0.5 rounded border px-1.5 ${d.config.fert === f ? "border-primary bg-primary text-primary-foreground" : "border-border"}`}>{f}</button>
+      ))}
+      {" "}· annos {d.config.dose_s} s ≈ {d.config.dose_s} ml
       <div className="text-muted-foreground">Tila: {d.reason} · viimeisin {last ? `${hm(last.ts)} ${last.fert} ${last.requested_ms / 1000} s (${last.mode})` : "—"} · kumul. (ehdotetut) A {cum("A")} s / B {cum("B")} s</div>
     </div>
   );
@@ -411,7 +419,7 @@ function PlantsDashboardPage() {
       </Card>
       <AlarmDialog sig={alSig} data={ka.a} onClose={() => setAlSig(null)} onSaved={ka.setA} />
       <MeasurementPointWidget config={{ pointId: "GardenAir", name: "Kasvamo ilma · G_Air (PF-1)" }} open={fpOpen} onOpenChange={setFpOpen} dialogOnly />
-      <FertDoseLine d={fd} />
+      <FertDoseLine d={fd.d} reload={fd.load} />
       <div className="text-[11px] font-mono text-muted-foreground leading-relaxed">
         Harmaat katkoviivalla merkityt elementit: <b>ei kytketty</b> – signaalia ei ole tunnistettu Myko-datasta varmasti
         (lannoite, pH±, lämmittimet, vesisäiliön pinta, painikkeet). Kytketyt arvot: Datalogger {Object.values(TAGS).join(", ")};

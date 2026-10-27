@@ -4,21 +4,21 @@
 // luotettavuus, 10 min ehto, 20 min tauko, hälytykset, lokitus) on Myko Valvomossa.
 //
 // Toiminta:
-//  - Valvomo kirjoittaa FertSel (0=A, 1=B), DoseReq_ms ja nostaa DoseTrig (nouseva reuna).
-//  - PLC ajaa valittua pumppua DoseReq_ms ajan, jos Enable = TRUE ja HB_OK = TRUE.
+//  - Valvomo kirjoittaa DoseReq_ms ja nostaa DoseTrig (nouseva reuna).
+//  - PLC ajaa lannoitepumppua DoseReq_ms ajan, jos Enable = TRUE ja HB_OK = TRUE.
 //  - Kova raja: pyyntö leikataan MaxDose_ms:iin (5000 ms); turvakatkaisu
 //    MIN(pyyntö + 1000 ms, 5000 ms) jälkeen vaikka annosajastin jumittaisi.
 //  - Heartbeat: Valvomo kasvattaa Heartbeat-arvoa ~5 s välein. Jos arvo ei muutu
 //    HbTimeout-ajassa (oletus 45 s) -> HB_OK = FALSE -> pumppu heti pois, ei annostelua.
 //  - 1 s = 1 ml (nykyinen pumppu).
-// Huom: FertSel 0=A / 1=B – nimeä halutessasi uudelleen (esim. "V"), logiikka ei muutu.
+// Lannoite A/B: sama pumppu, letku siirretään käsin säiliöstä toiseen. Valinta ja
+// lannoitekohtainen kirjanpito ovat vain Myko-asetus/-loki – PLC ei tiedä valintaa.
 // =====================================================================================
 FUNCTION_BLOCK "FB_FertDose"
 { S7_Optimized_Access := 'TRUE' }
 VERSION : 0.1
    VAR_INPUT
       Enable : Bool;            // Annostelu sallittu (korvaa vanhat ON + Dozing_ON)
-      FertSel : USInt;          // Lannoitevalinta: 0 = A, 1 = B
       DoseReq_ms : DInt;        // Pyydetty annosaika ms (1000 ms = 1 ml)
       DoseTrig : Bool;          // Annospyyntö, nouseva reuna käynnistää
       Heartbeat : UInt;         // Valvomon elossaolo-laskuri
@@ -27,15 +27,12 @@ VERSION : 0.1
    END_VAR
 
    VAR_OUTPUT
-      PumpA : Bool;             // -> "FertPumpA" (fyysinen lähtö)
-      PumpB : Bool;             // -> "FertPumpB" (fyysinen lähtö)
+      Pump : Bool;              // -> "FertPump" (fyysinen lähtö)
       DoseActive : Bool;        // Annostelu käynnissä
       DoseDone : Bool;          // Pulssi 1 kierros annoksen päättyessä
       DoseCount : UDInt;        // Annoslaskuri (kasvaa joka annoksella, myös katkaistulla)
       LastDose_ms : DInt;       // Viimeisen annoksen toteutunut aika ms
-      LastFert : USInt;         // Viimeisen annoksen lannoite 0=A 1=B
-      RunTimeA_ms : UDInt;      // Kumulatiivinen käyntiaika A (STATIC kopio, retain)
-      RunTimeB_ms : UDInt;      // Kumulatiivinen käyntiaika B
+      RunTime_ms : UDInt;       // Kumulatiivinen pumpun käyntiaika (retain)
       HB_OK : Bool;             // Heartbeat kunnossa
       Status : Int;             // Tila, ks. koodit alla
    END_VAR
@@ -48,15 +45,13 @@ VERSION : 0.1
       sLastHb : UInt;
       sHbSeen : Bool;           // vähintään yksi muutos nähty käynnistyksen jälkeen
       sActive : Bool;
-      sSel : USInt;
       sTarget_ms : DInt;
       sHard_ms : DInt;
       sLimited : Bool;
    END_VAR
 
    VAR RETAIN   // säilyy virtakatkon yli (instanssi-DB)
-      sRunA_ms : UDInt;
-      sRunB_ms : UDInt;
+      sRun_ms : UDInt;
       sCount : UDInt;
    END_VAR
 
@@ -74,7 +69,6 @@ VERSION : 0.1
       ST_LIMITED : Int := 3;        // käynnissä / valmis, pyyntö leikattu MaxDose_ms:iin
       ST_NOT_ENABLED : Int := 10;   // pyyntö hylätty: Enable = FALSE
       ST_HB_LOST : Int := 11;       // pyyntö hylätty / annos katkaistu: heartbeat puuttuu
-      ST_BAD_SEL : Int := 12;       // pyyntö hylätty: FertSel ei 0/1
       ST_BAD_REQ : Int := 13;       // pyyntö hylätty: DoseReq_ms <= 0
       ST_ABORT_DIS : Int := 14;     // annos katkaistu: Enable pudotettiin
       ST_ABORT_HARD : Int := 15;    // annos katkaistu: turvakatkaisuaika ylittyi
@@ -99,12 +93,9 @@ BEGIN
          #Status := #ST_NOT_ENABLED;
       ELSIF NOT #HB_OK THEN
          #Status := #ST_HB_LOST;
-      ELSIF #FertSel > 1 THEN
-         #Status := #ST_BAD_SEL;
       ELSIF #DoseReq_ms <= 0 THEN
          #Status := #ST_BAD_REQ;
       ELSE
-         #sSel := #FertSel;
          #sLimited := #DoseReq_ms > #MaxDose_ms;
          #sTarget_ms := MIN(IN1 := #DoseReq_ms, IN2 := #MaxDose_ms);
          #sHard_ms := MIN(IN1 := #sTarget_ms + 1000, IN2 := #MaxDose_ms);
@@ -136,12 +127,7 @@ BEGIN
          #tEt_ms := TIME_TO_DINT(#sDoseTon.ET);
          IF #tEt_ms > #MaxDose_ms THEN #tEt_ms := #MaxDose_ms; END_IF;
          #LastDose_ms := #tEt_ms;
-         #LastFert := #sSel;
-         IF #sSel = 0 THEN
-            #sRunA_ms := #sRunA_ms + DINT_TO_UDINT(#tEt_ms);
-         ELSE
-            #sRunB_ms := #sRunB_ms + DINT_TO_UDINT(#tEt_ms);
-         END_IF;
+         #sRun_ms := #sRun_ms + DINT_TO_UDINT(#tEt_ms);
          #sCount := #sCount + 1;
          #DoseDone := TRUE;
          #sActive := FALSE;
@@ -152,10 +138,8 @@ BEGIN
    END_IF;
 
    // ---------- Lähdöt (pumppu heti pois jos HB/Enable putoaa) ----------
-   #PumpA := #sActive AND #sSel = 0 AND #HB_OK AND #Enable;
-   #PumpB := #sActive AND #sSel = 1 AND #HB_OK AND #Enable;
+   #Pump := #sActive AND #HB_OK AND #Enable;
    #DoseActive := #sActive;
    #DoseCount := #sCount;
-   #RunTimeA_ms := #sRunA_ms;
-   #RunTimeB_ms := #sRunB_ms;
+   #RunTime_ms := #sRun_ms;
 END_FUNCTION_BLOCK
