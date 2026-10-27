@@ -1,0 +1,161 @@
+// =====================================================================================
+// FB_CircPump – kiertovesipumppu (S7-1200, TIA Portal V17+, SCL, optimoitu lohko)
+// Yksi FB, yksi instanssi per pumppu (esim. "CircPump1_DB", "CircPump2_DB").
+// Sekvenssivertailu tehdään FB:n ULKOPUOLELLA: Run = tämä sekvenssiaskel aktiivinen.
+//
+// Toiminta lyhyesti:
+//  - Run = TRUE -> pumppu käy (jos Enable, ei vikaa, MinOff täyttynyt).
+//  - Run = FALSE -> pumppu pysähtyy (normaali lopetus, ei Done-bittiä).
+//  - Käyntiaika > MaxRun -> VIKA (Error, Done lukittuvat), pumppu pois. Sekvenssi
+//    voi jatkaa seuraavaan askeleeseen Done-bitillä.
+//  - Vikatilassa uudet Run-pyynnöt OHITETAAN: Done = TRUE heti (Skipped), pumppu pois.
+//  - Ack (nouseva reuna) kuittaa Error/Done/Skipped. Jos Run on kuittaushetkellä yhä
+//    TRUE, pumppu ei käynnisty ennen kuin Run on käynyt FALSE:na (ei käynnistystä kesken askeleen).
+//  - UseFeedback: jos Feedback ei nouse FbDelay-ajassa käynnistyksestä (tai putoaa
+//    käynnin aikana yli FbDelay) -> VIKA kuten MaxRun.
+//  - Enable = FALSE (käsin pois): pumppu pois, Run-pyyntö kuitataan Done=TRUE niin kauan
+//    kuin Run on päällä (ei lukitu, ei vikaa).
+// Ei globaaleja DB:itä. Tulot ovat instanssimuuttujia -> Valvomo voi myöhemmin
+// kirjoittaa OPC UA:lla (Enable, Ack, MaxRun, ...: S7_SetPoint / Accessible).
+// =====================================================================================
+FUNCTION_BLOCK "FB_CircPump"
+{ S7_Optimized_Access := 'TRUE' }
+VERSION : 0.1
+   VAR_INPUT
+      Run { S7_SetPoint := 'False'} : Bool;          // Sekvenssiaskel aktiivinen -> pumppu käy
+      Enable { S7_SetPoint := 'True'} : Bool := TRUE; // Käyttö sallittu (FALSE = käsin pois)
+      Ack { S7_SetPoint := 'True'} : Bool;           // Vian kuittaus, nouseva reuna
+      MaxRun { S7_SetPoint := 'True'} : Time := T#30M; // Maksimikäyntiaika yhdellä käynnillä
+      UseFeedback { S7_SetPoint := 'True'} : Bool := FALSE; // Käytetäänkö käyntitietoa
+      Feedback : Bool;                                // Käyntitieto (kontaktori/virtarele/virtaus)
+      FbDelay { S7_SetPoint := 'True'} : Time := T#5S;  // Sallittu viive käyntitiedolle
+      MinOff { S7_SetPoint := 'True'} : Time := T#0S;   // Minimi seisonta-aika (anti short-cycle)
+   END_VAR
+
+   VAR_OUTPUT
+      Pump : Bool;          // -> fyysinen lähtö
+      Running : Bool;       // Pumppu ohjattu päälle
+      Done : Bool;          // Askel valmis FB:n puolesta: vika (lukittu) / ohitus / Enable pois
+      Error : Bool;         // Vika lukittu, kuittaus Ack-reunalla
+      Skipped : Bool;       // Viimeisin Run-pyyntö ohitettiin vikatilan takia (lukittu vian kanssa)
+      Waiting : Bool;       // Run päällä, odotetaan MinOff-aikaa
+      LastRun_ms : DInt;    // Viimeisimmän/nykyisen käynnin kesto ms
+      RunTime_ms : UDInt;   // Kumulatiivinen käyntiaika ms (retain)
+      StartCount : UDInt;   // Käynnistyslaskuri (retain)
+      ErrCode : Int;        // 0 = ei vikaa, 1 = MaxRun ylitetty, 2 = käyntitieto puuttuu
+      Status : Word;        // Tilasana, bitit alla
+   END_VAR
+
+   VAR
+      sAckTrig : R_TRIG;
+      sRunTrig : R_TRIG;
+      sMaxTon : TON_TIME;    // käyntiaika (myös MaxRun-valvonta)
+      sFbTon : TON_TIME;     // käyntitiedon valvonta
+      sOffTon : TON_TIME;    // seisonta-aika (MinOff)
+      sError : Bool;
+      sSkip : Bool;
+      sBlock : Bool;         // kuitattu Run=TRUE aikana -> odota Run-laskua
+      sPump : Bool;
+      sPrevEt_ms : DInt;
+      sOffInit : Bool;       // ensimmäinen kierros: MinOff ei estä
+   END_VAR
+
+   VAR RETAIN
+      sRun_ms : UDInt;
+      sCount : UDInt;
+   END_VAR
+
+   VAR_TEMP
+      tReq : Bool;
+      tOffOk : Bool;
+      tEt_ms : DInt;
+   END_VAR
+
+BEGIN
+   // ---- Reunat ----
+   #sAckTrig(CLK := #Ack);
+   #sRunTrig(CLK := #Run);
+
+   // ---- Kuittaus ----
+   IF #sAckTrig.Q THEN
+      #sError := FALSE;
+      #sSkip := FALSE;
+      #ErrCode := 0;
+      #sBlock := #Run;          // kesken askeleen kuitattu -> ei käynnistystä ennen uutta Run-pyyntöä
+   END_IF;
+   IF NOT #Run THEN
+      #sBlock := FALSE;
+   END_IF;
+
+   // ---- Ohitus vikatilassa ----
+   IF #sError AND #sRunTrig.Q THEN
+      #sSkip := TRUE;
+   END_IF;
+
+   // ---- Seisonta-aika ----
+   #sOffTon(IN := NOT #sPump, PT := #MinOff);
+   #tOffOk := #sOffTon.Q OR NOT #sOffInit OR #MinOff <= T#0S;
+
+   // ---- Käyntipyyntö ----
+   #tReq := #Run AND #Enable AND NOT #sError AND NOT #sBlock;
+   IF #sPump THEN
+      #sPump := #tReq;                       // käynnissä: MinOff ei katkaise
+   ELSE
+      #sPump := #tReq AND #tOffOk;
+      IF #sPump THEN
+         #sCount := #sCount + 1;
+         #sPrevEt_ms := 0;
+         #sOffInit := TRUE;
+      END_IF;
+   END_IF;
+
+   // ---- Käyntiaika + MaxRun ----
+   #sMaxTon(IN := #sPump, PT := #MaxRun);
+   IF #sPump THEN
+      #tEt_ms := TIME_TO_DINT(#sMaxTon.ET);
+      IF #tEt_ms >= #sPrevEt_ms THEN
+         #sRun_ms := #sRun_ms + DINT_TO_UDINT(#tEt_ms - #sPrevEt_ms);
+      END_IF;
+      #sPrevEt_ms := #tEt_ms;
+      #LastRun_ms := #tEt_ms;
+      IF #sMaxTon.Q THEN
+         #sError := TRUE;
+         #ErrCode := 1;
+      END_IF;
+   END_IF;
+
+   // ---- Käyntitieto ----
+   #sFbTon(IN := #sPump AND #UseFeedback AND NOT #Feedback, PT := #FbDelay);
+   IF #sFbTon.Q AND NOT #sError THEN
+      #sError := TRUE;
+      #ErrCode := 2;
+   END_IF;
+
+   // Vika pysäyttää heti samalla kierroksella
+   IF #sError THEN
+      #sPump := FALSE;
+   END_IF;
+
+   // ---- Lähdöt ----
+   #Pump := #sPump;
+   #Running := #sPump;
+   #Error := #sError;
+   #Skipped := #sSkip;
+   #Done := #sError OR (#Run AND NOT #Enable);
+   #Waiting := #Run AND #Enable AND NOT #sError AND NOT #sBlock AND NOT #sPump;
+   #RunTime_ms := #sRun_ms;
+   #StartCount := #sCount;
+
+   #Status := 16#0000;
+   #Status.%X0 := #Running;
+   #Status.%X1 := #Done;
+   #Status.%X2 := #Error;
+   #Status.%X3 := #Skipped;
+   #Status.%X4 := #ErrCode = 1;
+   #Status.%X5 := #ErrCode = 2;
+   #Status.%X6 := #Waiting;
+   #Status.%X7 := NOT #Enable;
+   #Status.%X8 := #sBlock;
+   #Status.%X9 := #Run;
+   #Status.%X10 := #UseFeedback AND #Feedback;
+END_FUNCTION_BLOCK
