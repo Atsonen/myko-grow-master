@@ -8,8 +8,8 @@ import { startWeather } from "./weather.js";
 import { registerFmiWeather } from "./fmiWeather.js";
 import { registerPidAi } from "./pidAi.js";
 import { registerPumputRoutes } from "./pumput.js";
-import { startKasvamoAlarms, registerKasvamoAlarmRoutes } from "./kasvamoAlarms.js";
-import { startFertDose, registerFertDoseRoutes } from "./fertDose.js";
+import { startKasvamoAlarms, registerKasvamoAlarmRoutes, kasvamoAlarmRows } from "./kasvamoAlarms.js";
+import { startFertDose, registerFertDoseRoutes, fertAlarmRows } from "./fertDose.js";
 import { registerMykoDb } from "./mykoDb.js";
 import { registerAnomaly } from "./anomaly.js";
 import { registerAssistant } from "./assistant.js";
@@ -874,12 +874,13 @@ app.get(
         source: "LLM", desc: String(f.finding ?? ""), acked: true, ackedAt: null, ackedBy: null,
       });
     } catch (e) { console.error("[alarms] llm rows", e.message); }
+    try { rows.push(...(await fertAlarmRows(hours)), ...kasvamoAlarmRows()); } catch (e) { console.error("[alarms] kasvamo rows", e.message); }
     const out = rows
       .filter((r) => r.active || new Date(r.start).getTime() >= from || (r.end && new Date(r.end).getTime() >= from))
       .map((r) => ({ ...r, durationSec: Math.round(((r.end ? new Date(r.end).getTime() : now) - new Date(r.start).getTime()) / 1000) }))
       .sort((a, b) => b.start.localeCompare(a.start))
       .slice(0, limit);
-    res.json({ hours, generatedAt: new Date().toISOString(), points: points.map((p) => ({ id: p.id, name: p.name, source: PLC_POINT_IDS.has(p.id) ? "PLC" : "Myko" })), rows: out, plc: plcStatus() });
+    res.json({ hours, generatedAt: new Date().toISOString(), points: [...points.map((p) => ({ id: p.id, name: p.name, source: PLC_POINT_IDS.has(p.id) ? "PLC" : "Myko" })), { id: "Kasvamo_EC", name: "Kasvamo · EC / lannoitus", source: "Kasvamo" }, { id: "Kasvamo", name: "Kasvamo", source: "Kasvamo" }], rows: out, plc: plcStatus() });
   }),
 );
 

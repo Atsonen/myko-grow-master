@@ -3,7 +3,8 @@ import { useEffect, useState } from "react";
 import { Gauge } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { FertDosePanel, FertEcDialog, useFertDose } from "@/components/FertDosePanel";
+import { FertDosePanel, FertEcModal, useFertDose } from "@/components/FertDosePanel";
+import { AlarmListWidget } from "@/components/dashboard/AlarmListWidget";
 import { getDataloggerLatest, getKasvamoAlarms, putKasvamoAlarms, type KasvamoAlarms, type KasLimit, getPumput, getPvFeed, type DataloggerLatest, type PumputResponse } from "@/lib/apiClient";
 import { DashboardDataProvider } from "@/components/dashboard/DashboardData";
 import { MeasurementPointWidget } from "@/components/dashboard/MeasurementPointWidget";
@@ -283,7 +284,7 @@ function PlantsDashboardPage() {
   const tmr = fet !== undefined ? `${Math.round(fet / 1000)} s` : undefined;
 
   return (
-    <div className="p-4 space-y-3 max-w-6xl">
+    <div className="p-4 space-y-3 max-w-[1800px]">
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-lg font-mono flex items-center gap-2">
           <Gauge className="h-4 w-4" /> Kasvamo – prosessinäkymä
@@ -292,6 +293,8 @@ function PlantsDashboardPage() {
           {err ? `Virhe: ${err}` : ts ? `Päivitetty ${new Date(ts).toLocaleTimeString("fi-FI")}` : "Ladataan…"} · päivitys {POLL_MS / 1000} s · vain luku
         </span>
       </div>
+      <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_420px]">
+      <div className="min-w-0 space-y-3">
       <Card className="p-2 bg-card border-border overflow-x-auto">
         <svg viewBox="0 0 960 560" className="w-full min-w-[720px]" style={{ background: C.bg, borderRadius: 8 }}>
           {/* Air duct + fan */}
@@ -393,12 +396,19 @@ function PlantsDashboardPage() {
       </Card>
       <AlarmDialog sig={alSig} data={ka.a} onClose={() => setAlSig(null)} onSaved={ka.setA} />
       <MeasurementPointWidget config={{ pointId: "GardenAir", name: "Kasvamo ilma · G_Air (PF-1)" }} open={fpOpen} onOpenChange={setFpOpen} dialogOnly />
-      <FertDosePanel d={fd.d} reload={fd.load} onEcLimits={() => setEcDlg(true)} />
-      <FertEcDialog open={ecDlg} d={fd.d} onClose={() => setEcDlg(false)} onSaved={fd.load} />
+      <FertDosePanel d={fd.d} onOpen={() => setEcDlg(true)} />
+      <FertEcModal open={ecDlg} d={fd.d} reload={fd.load} onClose={() => setEcDlg(false)} />
       <div className="text-[11px] font-mono text-muted-foreground leading-relaxed">
         Harmaat katkoviivalla merkityt elementit: <b>ei kytketty</b> – signaalia ei ole tunnistettu Myko-datasta varmasti
         (lannoite, pH±, lämmittimet, vesisäiliön pinta, painikkeet). Kytketyt arvot: Datalogger {Object.values(TAGS).join(", ")};
         OPC UA Pumput_DB {pu.ok ? "" : "(ei dataa) "}– pumput L/R (Circulation_L/R), täyttö (Filling), ajastin (FillingOnTime), hälytykset, kosteus, pinta/EC-asetusarvot. Vain luku.
+      </div>
+      </div>
+      <aside className="min-w-0 xl:sticky xl:top-2 xl:self-start" data-testid="pd-alarms">
+        <Card className="flex max-h-[calc(100vh-1rem)] min-h-[420px] flex-col bg-card border-border p-2">
+          <AlarmListWidget config={{ hours: 24 }} storageKey="kasvamo" />
+        </Card>
+      </aside>
       </div>
     </div>
   );

@@ -75,3 +75,11 @@ export function useDashboardData() {
   if (!v) throw new Error("useDashboardData must be used inside DashboardDataProvider");
   return v;
 }
+
+/** Like useDashboardData().tick but usable outside DashboardDataProvider (own 15 s tick). */
+export function useDashboardTick(): number {
+  const v = useContext(Ctx);
+  const [t, setT] = useState(0);
+  useEffect(() => { if (v) return; const i = setInterval(() => setT((x) => x + 1), 15_000); return () => clearInterval(i); }, [v]);
+  return v ? v.tick : t;
+}

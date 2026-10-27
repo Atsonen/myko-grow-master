@@ -502,7 +502,7 @@ export interface AlarmSummaryRow {
   value: number | null;
   endValue: number | null;
   durationSec: number;
-  source?: "PLC" | "Myko" | "LLM";
+  source?: "PLC" | "Myko" | "LLM" | "Kasvamo";
   /** short Finnish description (rule text / DeepSeek finding) */
   desc?: string;
   acked?: boolean;
@@ -512,7 +512,7 @@ export interface AlarmSummaryRow {
 export interface AlarmSummary {
   hours: number;
   generatedAt: string;
-  points: { id: string; name: string; source?: "PLC" | "Myko" }[];
+  points: { id: string; name: string; source?: "PLC" | "Myko" | "Kasvamo" }[];
   rows: AlarmSummaryRow[];
   plc?: { key: string; pointId: string; errBits: number | null; err: boolean | null; warn: number | null; at: string | null }[];
 }
@@ -631,7 +631,8 @@ export type FertDoseStatus = { mode: string; heartbeat: string; hbValue: number;
   ec: { value: number; at: string } | null; sp: number | null; belowSince: string | null; lastDoseAt: string | null; nextAllowedAt: string | null; reason: string;
   active: FertEvent[]; events: FertEvent[];
   cumulative: { fert: string; mode: string; n: number; req_ms: number; act_ms: number }[];
-  recent: { ts: string; fert: string; requested_ms: number; actual_ms: number | null; mode: string; reason: string }[] };
+  recent: { ts: string; fert: string; requested_ms: number; actual_ms: number | null; ec_before?: number | null; ec_sp?: number | null; mode: string; reason: string }[];
+  reliable?: { ok: boolean; why: string | null }; validSince?: string | null; trend?: [number, number][] };
 export async function postFertDose() {
   return requestJson<{ ok: boolean; mode?: string; error?: string }>("/api/fertdose/dose", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirm: true }) });
 }

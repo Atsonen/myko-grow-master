@@ -54,7 +54,7 @@ const hel = (iso) => new Date(iso).toLocaleString("fi-FI", { timeZone: "Europe/H
 
 export async function activeAlarms() {
   const s = await api("/api/alarms/summary?hours=72");
-  return (s.rows ?? []).filter((r) => r.active && r.pointId !== "LLM_Advisor");
+  return (s.rows ?? []).filter((r) => r.active && r.pointId !== "LLM_Advisor" && r.source !== "Kasvamo");
 }
 const NAMES = { F1: "F1 Kylmiö", T1: "T1 Terrario", G_Air: "Kasvamo" };
 export async function statusText() {

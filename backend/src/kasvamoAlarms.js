@@ -46,6 +46,11 @@ async function evaluate(c, port) {
   return out;
 }
 async function notify(text) { for (const chat_id of await allowedChats()) await tg("sendMessage", { chat_id, text }); }
+export function kasvamoAlarmRows() {
+  return Object.entries(st.active).filter(([, v]) => v).map(([k], i) => ({ id: -(1_900_000_000 + i), pointId: "Kasvamo", pointName: "Kasvamo", unit: "", alarm: k.toUpperCase(),
+    bit: null, priority: 1, start: new Date(st.at?.[k] ?? Date.now()).toISOString(), end: null, active: true, value: null, endValue: null,
+    source: "Kasvamo", desc: String(st.msg[k] ?? k).replace("🌱 ", ""), acked: true, ackedAt: null, ackedBy: null }));
+}
 export function kasvamoActive() { return Object.entries(st.active).filter(([, v]) => v).map(([k]) => st.msg[k] ?? k); }
 export function startKasvamoAlarms({ port }) {
   const tick = async () => {
@@ -55,7 +60,7 @@ export function startKasvamoAlarms({ port }) {
       if (bad && !st.active[key]) {
         st.since[key] ??= now;
         if (now - st.since[key] >= delay) {
-          st.active[key] = true; st.msg[key] = msg; console.log(`[kasvamo] ALARM ${key}: ${msg}`);
+          st.active[key] = true; st.msg[key] = msg; (st.at ??= {})[key] = now; console.log(`[kasvamo] ALARM ${key}: ${msg}`);
           try { await notify(msg + " (ilmoitetaan kerran, palautumisesta erikseen)"); } catch (e) { console.warn("[kasvamo] telegram", e.message); }
         }
       } else if (!bad) {
