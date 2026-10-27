@@ -1,0 +1,105 @@
+// =====================================================================================
+// FB_Sequence – kiertovesisekvenssin RUNKO (S7-1200, TIA Portal V17+, SCL, optimoitu)
+// TYHJÄ POHJA: ei ohjaa lähtöjä. Askeleet ja ajastimet valmiina, toiminnot lisätään myöhemmin.
+// Askeleet: 0 Seis -> 1 Kierrätys -> 2 Tasaantuminen -> 3 Pinnan tallennus -> 4 Täyttö -> 1 ...
+// Yleinen pysäytys (ennen CASEa): NOT Enable OR LeakAlarm OR NOT HB_OK -> Step := 0.
+// Ajastus: oma TON jokaiselle ajastetulle askeleelle (IN := Step = n) -> nollautuu varmasti
+// askeleen vaihtuessa, ei yhden kierroksen nollaustemppua.
+// Heartbeat: Valvomo vaihtaa Bool-arvoa (toggle) ~5 s välein; ei muutosta HbTimeout-ajassa -> HB_OK = FALSE.
+// Asetustulot (S7_SetPoint) jätetään kutsussa kytkemättä -> Valvomo voi kirjoittaa OPC UA:lla.
+// Ei globaaleja DB:itä.
+// =====================================================================================
+FUNCTION_BLOCK "FB_Sequence"
+{ S7_Optimized_Access := 'TRUE' }
+VERSION : 0.1
+   VAR_INPUT
+      Enable : Bool;                                   // Sekvenssi sallittu
+      LeakAlarm : Bool;                                // Kosteushälytys / vesivuoto -> seis
+      Heartbeat { S7_SetPoint := 'True'} : Bool;       // Valvomon toggle-bitti (jätä kytkemättä)
+      HbTimeout { S7_SetPoint := 'True'} : Time := T#45S;  // Heartbeat-vahdin aika
+      T_Circ { S7_SetPoint := 'True'} : Time := T#30S;     // Askel 1 Kierrätys
+      T_Settle { S7_SetPoint := 'True'} : Time := T#10M;   // Askel 2 Tasaantuminen
+      T_Fill { S7_SetPoint := 'True'} : Time := T#5S;      // Askel 4 Täyttö (paikkamerkki)
+   END_VAR
+
+   VAR_OUTPUT
+      Step : Int;            // Nykyinen askel 0–4
+      StepTime_ms : DInt;    // Aika nykyisessä askeleessa ms
+      HB_OK : Bool;          // Heartbeat kunnossa
+      Stopped : Bool;        // Yleinen pysäytysehto voimassa
+      CycleCount : DInt;     // Valmiit kierrokset (askel 4 -> 1)
+   END_VAR
+
+   VAR
+      sTonCirc : TON_TIME;
+      sTonSettle : TON_TIME;
+      sTonFill : TON_TIME;
+      sTonHb : TON_TIME;     // heartbeat-vahti
+      sTonStep : TON_TIME;   // vain StepTime_ms-näyttöön
+      sLastHb : Bool;
+      sHbSeen : Bool;        // vähintään yksi muutos käynnistyksen jälkeen
+      sPrevStep : Int;
+      sStepChanged : Bool;
+   END_VAR
+
+   VAR_TEMP
+      tHbChanged : Bool;
+   END_VAR
+
+BEGIN
+   // ---- Heartbeat ----
+   #tHbChanged := #Heartbeat <> #sLastHb;
+   #sLastHb := #Heartbeat;
+   IF #tHbChanged THEN
+      #sHbSeen := TRUE;
+   END_IF;
+   #sTonHb(IN := NOT #tHbChanged, PT := #HbTimeout);   // nollautuu jokaisella muutoksella
+   #HB_OK := #sHbSeen AND NOT #sTonHb.Q;
+
+   // ---- Yleinen pysäytys ----
+   #Stopped := NOT #Enable OR #LeakAlarm OR NOT #HB_OK;
+   IF #Stopped THEN
+      #Step := 0;
+   END_IF;
+
+   // ---- Askelajastimet (IN = askel aktiivinen) ----
+   #sTonCirc(IN := #Step = 1, PT := #T_Circ);
+   #sTonSettle(IN := #Step = 2, PT := #T_Settle);
+   #sTonFill(IN := #Step = 4, PT := #T_Fill);
+
+   // ---- Sekvenssi ----
+   CASE #Step OF
+      0:  // Seis
+         IF NOT #Stopped THEN
+            #Step := 1;
+         END_IF;
+
+      1:  // Kierrätys – TÄHÄN: "CircPump1_DB"(Run := "FB_Sequence_DB".Step = 1, ...) FB:n ulkopuolella
+         IF #sTonCirc.Q THEN
+            #Step := 2;
+         END_IF;
+
+      2:  // Tasaantuminen – pumput pois, pinta rauhoittuu
+         IF #sTonSettle.Q THEN
+            #Step := 3;
+         END_IF;
+
+      3:  // Pinnan tallennus – TÄHÄN: tallenna pinta (esim. #sLevelRef := Level), yksi kierros
+         #Step := 4;
+
+      4:  // Täyttö – TÄHÄN: täyttöventtiili / täyttöehto (paikkamerkkinä aika T_Fill)
+         IF #sTonFill.Q THEN
+            #CycleCount := #CycleCount + 1;
+            #Step := 1;
+         END_IF;
+
+      ELSE  // tuntematon askel -> turvallinen tila
+         #Step := 0;
+   END_CASE;
+
+   // ---- Askelaika (nollataan askeleen vaihtuessa: IN FALSE yhden kierroksen) ----
+   #sStepChanged := #Step <> #sPrevStep;
+   #sPrevStep := #Step;
+   #sTonStep(IN := NOT #sStepChanged, PT := T#24D);
+   #StepTime_ms := TIME_TO_DINT(#sTonStep.ET);
+END_FUNCTION_BLOCK
