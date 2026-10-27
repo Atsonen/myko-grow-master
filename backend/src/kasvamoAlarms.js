@@ -13,6 +13,7 @@ const SIG = { pinta: ["dl25", "Ravinnesäiliö pinta", "%"], vesi: ["dl24", "Rav
 const BITS = { A_Tayttovesi: "Täyttövesi-hälytys (Pumput_DB Tayttovesi.Active)", A_HumHH: "Kosteus HH (Pumput_DB A_HumHH.Active)", EC_Below_Q: "EC alhainen yli viiveen (Pumput_DB EC_Below.Q)" };
 let st = { active: {}, since: {}, msg: {} };
 try { st = { ...st, ...JSON.parse(fs.readFileSync(STATE, "utf8")) }; } catch { /* first run */ }
+for (const o of [st.active, st.since, st.msg]) for (const k of Object.keys(o)) if (k.startsWith("ec:")) delete o[k]; // EC hoidetaan fertDose.js:ssä
 const save = () => { try { fs.writeFileSync(STATE + ".tmp", JSON.stringify(st)); fs.renameSync(STATE + ".tmp", STATE); } catch (e) { console.warn("[kasvamo] state", e.message); } };
 async function cfg() {
   const [r] = await query("SELECT v FROM myko_settings WHERE k = 'kasvamo_alarms'");
