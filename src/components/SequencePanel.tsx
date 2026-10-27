@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { getSequence, putSequence, type SequenceResponse } from "@/lib/apiClient";
+import { getSequence, putSequence, setCircPumpEnable, type SequenceResponse } from "@/lib/apiClient";
 
 const STEPS: [number, string][] = [[0, "Seis"], [1, "Kierrätys"], [2, "Tasaantuminen"], [3, "Pinnan tallennus"], [4, "Täyttö"]];
 const mmss = (ms: number) => { const s = Math.max(0, Math.round(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
@@ -24,6 +24,12 @@ export function SequencePanel() {
   const step = live ? p.Step : undefined;
   const setMs = (s?: number) => s === 1 ? p.T_Circ : s === 2 ? p.T_Settle : s === 4 ? p.T_Fill : undefined;
   const rem = live && setMs(step) !== undefined && p.StepTime_ms !== undefined ? (setMs(step) as number) - p.StepTime_ms : undefined;
+  const [pumpBusy, setPumpBusy] = useState<"L" | "R" | null>(null);
+  const togglePump = async (sd: "L" | "R", en: boolean) => {
+    setPumpBusy(sd);
+    try { await setCircPumpEnable(sd, en); toast.success(`Kiertopumppu ${sd === "L" ? "vasen" : "oikea"}: ${en ? "käytössä" : "pois käytöstä"}`); load(); }
+    catch (e) { toast.error((e as Error).message); } finally { setPumpBusy(null); }
+  };
   const save = async () => {
     if (!f) return; setSaving(true);
     try { await putSequence({ enable: f.enable, t_circ_s: Number(f.t_circ_s), t_settle_s: Number(f.t_settle_s), t_fill_s: Number(f.t_fill_s) }); toast.success("Tallennettu Mykoon (ei PLC:hen)"); load(); }
@@ -34,7 +40,7 @@ export function SequencePanel() {
   return (
     <div className="flex h-full flex-col gap-2 text-xs font-mono" data-testid="seq-panel">
       <div className="flex items-center gap-2">
-        <h2 className="text-sm font-medium">Kiertovesisekvenssi · FB_Sequence_DB</h2>
+        <h2 className="text-sm font-medium">Kiertovesisekvenssi · Pumput_DB.FB_Sequence</h2>
         <span className="ml-auto text-[10px] text-muted-foreground">{d?.plc_at ? `PLC ${new Date(d.plc_at).toLocaleTimeString("fi-FI")}` : ""}</span>
       </div>
       {!live && <div className="rounded border border-amber-600/50 bg-amber-600/10 px-2 py-1 text-amber-400">
@@ -51,7 +57,25 @@ export function SequencePanel() {
         <span>Tila {b(live ? !p.Stopped : undefined, "käy", "PYSÄYTETTY")}</span>
         <span>Vuoto {b(live ? !p.LeakAlarm : undefined, "ei", "HÄLYTYS")}</span>
         <span>Syklit <b>{live ? p.CycleCount ?? "–" : "–"}</b></span>
+        <span>Taso <b>{live && typeof p.Level === "number" ? p.Level.toFixed(2) : "–"}</b></span>
         <span>Askelaika <b>{live && p.StepTime_ms !== undefined ? mmss(p.StepTime_ms) : "–"}</b></span>
+      </div>
+      <div className="grid grid-cols-2 gap-2" data-testid="circ-pumps">
+        {(["L", "R"] as const).map((sd) => {
+          const run = live ? p[`${sd}_Pump`] : undefined, err = live ? p[`${sd}_Error`] : undefined, en = live ? p[`${sd}_Enable`] : undefined;
+          return (
+            <div key={sd} className="rounded border border-border px-2 py-1">
+              <div className="mb-1 font-medium">Kiertopumppu {sd === "L" ? "vasen" : "oikea"}</div>
+              <div className="flex flex-wrap items-center gap-1">
+                <span>Lähtö {b(run, "KÄY", "seis")}</span>
+                <span>Vika {b(err === undefined ? undefined : !err, "ei", "VIKA")}</span>
+                <span>Käyttö {b(en, "ON", "OFF")}</span>
+                <Button size="sm" variant={en ? "outline" : "default"} className="ml-auto h-6 px-2 text-[11px]"
+                  disabled={!live || en === undefined || !d?.pump_write_allowed || pumpBusy === sd}
+                  onClick={() => void togglePump(sd, !en)}>{en ? "Off" : "On"}</Button>
+              </div>
+            </div>);
+        })}
       </div>
       {f && <div className="grid grid-cols-[auto_1fr_auto] items-center gap-x-2 gap-y-1">
         {([["t_circ_s", "T_Circ (kierrätys)", p.T_Circ], ["t_settle_s", "T_Settle (tasaantuminen)", p.T_Settle], ["t_fill_s", "T_Fill (täyttö)", p.T_Fill]] as const).map(([k, l, pv]) => (

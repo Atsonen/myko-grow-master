@@ -9,6 +9,11 @@ import { query } from "./db.js";
 
 const TOPIC = "Sensors/PLC_2/Sequence";
 const PLC_WRITE_ALLOWED = false; // kovakoodattu esto – muutos vaatii koodimuutoksen ja hyväksynnän
+// Poikkeus (käyttäjän hyväksymä 27.10.2026): VAIN kiertopumppujen Enable (FB_CircPump_Left/Right.Enable, Bool)
+// -> Myko/Cmd/CircPump {L_Enable|R_Enable: bool}. Bridge whitelistaa samat kaksi solmua.
+const PUMP_ENABLE_WRITE_ALLOWED = true;
+const CMD_TOPIC = "Myko/Cmd/CircPump";
+let MQ = null; const PENDING = new Map();
 const DEF = { enable: false, t_circ_s: 30, t_settle_s: 600, t_fill_s: 5, plc_write: false, hb_enabled: false };
 const LIM = { t_circ_s: [1, 3600], t_settle_s: [1, 86400], t_fill_s: [1, 3600] };
 const STEPS = { 0: "Seis", 1: "Kierrätys", 2: "Tasaantuminen", 3: "Pinnan tallennus", 4: "Täyttö" };
@@ -22,8 +27,15 @@ async function cfg() {
 
 export function startSequence({ mqttUrl }) {
   const mq = mqtt.connect(mqttUrl, { clientId: `myko-backend-seq-${process.pid}`, reconnectPeriod: 5000 });
-  mq.on("connect", () => mq.subscribe(TOPIC));
-  mq.on("message", (_t, buf) => { try { S.plc = JSON.parse(buf.toString()); S.at = Date.now(); } catch { /* ignore */ } });
+  MQ = mq;
+  mq.on("connect", () => { mq.subscribe(TOPIC); mq.subscribe(CMD_TOPIC + "/ack"); });
+  mq.on("message", (t, buf) => {
+    try {
+      const j = JSON.parse(buf.toString());
+      if (t === TOPIC) { S.plc = j; S.at = Date.now(); }
+      else if (j?.id && PENDING.has(j.id)) { PENDING.get(j.id)(j); PENDING.delete(j.id); }
+    } catch { /* ignore */ }
+  });
   mq.on("error", () => undefined);
 }
 
@@ -33,9 +45,25 @@ export function registerSequenceRoutes(app) {
       const c = await cfg();
       const stale = !S.at || Date.now() - S.at > 30_000;
       res.json({ settings: c, plc: S.plc, plc_at: S.at ? new Date(S.at).toISOString() : null, stale,
-        present: !!S.plc?.present && !stale, steps: STEPS, write_allowed: PLC_WRITE_ALLOWED,
+        present: !!S.plc?.present && !stale, steps: STEPS, write_allowed: PLC_WRITE_ALLOWED, pump_write_allowed: PUMP_ENABLE_WRITE_ALLOWED,
         write_note: "Kirjoitus PLC:hen ei käytössä – odottaa latausta/hyväksyntää" });
     } catch (e) { res.status(500).json({ error: String(e?.message ?? e) }); }
+  });
+  app.post("/api/sequence/pump", async (req, res) => {
+    const side = req.body?.side, en = req.body?.enable;
+    if (!PUMP_ENABLE_WRITE_ALLOWED) return res.status(403).json({ error: "Pumppukirjoitus ei käytössä" });
+    if (!["L", "R"].includes(side) || typeof en !== "boolean") return res.status(400).json({ error: "side L|R, enable bool" });
+    if (!MQ?.connected) return res.status(503).json({ error: "MQTT ei yhteydessä" });
+    const id = `cp${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`; const key = `${side}_Enable`;
+    const ack = await new Promise((ok) => {
+      const to = setTimeout(() => { PENDING.delete(id); ok(null); }, 5000);
+      PENDING.set(id, (j) => { clearTimeout(to); ok(j); });
+      MQ.publish(CMD_TOPIC, JSON.stringify({ id, by: "myko-ui", [key]: en }), { qos: 1 });
+    });
+    if (!ack) return res.status(504).json({ error: "Ei kuittausta bridgeltä (Myko/Cmd/CircPump/ack)" });
+    const r = ack.results?.[key];
+    if (r?.result !== "ok") return res.status(502).json({ error: String(r ?? "tuntematon"), ack });
+    res.json({ ok: true, key, value: en, read: r.read });
   });
   app.put("/api/sequence", async (req, res) => {
     try {
