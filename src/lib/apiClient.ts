@@ -374,20 +374,33 @@ export async function getUnitEnvironment(unitCode: string, points = 400) {
   );
 }
 
-export async function getDashboardLayout<T = unknown>() {
-  return requestJson<{ id: string; layout: T | null; updatedAt: string | null }>("/api/dashboard/layout");
+export async function getDashboardLayout<T = unknown>(id?: string) {
+  return requestJson<{ id: string; layout: T | null; updatedAt: string | null }>(`/api/dashboard/layout${id ? `?id=${encodeURIComponent(id)}` : ""}`);
 }
 
-export async function saveDashboardLayout<T = unknown>(layout: T) {
-  return requestJson<{ id: string; layout: T }>("/api/dashboard/layout", {
+export async function saveDashboardLayout<T = unknown>(layout: T, id?: string) {
+  return requestJson<{ id: string; layout: T }>(`/api/dashboard/layout${id ? `?id=${encodeURIComponent(id)}` : ""}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ layout }),
   });
 }
 
-export async function resetDashboardLayout() {
-  return requestJson<{ ok: boolean }>("/api/dashboard/layout", { method: "DELETE" });
+export async function resetDashboardLayout(id?: string) {
+  return requestJson<{ ok: boolean }>(`/api/dashboard/layout${id ? `?id=${encodeURIComponent(id)}` : ""}`, { method: "DELETE" });
+}
+
+export type SequenceSettings = { enable: boolean; t_circ_s: number; t_settle_s: number; t_fill_s: number; plc_write: false; hb_enabled: false };
+export type SequenceResponse = {
+  settings: SequenceSettings; present: boolean; stale: boolean; plc_at: string | null; steps: Record<string, string>;
+  write_allowed: boolean; write_note: string;
+  plc: { present?: boolean; Step?: number; StepTime_ms?: number; HB_OK?: boolean; Stopped?: boolean; CycleCount?: number;
+    Enable?: boolean; LeakAlarm?: boolean; T_Circ?: number; T_Settle?: number; T_Fill?: number };
+};
+export async function getSequence() { return requestJson<SequenceResponse>("/api/sequence"); }
+export async function putSequence(s: Partial<SequenceSettings>) {
+  return requestJson<{ settings: SequenceSettings; written_to_plc: false }>("/api/sequence", {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(s) });
 }
 
 export interface SeriesStyleDefault {
