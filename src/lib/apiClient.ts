@@ -645,9 +645,9 @@ export const startPidParamsApply = (key: string, params: Record<string, number>,
   requestJson<PidAiJob>(aiUrl(key, "params-apply"), post({ params, confirmLarge }));
 export type FertEcAlarm = { disabled_until?: string; enabled: boolean; lo_off: number; hi_off: number; warn_lo_off: number; warn_hi_off: number; hyst: number; delay_min: number };
 export type FertEvent = { id?: number; code?: string; level: "alarm" | "warning"; text: string; ts?: string; since?: string; cleared_ts?: string | null; active?: boolean; acked?: boolean; acked_ts?: string | null; acked_by?: string | null };
-export type FertDoseStatus = { mode: string; heartbeat: string; hbValue: number; interlock: boolean;
+export type FertDoseStatus = { mode: string; heartbeat: string; hbValue: number; interlock: boolean; pump_write_allowed?: boolean;
   config: { live: boolean; hb_enabled: boolean; plc_enable: boolean; auto: boolean; fert: string; dose_s: number; ec_sp?: number; below_min: number; pause_min: number; ec_alarm: FertEcAlarm };
-  plc: { present: boolean; fresh: boolean; statusText: string | null; Status?: number; Enable?: boolean; HB_OK?: boolean; DoseActive?: boolean; DoseCount?: number; LastDose_ms?: number; RunTime_ms?: number; Heartbeat?: number };
+  plc: { present: boolean; fresh: boolean; statusText: string | null; Status?: number; Enable?: boolean; HB_OK?: boolean; DoseActive?: boolean; DoseCount?: number; LastDose_ms?: number; RunTime_ms?: number; Heartbeat?: number; Pump?: boolean };
   ec: { value: number; at: string } | null; sp: number | null; belowSince: string | null; lastDoseAt: string | null; nextAllowedAt: string | null; reason: string;
   active: FertEvent[]; events: FertEvent[];
   cumulative: { fert: string; mode: string; n: number; req_ms: number; act_ms: number }[];
@@ -657,6 +657,11 @@ export async function postFertDose() {
   return requestJson<{ ok: boolean; mode?: string; error?: string }>("/api/fertdose/dose", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirm: true }) });
 }
 export async function getFertDose() { return requestJson<FertDoseStatus>("/api/fertdose"); }
+/** Prosessinäkymä: lannoitepumpun Käyttö (FB_FertDose_DB.Input.Enable). */
+export async function setFertPumpEnable(enable: boolean) {
+  return requestJson<{ ok: boolean; enable: boolean; written: boolean; read?: boolean; interlock?: boolean }>("/api/fertdose/pump", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enable }) });
+}
 export async function putFertDoseSettings(body: Record<string, unknown>) {
   return requestJson<{ config: FertDoseStatus["config"] }>("/api/fertdose/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 }

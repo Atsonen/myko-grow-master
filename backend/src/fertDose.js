@@ -19,6 +19,9 @@ const DEF = {
   ec_alarm: { enabled: true, lo_off: -1500, hi_off: 1500, warn_lo_off: -700, warn_hi_off: 700, hyst: 100, delay_min: 5, clear_min: 3 },
 };
 const STATUS_TXT = { 0: "valmis", 1: "annostelee", 2: "annos valmis", 3: "annos valmis (rajattu 5 s)", 10: "hylätty: Enable pois", 11: "heartbeat puuttuu", 13: "hylätty: virheellinen pyyntö", 14: "katkaistu: Enable pudotettu", 15: "katkaistu: turvakatkaisu" };
+
+// Käyttäjän hyväksymä (28.10.2026): VAIN FB_FertDose_DB.Input.Enable (Bool) prosessinäkymän Käyttö-kytkimestä.
+const PUMP_ENABLE_WRITE_ALLOWED = true;
 const S = { samples: [], validSince: null, belowSince: null, lastDoseAt: null, reason: "init", sp: null,
   plc: { present: false }, plcAt: 0, hb: 0, hbErr: null, lastAck: null, pending: new Map(),
   ev: {}, evSince: {}, lastDoseCount: null };
@@ -288,7 +291,8 @@ export function registerFertDoseRoutes(app) {
       const events = await query("SELECT id, DATE_FORMAT(ts, '%Y-%m-%dT%H:%i:%sZ') ts, DATE_FORMAT(cleared_ts, '%Y-%m-%dT%H:%i:%sZ') cleared_ts, level, code, text, DATE_FORMAT(acked_ts, '%Y-%m-%dT%H:%i:%sZ') acked_ts, acked_by FROM fert_events ORDER BY id DESC LIMIT 200");
       const lastS = S.samples[S.samples.length - 1];
       res.json({ config: c, mode: c.live ? "live" : "dry-run", heartbeat: !c.hb_enabled ? "off" : !S.plc.present ? "odottaa DB:tä" : S.hbErr ? `virhe: ${S.hbErr}` : "ok",
-        hbValue: S.hb, plc: { ...S.plc, fresh: plcFresh(), statusText: STATUS_TXT[S.plc.Status] ?? (S.plc.Status != null ? `koodi ${S.plc.Status}` : null) },
+        hbValue: S.hb, pump_write_allowed: PUMP_ENABLE_WRITE_ALLOWED,
+        plc: { ...S.plc, fresh: plcFresh(), statusText: STATUS_TXT[S.plc.Status] ?? (S.plc.Status != null ? `koodi ${S.plc.Status}` : null) },
         interlock: alarmActive(), ec: lastS ? { value: lastS.v, at: new Date(lastS.t).toISOString() } : null, sp: S.sp,
         belowSince: S.belowSince ? new Date(S.belowSince).toISOString() : null, lastDoseAt: S.lastDoseAt ? new Date(S.lastDoseAt).toISOString() : null,
         nextAllowedAt: S.lastDoseAt ? new Date(S.lastDoseAt + c.pause_min * 60_000).toISOString() : null,
@@ -307,6 +311,27 @@ export function registerFertDoseRoutes(app) {
       res.status(r.ok ? 200 : 409).json(r);
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
+
+  // Prosessinäkymä: lannoitepumpun Käyttö (Enable). Kaksi fyysistä pumppua saman lähdön takana → yksi symboli.
+  // Kirjoitus: FB_FertDose_DB/Input/Enable (hyväksytty). Päivittää myös fert_dose.plc_enable ettei tick ylikirjoita.
+  app.post("/api/fertdose/pump", async (req, res) => {
+    try {
+      const en = req.body?.enable;
+      if (!PUMP_ENABLE_WRITE_ALLOWED) return res.status(403).json({ error: "Pumppukirjoitus ei käytössä" });
+      if (typeof en !== "boolean") return res.status(400).json({ error: "enable bool" });
+      if (!mq?.connected) return res.status(503).json({ error: "MQTT ei yhteydessä" });
+      const c = await cfg();
+      const next = { ...c, plc_enable: en };
+      await saveCfg(next);
+      const locked = alarmActive();
+      const want = en && !locked;
+      const a = await cmd({ Enable: want });
+      await logRow(c.fert, 0, null, S.sp, `pump Enable=${want} plc_enable=${en}${locked ? " (EC-hälytyslukitus)" : ""} by=${String(req.body?.by ?? "myko-ui")}`, "live");
+      if (!okRes(a, "Enable")) return res.status(502).json({ error: errTxt(a) || "Enable-kirjoitus epäonnistui", ack: a });
+      res.json({ ok: true, enable: en, written: want, read: a.results?.Enable?.value ?? a.results?.Enable, interlock: locked, pump_write_allowed: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
   app.put("/api/fertdose/settings", async (req, res) => {
     try {
       const b = req.body ?? {}; const cur = await cfg(); const next = { ...cur, ec_alarm: { ...cur.ec_alarm } };

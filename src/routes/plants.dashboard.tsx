@@ -8,7 +8,8 @@ import { FertDosePanel, FertEcModal, useFertDose } from "@/components/FertDosePa
 import { AlarmListWidget } from "@/components/dashboard/AlarmListWidget";
 import { PanelLayout } from "@/components/PanelLayout";
 import { SequencePanel } from "@/components/SequencePanel";
-import { getDataloggerLatest, getKasvamoAlarms, putKasvamoAlarms, type KasvamoAlarms, type KasLimit, getPumput, getPvFeed, type DataloggerLatest, type PumputResponse } from "@/lib/apiClient";
+import { getDataloggerLatest, getKasvamoAlarms, putKasvamoAlarms, type KasvamoAlarms, type KasLimit, getPumput, getPvFeed, type DataloggerLatest, type PumputResponse, setFertPumpEnable } from "@/lib/apiClient";
+import { toast } from "sonner";
 import { DashboardDataProvider } from "@/components/dashboard/DashboardData";
 import { MeasurementPointWidget } from "@/components/dashboard/MeasurementPointWidget";
 import { usePid, PID_STATE } from "@/components/dashboard/PidFaceplate";
@@ -208,6 +209,55 @@ function Pump({ x, y, label, state, color = C.pipe }: { x: number; y: number; la
   );
 }
 
+/** Lannoitepumppu (FB_FertDose_DB): yksi symboli (2 fyysistä samaan lähtöön). Lähtö KÄY/seis, vika, Käyttö On/Off. */
+function FertPump({ x, y, pump, enable, fault, faultText, writeAllowed, busy, onToggle }: {
+  x: number; y: number; pump?: boolean; enable?: boolean; fault?: boolean; faultText?: string;
+  writeAllowed?: boolean; busy?: boolean; onToggle?: (en: boolean) => void;
+}) {
+  const wired = pump !== undefined;
+  const run = !!pump;
+  const fill = !wired ? C.na : run ? C.on : C.off;
+  const stroke = fault ? C.off : wired ? C.pipe : C.na;
+  const canToggle = wired && enable !== undefined && !!writeAllowed && !busy && !!onToggle;
+  return (
+    <g transform={`translate(${x},${y})`} opacity={wired ? 1 : 0.6} data-testid="pd-fert-pump">
+      <title>{wired
+        ? `Lannoitepumppu: lähtö ${run ? "KÄY" : "seis"}, käyttö ${enable ? "ON" : "OFF"}${fault ? ` · VIKA ${faultText ?? ""}` : ""} · FB_FertDose_DB.Output.Pump / Input.Enable`
+        : "Lannoitepumppu: ei kytketty"}</title>
+      <circle r={16} fill={C.panel} stroke={stroke} strokeWidth={3} />
+      <path d="M -7 -8 L 9 0 L -7 8 Z" fill={wired ? (fault ? C.off : C.pipe) : C.na}>
+        {wired && run && <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="2s" repeatCount="indefinite" />}
+      </path>
+      <text y={32} textAnchor="middle" fontSize={10} fill={C.text} fontFamily="monospace">Lannoite</text>
+      <rect x={-28} y={38} width={56} height={16} rx={8} fill={fill} />
+      <text y={50} textAnchor="middle" fontSize={9} fill="#fff" fontFamily="monospace" fontWeight={700}>
+        {!wired ? "ei kytk." : run ? "KÄY" : "seis"}
+      </text>
+      {fault && (
+        <g>
+          <rect x={-28} y={56} width={56} height={14} rx={4} fill="#7f1d1d" stroke={C.off} />
+          <text y={66} textAnchor="middle" fontSize={8} fill="#fecaca" fontFamily="monospace" fontWeight={700}>VIKA</text>
+        </g>
+      )}
+      <g transform={`translate(0, ${fault ? 78 : 60})`}>
+        <text y={0} textAnchor="middle" fontSize={8} fill={C.muted} fontFamily="monospace">
+          Käyttö {enable === undefined ? "—" : enable ? "ON" : "OFF"}
+        </text>
+        <g transform="translate(-22, 6)" style={canToggle ? { cursor: "pointer" } : undefined}
+          opacity={canToggle ? 1 : 0.45}
+          onClick={canToggle ? (e) => { e.stopPropagation(); onToggle!(!enable); } : undefined}
+          role={canToggle ? "button" : undefined}
+          data-testid="pd-fert-enable">
+          <rect width={44} height={16} rx={8} fill={enable ? C.on : "#3f3f46"} stroke={C.stroke} />
+          <text x={22} y={12} textAnchor="middle" fontSize={9} fill="#fff" fontFamily="monospace" fontWeight={700}>
+            {busy ? "…" : enable ? "Off" : "On"}
+          </text>
+        </g>
+      </g>
+    </g>
+  );
+}
+
 function Tank({ x, y, w, h, level, label, sub }: { x: number; y: number; w: number; h: number; level?: number | null; label: string; sub?: string }) {
   const wired = level !== undefined;
   const pct = Math.max(0, Math.min(100, Number(level ?? 0)));
@@ -290,6 +340,20 @@ function PlantsDashboardPage() {
   const fan = v("fan");
   const pu = usePumput();
   const ka = useKasAlarms(); const fd = useFertDose(); const [alSig, setAlSig] = useState<string | null>(null); const [ecDlg, setEcDlg] = useState(false);
+  const [fertBusy, setFertBusy] = useState(false);
+  const toggleFert = async (en: boolean) => {
+    setFertBusy(true);
+    try {
+      const r = await setFertPumpEnable(en);
+      toast.success(r.interlock ? `Lannoite Käyttö ${en ? "ON" : "OFF"} (EC-lukitus pitää Enable OFF)` : `Lannoite Käyttö: ${en ? "ON" : "OFF"}`);
+      fd.load();
+    } catch (e) { toast.error(e instanceof Error ? e.message : String(e)); }
+    finally { setFertBusy(false); }
+  };
+  const fp = fd.d?.plc;
+  const fertLive = !!(fp?.present && fp?.fresh !== false && (fp?.Pump !== undefined || fp?.Enable !== undefined));
+  const fertFault = fertLive && (fp!.HB_OK === false || (typeof fp!.Status === "number" && fp!.Status >= 10));
+  const fertFaultTxt = !fertLive ? undefined : fp!.HB_OK === false ? "HB" : (fp!.statusText ?? `Status ${fp!.Status}`);
   const kState = (k: string): BoxState => { const ks = [`${k}:lo`, `${k}:hi`].filter((x) => ka.a?.active[x]); return !ks.length ? undefined : ks.some((x) => !ka.a?.acked?.[x]) ? "alarm" : "alarmAck"; };
   const ecEv = (fd.d?.active ?? []).filter((e) => e.code?.startsWith("ec_"));
   const ecState: BoxState = ecEv.some((e) => e.level === "alarm" && !e.acked) ? "alarm" : ecEv.some((e) => e.level === "alarm") ? "alarmAck" : ecEv.length ? "warning" : undefined;
@@ -315,7 +379,7 @@ function PlantsDashboardPage() {
       <PanelLayout layoutId="plants" panels={[
         { id: "process", title: "Prosessikuva", x: 0, y: 0, w: 17, h: 11, minW: 8, minH: 6, node: (
       <Card className="p-2 bg-card border-border overflow-x-auto">
-        <svg viewBox="0 0 960 560" className="w-full min-w-[720px]" style={{ background: C.bg, borderRadius: 8 }}>
+        <svg viewBox="0 0 960 580" className="w-full min-w-[720px]" style={{ background: C.bg, borderRadius: 8 }}>
           {/* Air duct + fan */}
           <Pipe d="M 560 70 H 700" active={(fan ?? 0) > 0} />
           <Pipe d="M 780 70 H 870 Q 900 70 900 40" active={(fan ?? 0) > 0} />
@@ -373,7 +437,7 @@ function PlantsDashboardPage() {
 
           {/* Pipes */}
           <Pipe d="M 60 360 V 260 H 300 V 320" active={pu.b("Circulation_L")} />
-          <Pipe d="M 160 420 V 350 H 330" />
+          <Pipe d="M 160 420 V 350 H 330" active={fertLive && fp?.Pump === true} />
           <Pipe d="M 360 320 V 230 H 800 V 360" active={pu.b("Filling")} />
           <Pipe d="M 400 320 V 270 H 690 V 360" active={pu.b("Circulation_R")} />
 
@@ -398,9 +462,16 @@ function PlantsDashboardPage() {
           {/* Left: water tank + pumps */}
           <Tank x={20} y={420} w={90} h={100} label="L" sub="pinta ei kytketty" />
           <Pump x={60} y={330} label="Pumppu L" state={pu.b("Circulation_L")} />
-          <Pump x={160} y={410} label="Lannoite" />
-          <Tank x={135} y={470} w={50} h={50} label="" sub="Ferts" />
-          <ValueBox x={200} y={470} w={92} label="Lämmitin T" wired={false} />
+          <FertPump x={160} y={410}
+            pump={fertLive ? fp?.Pump : undefined}
+            enable={fertLive ? fp?.Enable : undefined}
+            fault={fertFault}
+            faultText={fertFaultTxt}
+            writeAllowed={!!fd.d?.pump_write_allowed && !!fd.d?.config.live}
+            busy={fertBusy}
+            onToggle={(en) => void toggleFert(en)} />
+          <Tank x={135} y={505} w={50} h={45} label="" sub="Ferts" />
+          <ValueBox x={200} y={505} w={92} label="Lämmitin T" wired={false} />
 
           {/* pH dosing */}
           <Pump x={590} y={430} label="pH+" color="#f43f5e" />
@@ -428,8 +499,9 @@ function PlantsDashboardPage() {
         { id: "notes", title: "Selite", x: 0, y: 22, w: 24, h: 2, minW: 4, minH: 1, node: (
       <div className="text-[11px] font-mono text-muted-foreground leading-relaxed">
         Harmaat katkoviivalla merkityt elementit: <b>ei kytketty</b> – signaalia ei ole tunnistettu Myko-datasta varmasti
-        (lannoite, pH±, lämmittimet, vesisäiliön pinta, painikkeet). Kytketyt arvot: Datalogger {Object.values(TAGS).join(", ")};
-        OPC UA Pumput_DB {pu.ok ? "" : "(ei dataa) "}– pumput L/R (Circulation_L/R), täyttö (Filling), ajastin (FillingOnTime), hälytykset, kosteus, pinta/EC-asetusarvot. Vain luku.
+        (pH±, lämmittimet, vesisäiliön pinta, painikkeet). Kytketyt arvot: Datalogger {Object.values(TAGS).join(", ")};
+        OPC UA Pumput_DB {pu.ok ? "" : "(ei dataa) "}– pumput L/R (Circulation_L/R), täyttö (Filling), ajastin (FillingOnTime), hälytykset, kosteus, pinta/EC-asetusarvot;
+        FB_FertDose_DB – Lannoite (Pump/Enable, Käyttö On/Off). Vain Enable kirjoitetaan.
       </div>
         ) },
       ]} />
