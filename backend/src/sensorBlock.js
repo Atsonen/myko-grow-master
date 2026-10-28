@@ -245,6 +245,7 @@ function enrich(dev, entry) {
       commandsSupported: false,
       controlWord: [],
       sensorTests: [],
+      hasActiveTests: false,
       testMode: false,
       decoded: {},
     };
@@ -253,6 +254,7 @@ function enrich(dev, entry) {
   const schema = typeof v.Schema === "number" ? v.Schema : null;
   const ageMs = Date.now() - entry.at;
   const sensorTests = Array.isArray(v.SensorTests) ? v.SensorTests : [];
+  const hasActiveTests = sensorTests.length > 0;
   const decoded = {};
   for (const [k, raw] of Object.entries(v)) {
     if (META_KEYS.has(k) && k !== "FanRequestedPercent" && k !== "FanDutyPercent" && k !== "FanPWM") continue;
@@ -276,7 +278,8 @@ function enrich(dev, entry) {
     commandsSupported: schema != null && schema >= CMD_SCHEMA_MIN,
     controlWord: controlWordFlags(v.ControlWord),
     sensorTests,
-    testMode: Boolean(v.TestMode) || sensorTests.length > 0,
+    hasActiveTests,
+    testMode: Boolean(v.TestMode),
     decoded,
     heat: v.Heat,
     heatRequested: v.HeatRequested,
@@ -412,7 +415,8 @@ export function registerSensorBlockRoutes(app) {
       });
 
       if (!ack) return res.status(504).json({ error: "timeout", timeoutMs: ACK_TIMEOUT_MS });
-      if (ack.ok === false) return res.status(502).json({ ok: false, error: ack.error ?? "ack_failed", ack });
+      // Device application nack (invalid_json|no_fields|sensor_tests|outputs): HTTP 200 + ok:false
+      if (ack.ok === false) return res.json({ ok: false, error: ack.error ?? "ack_failed", ack });
       res.json({ ok: true, ack });
     } catch (e) {
       res.status(500).json({ error: String(e?.message ?? e) });

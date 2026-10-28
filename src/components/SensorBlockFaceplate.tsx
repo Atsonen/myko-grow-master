@@ -85,7 +85,7 @@ export function SensorBlockCard({
     >
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-mono text-sm font-semibold">{item.device}</span>
-        {item.testMode && <Badge kind="test">TESTI</Badge>}
+        {(item.hasActiveTests || (Array.isArray(item.sensorTests) && item.sensorTests.length > 0)) && <Badge kind="test">TESTI</Badge>}
         {item.schema != null && <Badge kind="muted">Schema {item.schema}</Badge>}
         {item.stale ? <Badge kind="warning">Vanha</Badge> : <Badge kind="ok">Live</Badge>}
       </div>
@@ -178,13 +178,29 @@ export function SensorBlockFaceplate({
 
   const canCmd = Boolean(item?.commandsSupported);
 
+  const ackLabel = (err?: string) => {
+    const map: Record<string, string> = {
+      outputs: "laitteen lähdöt hylkäsivät (outputs) — tarkista Fan/Heating ControlWord",
+      sensor_tests: "sensorTests hylätty",
+      no_fields: "ei kenttiä",
+      invalid_json: "virheellinen JSON",
+      timeout: "timeout",
+    };
+    return err ? (map[err] ?? err) : "virhe";
+  };
   const send = async (body: Record<string, unknown>) => {
     setBusy(true);
     setAckMsg(null);
     try {
       const r = await postSensorBlockCommand(dev, body);
-      setAckMsg(r.ok ? `OK ${JSON.stringify(r.ack ?? {})}` : `Virhe: ${r.error}`);
-      toast.success("Komento kuitattu");
+      if (r.ok) {
+        setAckMsg(`OK ${JSON.stringify(r.ack ?? {})}`);
+        toast.success("Komento kuitattu");
+      } else {
+        const m = ackLabel(r.error);
+        setAckMsg(`Virhe: ${m} · ${JSON.stringify(r.ack ?? {})}`);
+        toast.error(m);
+      }
       const fresh = await getSensorBlock(dev);
       setItem(fresh);
     } catch (e) {
@@ -213,7 +229,7 @@ export function SensorBlockFaceplate({
                 <option key={d} value={d}>{d}</option>
               ))}
             </select>
-            {item?.testMode && <Badge kind="test">TESTI</Badge>}
+            {(item?.hasActiveTests || (Array.isArray(item?.sensorTests) && item.sensorTests.length > 0)) && <Badge kind="test">TESTI</Badge>}
             {item?.schema != null && <Badge kind="info">Schema {item.schema}</Badge>}
             {item?.stale ? <Badge kind="warning">Vanha data</Badge> : item ? <Badge kind="ok">Live</Badge> : null}
             <span className="ml-auto text-xs font-normal text-muted-foreground">nähty {ageLabel(item?.ageMs)}</span>
@@ -339,6 +355,11 @@ export function SensorBlockFaceplate({
                 </div>
               ) : (
                 <div className="space-y-3">
+                  {item?.controlWord?.some((b) => b.name === "Fan" && b.on) ? null : (
+                    <div className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs text-amber-100" data-testid="sb-fan-warn">
+                      ControlWord.Fan = off — laite voi vastata error:outputs
+                    </div>
+                  )}
                   <div className="flex items-center gap-3">
                     <input
                       type="range"

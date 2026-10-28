@@ -678,6 +678,7 @@ export type SensorBlockItem = {
   commandsSupported: boolean;
   controlWord: { name: string; bit: number; on: boolean }[];
   sensorTests: unknown[];
+  hasActiveTests?: boolean;
   testMode: boolean;
   decoded: Record<string, SensorBlockDecoded>;
   heat?: boolean;
