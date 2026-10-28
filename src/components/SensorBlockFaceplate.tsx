@@ -1,5 +1,5 @@
 // SensorBlock faceplate: telemetria + Schema>=4 komennot (testioverridet, puhallin).
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -142,6 +142,8 @@ export function SensorBlockFaceplate({
   const [testKey, setTestKey] = useState<string>("Tds");
   const [testVal, setTestVal] = useState("1500");
   const [fanPct, setFanPct] = useState(0);
+  const fanDirty = useRef(false);
+  const cwDirty = useRef(false);
   const [cwDraft, setCwDraft] = useState<number>(0);
   const [restartOpen, setRestartOpen] = useState(false);
   const [restartStatus, setRestartStatus] = useState<string | null>(null);
@@ -153,15 +155,17 @@ export function SensorBlockFaceplate({
 
   useEffect(() => {
     if (!open || !dev) return;
+    fanDirty.current = false;
+    cwDirty.current = false;
     let stop = false;
     const load = () =>
       getSensorBlock(dev)
         .then((r) => {
           if (!stop) {
             setItem(r);
-            if (typeof r.fanDutyPercent === "number") setFanPct(r.fanDutyPercent);
+            if (!fanDirty.current && typeof r.fanDutyPercent === "number") setFanPct(r.fanDutyPercent);
             const cw = r.values?.ControlWord;
-            if (typeof cw === "number" && Number.isFinite(cw)) setCwDraft(cw);
+            if (!cwDirty.current && typeof cw === "number" && Number.isFinite(cw)) setCwDraft(cw);
           }
         })
         .catch(() => undefined);
@@ -249,6 +253,7 @@ export function SensorBlockFaceplate({
   };
 
   const toggleCwBit = (bit: number) => {
+    cwDirty.current = true;
     setCwDraft((prev) => (prev ^ (1 << bit)) & 0xffff);
   };
 
@@ -477,12 +482,12 @@ export function SensorBlockFaceplate({
                       min={0}
                       max={100}
                       value={fanPct}
-                      onChange={(e) => setFanPct(Number(e.target.value))}
+                      onChange={(e) => { fanDirty.current = true; setFanPct(Number(e.target.value)); }}
                       className="flex-1"
                       data-testid="sb-fan-slider"
                     />
                     <span className="w-12 tabular-nums text-sm">{fanPct} %</span>
-                    <Button size="sm" disabled={busy} data-testid="sb-fan-send" onClick={() => send({ FanDutyPercent: fanPct })}>
+                    <Button size="sm" disabled={busy} data-testid="sb-fan-send" onClick={() => { send({ FanDutyPercent: fanPct }); fanDirty.current = false; }}>
                       Lähetä
                     </Button>
                   </div>
@@ -544,7 +549,7 @@ export function SensorBlockFaceplate({
                           min={0}
                           max={65535}
                           value={cwDraft}
-                          onChange={(e) => setCwDraft(Math.max(0, Math.min(65535, Number(e.target.value) || 0)))}
+                          onChange={(e) => { cwDirty.current = true; setCwDraft(Math.max(0, Math.min(65535, Number(e.target.value) || 0))); }}
                           className="mt-1 block h-9 w-28 rounded border border-input bg-background px-2 tabular-nums"
                           data-testid="sb-cw-raw"
                           disabled={busy}
@@ -554,7 +559,7 @@ export function SensorBlockFaceplate({
                         size="sm"
                         disabled={busy}
                         data-testid="sb-cw-send"
-                        onClick={() => send({ settings: { ControlWord: cwDraft } })}
+                        onClick={() => { send({ settings: { ControlWord: cwDraft } }); cwDirty.current = false; }}
                       >
                         Lähetä ControlWord
                       </Button>
