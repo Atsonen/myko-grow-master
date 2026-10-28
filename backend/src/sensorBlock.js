@@ -1,6 +1,7 @@
 // SensorBlock faceplate: MQTT Sensors/<dev> + CommandAck/<dev>, komentoihin Commands/<dev>.
 // Laitelista: myko_settings k='sensorblock' { devices: string[] }. Oletus SensorBlock_1..3.
-// Schema>=4 tukee komentoja; ack ilman correlation-id:ä (yksi pending / laite, ~5 s timeout).
+// Schema>=4: sensorTests/FanDuty. Schema>=5: settings/settingsClear/restart.
+// Ack ilman correlation-id:ä (yksi pending / laite, ~5 s timeout).
 import mqtt from "mqtt";
 import { query } from "./db.js";
 
@@ -10,6 +11,7 @@ const ACK_TIMEOUT_MS = 5_000;
 const MAX_PAYLOAD_BYTES = 768;
 const MAX_OVERRIDES = 16;
 const CMD_SCHEMA_MIN = 4;
+const SETTINGS_SCHEMA_MIN = 5;
 
 export const ERROR_CODES = {
   [-127]: "Missing",
@@ -85,6 +87,7 @@ const META_KEYS = new Set([
   "Schema",
   "Status",
   "SensorTests",
+  "SettingsOverridden",
   "at",
   "receivedAt",
 ]);
@@ -108,17 +111,73 @@ export function controlWordFlags(cw) {
   return CONTROL_WORD_BITS.map(({ bit, name }) => ({ name, bit, on: Boolean(n & (1 << bit)) }));
 }
 
-/** Validate + normalize POST body for Commands/<dev>. Returns { ok, payload } or { ok:false, error }. */
-export function validateCommandBody(body) {
+/** Finnish messages for device/backend command errors. */
+export const ACK_ERROR_FI = {
+  restart_confirm: "Uudelleenkäynnistys vaatii confirm=<laitenimi>",
+  restart_exclusive: "restart-komento pitää lähettää yksin (ei muita kenttiä)",
+  ota: "OTA-päivitys käynnissä / estetty",
+  settings: "settings-komento hylätty",
+  sensor_tests: "sensorTests hylätty",
+  outputs: "lähdöt hylkäsivät komennon (outputs) — TestMode=true tai ControlWord.Fan/Heating pois",
+  no_fields: "ei kenttiä",
+  invalid_json: "virheellinen JSON",
+  timeout: "timeout — laite ei vastannut",
+  ack_failed: "kuittaus epäonnistui",
+};
+
+export function ackErrorFi(err) {
+  if (!err) return "virhe";
+  return ACK_ERROR_FI[err] ?? String(err);
+}
+
+/**
+ * Validate + normalize POST body for Commands/<dev>.
+ * @param {unknown} body
+ * @param {{ device?: string, schema?: number|null }} [opts]
+ * Returns { ok, payload, json, needsSchema } or { ok:false, error }.
+ * needsSchema: 5 for restart/settings, else 4.
+ */
+export function validateCommandBody(body, opts = {}) {
   if (body == null || typeof body !== "object" || Array.isArray(body)) {
     return { ok: false, error: "invalid_json" };
   }
+  const device = opts.device ? String(opts.device) : "";
+  const keys = Object.keys(body);
+
+  // restart must be alone: { restart:true, confirm:"<dev>" }
+  if (body.restart === true) {
+    const allowed = new Set(["restart", "confirm"]);
+    if (keys.some((k) => !allowed.has(k))) {
+      return { ok: false, error: "restart_exclusive" };
+    }
+    const confirm = body.confirm != null ? String(body.confirm) : "";
+    if (!device || confirm !== device) {
+      return { ok: false, error: "restart_confirm" };
+    }
+    const out = { restart: true, confirm };
+    const json = JSON.stringify(out);
+    if (Buffer.byteLength(json, "utf8") > MAX_PAYLOAD_BYTES) {
+      return { ok: false, error: "invalid_json" };
+    }
+    return { ok: true, payload: out, json, needsSchema: SETTINGS_SCHEMA_MIN };
+  }
+  if (body.restart !== undefined) {
+    return { ok: false, error: "restart_confirm" };
+  }
+
   const out = {};
   let fields = 0;
+  let needsSchema = CMD_SCHEMA_MIN;
 
   if (body.sensorTestsClear === true) {
     out.sensorTestsClear = true;
     fields++;
+  }
+
+  if (body.settingsClear === true) {
+    out.settingsClear = true;
+    fields++;
+    needsSchema = Math.max(needsSchema, SETTINGS_SCHEMA_MIN);
   }
 
   if (body.FanDutyPercent !== undefined) {
@@ -126,6 +185,31 @@ export function validateCommandBody(body) {
     if (!Number.isFinite(n) || n < 0 || n > 100) return { ok: false, error: "outputs" };
     out.FanDutyPercent = Math.round(n);
     fields++;
+  }
+
+  if (body.settings !== undefined) {
+    const s = body.settings;
+    if (s == null || typeof s !== "object" || Array.isArray(s)) {
+      return { ok: false, error: "settings" };
+    }
+    const cleaned = {};
+    let nSettings = 0;
+    if (Object.prototype.hasOwnProperty.call(s, "ControlWord")) {
+      const n = Number(s.ControlWord);
+      if (!Number.isFinite(n) || n < 0 || n > 65535 || !Number.isInteger(n)) {
+        return { ok: false, error: "settings" };
+      }
+      cleaned.ControlWord = n;
+      nSettings++;
+    }
+    // Reject unknown settings keys
+    for (const k of Object.keys(s)) {
+      if (k !== "ControlWord") return { ok: false, error: "settings" };
+    }
+    if (!nSettings) return { ok: false, error: "settings" };
+    out.settings = cleaned;
+    fields++;
+    needsSchema = Math.max(needsSchema, SETTINGS_SCHEMA_MIN);
   }
 
   if (body.sensorTests !== undefined) {
@@ -160,13 +244,27 @@ export function validateCommandBody(body) {
     fields++;
   }
 
+  // Unknown top-level keys (besides handled) → invalid
+  const known = new Set([
+    "sensorTestsClear",
+    "settingsClear",
+    "FanDutyPercent",
+    "settings",
+    "sensorTests",
+    "restart",
+    "confirm",
+  ]);
+  for (const k of keys) {
+    if (!known.has(k)) return { ok: false, error: "invalid_json" };
+  }
+
   if (!fields) return { ok: false, error: "no_fields" };
 
   const json = JSON.stringify(out);
   if (Buffer.byteLength(json, "utf8") > MAX_PAYLOAD_BYTES) {
     return { ok: false, error: "invalid_json" };
   }
-  return { ok: true, payload: out, json };
+  return { ok: true, payload: out, json, needsSchema };
 }
 
 function normalizeDevices(list) {
@@ -243,8 +341,10 @@ function enrich(dev, entry) {
       values: null,
       schema: null,
       commandsSupported: false,
+      settingsSupported: false,
       controlWord: [],
       sensorTests: [],
+      settingsOverridden: [],
       hasActiveTests: false,
       testMode: false,
       decoded: {},
@@ -255,6 +355,9 @@ function enrich(dev, entry) {
   const ageMs = Date.now() - entry.at;
   const sensorTests = Array.isArray(v.SensorTests) ? v.SensorTests : [];
   const hasActiveTests = sensorTests.length > 0;
+  const settingsOverridden = Array.isArray(v.SettingsOverridden)
+    ? v.SettingsOverridden.map(String)
+    : [];
   const decoded = {};
   for (const [k, raw] of Object.entries(v)) {
     if (META_KEYS.has(k) && k !== "FanRequestedPercent" && k !== "FanDutyPercent" && k !== "FanPWM") continue;
@@ -276,8 +379,10 @@ function enrich(dev, entry) {
     values: v,
     schema,
     commandsSupported: schema != null && schema >= CMD_SCHEMA_MIN,
+    settingsSupported: schema != null && schema >= SETTINGS_SCHEMA_MIN,
     controlWord: controlWordFlags(v.ControlWord),
     sensorTests,
+    settingsOverridden,
     hasActiveTests,
     testMode: Boolean(v.TestMode),
     decoded,
@@ -394,8 +499,19 @@ export function registerSensorBlockRoutes(app) {
       if (!(typeof schema === "number" && schema >= CMD_SCHEMA_MIN)) {
         return res.status(403).json({ error: "ei tue komentoja", schema: schema ?? null });
       }
-      const v = validateCommandBody(req.body);
-      if (!v.ok) return res.status(400).json({ error: v.error });
+      const v = validateCommandBody(req.body, { device: dev, schema });
+      if (!v.ok) return res.status(400).json({ error: v.error, message: ackErrorFi(v.error) });
+      const need = v.needsSchema ?? CMD_SCHEMA_MIN;
+      if (!(typeof schema === "number" && schema >= need)) {
+        return res.status(403).json({
+          error: "ei tue komentoja",
+          schema: schema ?? null,
+          needsSchema: need,
+          message: need >= SETTINGS_SCHEMA_MIN
+            ? `asetukset/restart vaatii Schema >= ${SETTINGS_SCHEMA_MIN}`
+            : `komennot vaativat Schema >= ${CMD_SCHEMA_MIN}`,
+        });
+      }
       if (!MQ?.connected) return res.status(503).json({ error: "MQTT ei yhteydessä" });
       if (pending.has(dev)) return res.status(409).json({ error: "komento jo käynnissä" });
 
@@ -416,7 +532,10 @@ export function registerSensorBlockRoutes(app) {
 
       if (!ack) return res.status(504).json({ error: "timeout", timeoutMs: ACK_TIMEOUT_MS });
       // Device application nack (invalid_json|no_fields|sensor_tests|outputs): HTTP 200 + ok:false
-      if (ack.ok === false) return res.json({ ok: false, error: ack.error ?? "ack_failed", ack });
+      if (ack.ok === false) {
+        const err = ack.error ?? "ack_failed";
+        return res.json({ ok: false, error: err, message: ackErrorFi(err), ack });
+      }
       res.json({ ok: true, ack });
     } catch (e) {
       res.status(500).json({ error: String(e?.message ?? e) });

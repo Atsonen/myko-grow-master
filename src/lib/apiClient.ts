@@ -676,8 +676,10 @@ export type SensorBlockItem = {
   values: Record<string, unknown> | null;
   schema: number | null;
   commandsSupported: boolean;
+  settingsSupported?: boolean;
   controlWord: { name: string; bit: number; on: boolean }[];
   sensorTests: unknown[];
+  settingsOverridden?: string[];
   hasActiveTests?: boolean;
   testMode: boolean;
   decoded: Record<string, SensorBlockDecoded>;
@@ -708,7 +710,7 @@ export async function putSensorBlockConfig(devices: string[]) {
   });
 }
 export async function postSensorBlockCommand(dev: string, body: Record<string, unknown>) {
-  return requestJson<{ ok: boolean; ack?: unknown; error?: string }>(
+  return requestJson<{ ok: boolean; ack?: unknown; error?: string; message?: string }>(
     `/api/sensorblock/${encodeURIComponent(dev)}/command`,
     { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
   );

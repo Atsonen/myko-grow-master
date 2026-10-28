@@ -12,6 +12,29 @@ import {
 } from "@/lib/apiClient";
 import { toast } from "sonner";
 
+const CW_BITS = [
+  { bit: 0, name: "Aht" },
+  { bit: 1, name: "Dallas" },
+  { bit: 2, name: "Tds" },
+  { bit: 3, name: "Ph" },
+  { bit: 4, name: "Heating" },
+  { bit: 5, name: "Fan" },
+] as const;
+
+const ACK_FI: Record<string, string> = {
+  restart_confirm: "Uudelleenkäynnistys vaatii confirm=<laitenimi>",
+  restart_exclusive: "restart-komento pitää lähettää yksin (ei muita kenttiä)",
+  ota: "OTA-päivitys käynnissä / estetty",
+  settings: "settings-komento hylätty",
+  sensor_tests: "sensorTests hylätty",
+  outputs:
+    "lähdöt hylkäsivät (outputs) — TestMode=true estää fyysiset lähdöt, tai ControlWord.Fan/Heating pois",
+  no_fields: "ei kenttiä",
+  invalid_json: "virheellinen JSON",
+  timeout: "timeout — laite ei vastannut",
+  ack_failed: "kuittaus epäonnistui",
+};
+
 const TEST_KEYS = [
   "AhtTemp1", "AhtHum1",
   "DStemp1", "DStemp2", "DStemp3", "DStemp4", "DStemp5", "DStemp6", "DStemp7", "DStemp8",
@@ -112,13 +135,17 @@ export function SensorBlockFaceplate({
 }) {
   const [dev, setDev] = useState(initialDevice ?? devices[0] ?? "SensorBlock_1");
   const [item, setItem] = useState<SensorBlockItem | null>(null);
-  const [tab, setTab] = useState<"tele" | "testit" | "puhallin">("tele");
+  const [tab, setTab] = useState<"tele" | "testit" | "puhallin" | "asetukset">("tele");
   const [hideDisabled, setHideDisabled] = useState(true);
   const [busy, setBusy] = useState(false);
   const [ackMsg, setAckMsg] = useState<string | null>(null);
   const [testKey, setTestKey] = useState<string>("Tds");
   const [testVal, setTestVal] = useState("1500");
   const [fanPct, setFanPct] = useState(0);
+  const [cwDraft, setCwDraft] = useState<number>(0);
+  const [restartOpen, setRestartOpen] = useState(false);
+  const [restartStatus, setRestartStatus] = useState<string | null>(null);
+  const [, setUptimeSnap] = useState<number | null>(null);
 
   useEffect(() => {
     if (initialDevice) setDev(initialDevice);
@@ -133,6 +160,8 @@ export function SensorBlockFaceplate({
           if (!stop) {
             setItem(r);
             if (typeof r.fanDutyPercent === "number") setFanPct(r.fanDutyPercent);
+            const cw = r.values?.ControlWord;
+            if (typeof cw === "number" && Number.isFinite(cw)) setCwDraft(cw);
           }
         })
         .catch(() => undefined);
@@ -177,17 +206,16 @@ export function SensorBlockFaceplate({
   }, [item, hideDisabled]);
 
   const canCmd = Boolean(item?.commandsSupported);
+  const canSettings = Boolean(item?.settingsSupported) || (item?.schema != null && item.schema >= 5);
 
-  const ackLabel = (err?: string) => {
-    const map: Record<string, string> = {
-      outputs: "laitteen lähdöt hylkäsivät (outputs) — tarkista Fan/Heating ControlWord",
-      sensor_tests: "sensorTests hylätty",
-      no_fields: "ei kenttiä",
-      invalid_json: "virheellinen JSON",
-      timeout: "timeout",
-    };
-    return err ? (map[err] ?? err) : "virhe";
-  };
+  const settingsOverridden: string[] = Array.isArray(item?.settingsOverridden)
+    ? item!.settingsOverridden!
+    : Array.isArray(item?.values?.SettingsOverridden)
+      ? (item!.values!.SettingsOverridden as unknown[]).map(String)
+      : [];
+
+  const ackLabel = (err?: string) => (err ? (ACK_FI[err] ?? err) : "virhe");
+
   const send = async (body: Record<string, unknown>) => {
     setBusy(true);
     setAckMsg(null);
@@ -197,15 +225,87 @@ export function SensorBlockFaceplate({
         setAckMsg(`OK ${JSON.stringify(r.ack ?? {})}`);
         toast.success("Komento kuitattu");
       } else {
-        const m = ackLabel(r.error);
-        setAckMsg(`Virhe: ${m} · ${JSON.stringify(r.ack ?? {})}`);
+        const m = (r as { message?: string }).message || ackLabel(r.error);
+        let extra = "";
+        if (r.error === "outputs" && item?.testMode) {
+          extra = " · TestMode=true: fyysiset lähdöt pois → FanDuty saa usein outputs-virheen";
+        }
+        setAckMsg(`Virhe: ${m}${extra} · ${JSON.stringify(r.ack ?? {})}`);
         toast.error(m);
       }
       const fresh = await getSensorBlock(dev);
       setItem(fresh);
+      const cw = fresh.values?.ControlWord;
+      if (typeof cw === "number" && Number.isFinite(cw)) setCwDraft(cw);
+      return r;
     } catch (e) {
       const m = errMsg(e);
       setAckMsg(m);
+      toast.error(m);
+      return { ok: false, error: m };
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggleCwBit = (bit: number) => {
+    setCwDraft((prev) => (prev ^ (1 << bit)) & 0xffff);
+  };
+
+  const doRestart = async () => {
+    setRestartOpen(false);
+    setRestartStatus("Käynnistetään uudelleen…");
+    setBusy(true);
+    setAckMsg(null);
+    const before = typeof item?.uptime === "number" ? item.uptime : typeof item?.values?.Uptime === "number" ? (item.values.Uptime as number) : null;
+    setUptimeSnap(before);
+    try {
+      const r = await postSensorBlockCommand(dev, { restart: true, confirm: dev });
+      if (!r.ok) {
+        const m = (r as { message?: string }).message || ackLabel(r.error);
+        setAckMsg(`Virhe: ${m} · ${JSON.stringify(r.ack ?? {})}`);
+        setRestartStatus(null);
+        toast.error(m);
+        setBusy(false);
+        return;
+      }
+      const ack = r.ack as { restarting?: boolean } | undefined;
+      setAckMsg(`OK ${JSON.stringify(r.ack ?? {})}`);
+      toast.success(ack?.restarting ? "Uudelleenkäynnistys käynnissä" : "Komento kuitattu");
+      // Watch Uptime reset (poll up to ~90 s)
+      const deadline = Date.now() + 90_000;
+      let ok = false;
+      while (Date.now() < deadline) {
+        await new Promise((res) => setTimeout(res, 2000));
+        try {
+          const fresh = await getSensorBlock(dev);
+          setItem(fresh);
+          const up = typeof fresh.uptime === "number" ? fresh.uptime : typeof fresh.values?.Uptime === "number" ? (fresh.values.Uptime as number) : null;
+          if (up != null && (before == null || up < before || up <= 1)) {
+            // also accept uptime small after reboot
+            if (before == null || up < before || (before > 1 && up <= 1) || up === 0) {
+              ok = true;
+              setItem(fresh);
+              const cw = fresh.values?.ControlWord;
+              if (typeof cw === "number") setCwDraft(cw);
+              break;
+            }
+          }
+        } catch {
+          /* still rebooting */
+        }
+      }
+      if (ok) {
+        setRestartStatus("käynnistyi uudelleen");
+        toast.success("käynnistyi uudelleen");
+      } else {
+        setRestartStatus("timeout — ei nähty Uptime-resettiä");
+        toast.error("Uudelleenkäynnistyksen seuranta aikakatkaistiin");
+      }
+    } catch (e) {
+      const m = errMsg(e);
+      setAckMsg(m);
+      setRestartStatus(null);
       toast.error(m);
     } finally {
       setBusy(false);
@@ -213,6 +313,7 @@ export function SensorBlockFaceplate({
   };
 
   return (
+    <>
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto font-mono" data-testid="sb-faceplate">
         <DialogHeader>
@@ -231,6 +332,10 @@ export function SensorBlockFaceplate({
             </select>
             {(item?.hasActiveTests || (Array.isArray(item?.sensorTests) && item.sensorTests.length > 0)) && <Badge kind="test">TESTI</Badge>}
             {item?.schema != null && <Badge kind="info">Schema {item.schema}</Badge>}
+            {item?.testMode && <Badge kind="warning">TestMode</Badge>}
+            {settingsOverridden.length > 0 && (
+              <Badge kind="test">ASETUS OHITETTU (RAM)</Badge>
+            )}
             {item?.stale ? <Badge kind="warning">Vanha data</Badge> : item ? <Badge kind="ok">Live</Badge> : null}
             <span className="ml-auto text-xs font-normal text-muted-foreground">nähty {ageLabel(item?.ageMs)}</span>
           </DialogTitle>
@@ -241,6 +346,7 @@ export function SensorBlockFaceplate({
             ["tele", "Telemetria"],
             ["testit", "Testit"],
             ["puhallin", "Puhallin"],
+            ["asetukset", "Asetukset"],
           ] as const).map(([id, label]) => (
             <button
               key={id}
@@ -355,6 +461,11 @@ export function SensorBlockFaceplate({
                 </div>
               ) : (
                 <div className="space-y-3">
+                  {item?.testMode && (
+                    <div className="rounded border border-fuchsia-500/40 bg-fuchsia-500/10 px-2 py-1 text-xs text-fuchsia-100" data-testid="sb-testmode-warn">
+                      TestMode=true: fyysiset lähdöt pois päältä — FanDutyPercent saa usein virheen <b>outputs</b>.
+                    </div>
+                  )}
                   {item?.controlWord?.some((b) => b.name === "Fan" && b.on) ? null : (
                     <div className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs text-amber-100" data-testid="sb-fan-warn">
                       ControlWord.Fan = off — laite voi vastata error:outputs
@@ -383,9 +494,136 @@ export function SensorBlockFaceplate({
               {ackMsg && <div className="mt-2 rounded border border-border bg-black/30 px-2 py-1 text-xs" data-testid="sb-ack">{ackMsg}</div>}
             </Section>
           )}
+          {tab === "asetukset" && (
+            <Section
+              title="Asetukset (Schema ≥ 5)"
+              right={
+                settingsOverridden.length > 0 ? (
+                  <Badge kind="test">ASETUS OHITETTU (RAM): {settingsOverridden.join(", ")}</Badge>
+                ) : null
+              }
+            >
+              {!canSettings ? (
+                <div className="rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-100" data-testid="sb-no-settings">
+                  asetukset/restart vaativat Schema ≥ 5 {item?.schema != null ? `(nyt ${item.schema})` : ""}
+                </div>
+              ) : (
+                <div className="space-y-4" data-testid="sb-asetukset">
+                  <div className="rounded border border-border bg-black/20 px-3 py-2 text-xs text-muted-foreground">
+                    <div>TestMode: <b className={item?.testMode ? "text-fuchsia-300" : "text-emerald-300"}>{item?.testMode ? "true" : "false"}</b>
+                      {item?.testMode ? " — fyysiset lähdöt (fan/heat) estetty → FanDuty → outputs" : ""}
+                    </div>
+                    {settingsOverridden.length > 0 && (
+                      <div className="mt-1 text-fuchsia-200">SettingsOverridden: {settingsOverridden.join(", ")}</div>
+                    )}
+                  </div>
+
+                  <div>
+                    <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">ControlWord</div>
+                    <div className="flex flex-wrap gap-3">
+                      {CW_BITS.map(({ bit, name }) => {
+                        const on = Boolean(cwDraft & (1 << bit));
+                        return (
+                          <label key={name} className="flex items-center gap-1.5 text-xs" data-testid={`sb-cw-bit-${name}`}>
+                            <input
+                              type="checkbox"
+                              checked={on}
+                              onChange={() => toggleCwBit(bit)}
+                              disabled={busy}
+                            />
+                            <span className={on ? "text-emerald-300" : "text-muted-foreground"}>{name}<span className="text-[10px] opacity-60"> b{bit}</span></span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                    <div className="mt-3 flex flex-wrap items-end gap-2">
+                      <label className="text-xs">
+                        uint16
+                        <input
+                          type="number"
+                          min={0}
+                          max={65535}
+                          value={cwDraft}
+                          onChange={(e) => setCwDraft(Math.max(0, Math.min(65535, Number(e.target.value) || 0)))}
+                          className="mt-1 block h-9 w-28 rounded border border-input bg-background px-2 tabular-nums"
+                          data-testid="sb-cw-raw"
+                          disabled={busy}
+                        />
+                      </label>
+                      <Button
+                        size="sm"
+                        disabled={busy}
+                        data-testid="sb-cw-send"
+                        onClick={() => send({ settings: { ControlWord: cwDraft } })}
+                      >
+                        Lähetä ControlWord
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        disabled={busy}
+                        data-testid="sb-settings-clear"
+                        onClick={() => send({ settingsClear: true })}
+                      >
+                        Palauta
+                      </Button>
+                    </div>
+                    <p className="mt-2 text-[11px] text-muted-foreground">
+                      Nykyinen telemetria: ControlWord={String(item?.values?.ControlWord ?? "—")} · RAM-ohitukset tyhjennetään &quot;Palauta&quot;-painikkeella tai restartilla.
+                    </p>
+                  </div>
+
+                  <div className="border-t border-border pt-3">
+                    <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Uudelleenkäynnistys</div>
+                    <p className="mb-2 text-[11px] text-amber-100/90">
+                      Restart tyhjentää sensorTests-overridet, settings-ohitukset (RAM) ja puhallinasetuksen (FanDuty).
+                    </p>
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      disabled={busy}
+                      data-testid="sb-restart"
+                      onClick={() => setRestartOpen(true)}
+                    >
+                      Restart
+                    </Button>
+                    {restartStatus && (
+                      <div className="mt-2 text-xs" data-testid="sb-restart-status">{restartStatus}</div>
+                    )}
+                  </div>
+                </div>
+              )}
+              {ackMsg && <div className="mt-2 rounded border border-border bg-black/30 px-2 py-1 text-xs" data-testid="sb-ack">{ackMsg}</div>}
+            </Section>
+          )}
+
         </div>
       </DialogContent>
     </Dialog>
+
+    {restartOpen && (
+      <div
+        className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4"
+        data-testid="sb-restart-confirm"
+        role="alertdialog"
+        aria-modal="true"
+      >
+        <div className="max-w-md rounded-lg border border-border bg-card p-4 shadow-xl">
+          <h3 className="mb-2 text-sm font-semibold">Käynnistetäänkö {dev} uudelleen?</h3>
+          <p className="mb-3 text-xs text-muted-foreground">
+            Restart tyhjentää sensorTests-overridet, settings-ohitukset (RAM) ja puhallinasetuksen.
+            Lähetetään {"{"}&quot;restart&quot;:true,&quot;confirm&quot;:&quot;{dev}&quot;{"}"}.
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button size="sm" variant="secondary" onClick={() => setRestartOpen(false)} disabled={busy}>Peruuta</Button>
+            <Button size="sm" variant="destructive" data-testid="sb-restart-yes" onClick={() => void doRestart()} disabled={busy}>
+              Käynnistä uudelleen
+            </Button>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 }
 

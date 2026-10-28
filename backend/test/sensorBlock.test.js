@@ -6,6 +6,7 @@ import {
   controlWordFlags,
   ERROR_CODES,
   SENSOR_TEST_KEYS,
+  ackErrorFi,
 } from "../src/sensorBlock.js";
 
 test("error codes -127..-119 decode to status text; RSSI exempt", () => {
@@ -84,4 +85,48 @@ test("payload size limit 768 B", () => {
   // our cleaner strips pad; craft oversized cleaned payload via many fixed fields + long not possible
   // Directly check byteLength of a crafted accepted payload path: sensorTestsClear alone is fine
   assert.equal(validateCommandBody({ sensorTestsClear: true }).ok, true);
+});
+
+
+test("validateCommandBody: settings ControlWord + settingsClear", () => {
+  const a = validateCommandBody({ settings: { ControlWord: 33 } }, { device: "SensorBlock_3" });
+  assert.equal(a.ok, true);
+  assert.equal(a.payload.settings.ControlWord, 33);
+  assert.equal(a.needsSchema, 5);
+
+  const b = validateCommandBody({ settingsClear: true });
+  assert.equal(b.ok, true);
+  assert.equal(b.payload.settingsClear, true);
+  assert.equal(b.needsSchema, 5);
+
+  assert.equal(validateCommandBody({ settings: { ControlWord: -1 } }).error, "settings");
+  assert.equal(validateCommandBody({ settings: { Foo: 1 } }).error, "settings");
+});
+
+test("validateCommandBody: restart exclusive + confirm", () => {
+  const ok = validateCommandBody(
+    { restart: true, confirm: "SensorBlock_3" },
+    { device: "SensorBlock_3" },
+  );
+  assert.equal(ok.ok, true);
+  assert.deepEqual(ok.payload, { restart: true, confirm: "SensorBlock_3" });
+  assert.equal(ok.needsSchema, 5);
+
+  assert.equal(
+    validateCommandBody({ restart: true, confirm: "SensorBlock_1" }, { device: "SensorBlock_3" }).error,
+    "restart_confirm",
+  );
+  assert.equal(
+    validateCommandBody(
+      { restart: true, confirm: "SensorBlock_3", FanDutyPercent: 10 },
+      { device: "SensorBlock_3" },
+    ).error,
+    "restart_exclusive",
+  );
+});
+
+test("ackErrorFi maps known codes", () => {
+  assert.match(ackErrorFi("outputs"), /TestMode|lähdöt/i);
+  assert.match(ackErrorFi("restart_confirm"), /confirm/i);
+  assert.equal(ackErrorFi("totally_unknown_xyz"), "totally_unknown_xyz");
 });
