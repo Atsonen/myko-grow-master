@@ -8,18 +8,10 @@ import { autoBucket, BUCKET_OPTIONS } from "@/lib/seriesStyle";
 import { SeriesStyleEditor } from "@/components/trends/SeriesStyleEditor";
 import { dlLabel, useDataloggerVariables } from "@/lib/statusBits";
 import { usePointList } from "./MeasurementPointWidget";
-import { STATUSES, WIDGET_META, type DashboardWidget, type WidgetConfigMap } from "./types";
+import { STATUSES, TREND_RANGES, WIDGET_META, type DashboardWidget, type WidgetConfigMap } from "./types";
 
 const selectCls = "w-full h-9 rounded-md border border-input bg-background px-2 text-sm font-mono";
 const FUNCTION_CODES = ["COL", "FRU", "HAR", "INOC", "OBS", "PREP", "QC", "TRF"];
-const RANGES = [
-  { h: 6, label: "6 h" },
-  { h: 24, label: "24 h" },
-  { h: 72, label: "3 d" },
-  { h: 168, label: "7 d" },
-  { h: 720, label: "30 d" },
-  { h: 2160, label: "90 d" },
-];
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -85,7 +77,7 @@ export function WidgetSettingsDialog({
               <>
                 <Field label="Time range">
                   <select value={c.rangeHours ?? 24} onChange={(e) => setCfg({ rangeHours: Number(e.target.value) })} className={selectCls}>
-                    {RANGES.map((r) => <option key={r.h} value={r.h}>{r.label}</option>)}
+                    {TREND_RANGES.map((r) => <option key={r.h} value={r.h}>{r.label}</option>)}
                   </select>
                 </Field>
                 <Field label="Resolution">

@@ -72,6 +72,19 @@ export const WIDGET_META: Record<
   sensorBlock: { label: "SensorBlock", description: "SensorBlock-faceplate: telemetria, testit, puhallin (Schema ≥ 4).", w: 3, h: 4, minW: 2, minH: 3 },
 };
 
+export const TREND_RANGES = [
+  { h: 6, label: "6 h" },
+  { h: 24, label: "24 h" },
+  { h: 72, label: "3 d" },
+  { h: 168, label: "7 d" },
+  { h: 720, label: "30 d" },
+  { h: 2160, label: "90 d" },
+] as const;
+
+export function trendRangeLabel(hours: number): string {
+  return TREND_RANGES.find((r) => r.h === hours)?.label ?? `${hours} h`;
+}
+
 export const STATUSES: UnitStatus[] = ["ACTIVE", "CONTAMINATED", "DISCARDED", "HARVESTED", "ARCHIVED"];
 
 export function newWidgetId() {

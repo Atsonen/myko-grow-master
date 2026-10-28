@@ -52,7 +52,7 @@ export function PanelLayout({ layoutId, panels, rowHeight = 40, cols = 24 }: { l
     <div className="space-y-2">
       {toolbar}
       <Grid className="layout" layout={items} cols={cols} rowHeight={rowHeight} margin={[12, 12]} containerPadding={[0, 0]}
-        isDraggable={editing} isResizable={editing} draggableHandle=".panel-drag" onLayoutChange={onChange} compactType="vertical">
+        isDraggable={editing} isResizable={editing} draggableHandle=".panel-drag" onLayoutChange={onChange} compactType={null} preventCollision>
         {panels.map((p) => (
           <div key={p.id} className={`flex flex-col overflow-hidden ${editing ? "rounded-lg ring-1 ring-sky-500/60" : ""}`} data-panel={p.id}>
             {editing && <div className="panel-drag flex cursor-move items-center gap-1 bg-sky-500/15 px-2 py-0.5 text-[11px] font-mono"><GripVertical className="h-3 w-3" />{p.title}</div>}

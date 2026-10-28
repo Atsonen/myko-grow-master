@@ -25,7 +25,7 @@ import { MeasurementPointWidget } from "./MeasurementPointWidget";
 import { SensorBlockWidget } from "@/components/SensorBlockFaceplate";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { renderSeriesChildren } from "@/components/trends/SeriesStyleEditor";
-import { STATUSES, type DashboardWidget, type WidgetConfigMap } from "./types";
+import { STATUSES, trendRangeLabel, type DashboardWidget, type WidgetConfigMap } from "./types";
 
 const COLORS = ["#f97316", "#38bdf8", "#a3e635", "#e879f9", "#facc15", "#f87171"];
 const SENTINEL = -100; // DS18B20 "-127" disconnected values
@@ -37,6 +37,32 @@ function Muted({ children }: { children: React.ReactNode }) {
 function fmtNumber(v: number | null | undefined, digits = 1) {
   return v === null || v === undefined || Number.isNaN(v) ? "—" : v.toFixed(digits);
 }
+
+
+/** Compact Y-axis tick labels (max 0–2 decimals) so narrow widgets stay readable. */
+function formatYTick(v: number): string {
+  if (!Number.isFinite(v)) return "";
+  const a = Math.abs(v);
+  if (a >= 100) return String(Math.round(v));
+  if (a >= 10) return (Math.round(v * 10) / 10).toFixed(1);
+  // Keep up to 2 decimals; trim trailing zeros (but keep one decimal place for clarity when needed).
+  const s = (Math.round(v * 100) / 100).toFixed(2);
+  return s.replace(/(\.\d*?[1-9])0+$/, "$1").replace(/\.0$/, "");
+}
+
+/** Estimate YAxis width from the longest formatted value among series samples. */
+function yAxisWidthFor(data: Record<string, number>[], ids: string[]): number {
+  let maxLen = 3;
+  for (const row of data) {
+    for (const id of ids) {
+      const v = row[id];
+      if (typeof v === "number" && Number.isFinite(v)) maxLen = Math.max(maxLen, formatYTick(v).length);
+    }
+  }
+  // ~8px/char at AXIS_TICK fontSize 12 + padding so labels are not clipped in overflow:hidden cards.
+  return Math.min(88, Math.max(52, maxLen * 8 + 18));
+}
+
 
 
 /* ---------------- Sensor latest value ---------------- */
@@ -134,16 +160,17 @@ export function TrendWidget({ config }: { config: WidgetConfigMap["trend"] }) {
   if (ids.length === 0) return <Muted>Pick variables in widget settings.</Muted>;
   if (err) return <div className="text-xs text-destructive">{err}</div>;
   if (data.length === 0) return <Muted>No data for the last {rangeHours} h.</Muted>;
-  const ticks = timeTicks(data[0].ts, data[data.length - 1].ts, boxWidth - 100);
+  const axisWidth = yAxisWidthFor(data, ids);
+  const ticks = timeTicks(data[0].ts, data[data.length - 1].ts, Math.max(40, boxWidth - axisWidth - 24));
   return (
-    <div ref={boxRef} className="h-full w-full min-w-0">
+    <div ref={boxRef} className="h-full w-full min-w-0 overflow-visible">
     <ResponsiveContainer width="100%" height="100%">
-      <LineChart data={data} margin={{ top: 4, right: 0, left: -10, bottom: 0 }}>
+      <LineChart data={data} margin={{ top: 4, right: 8, left: 8, bottom: 0 }}>
         <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
         <XAxis dataKey="ts" type="number" scale="time" domain={["dataMin", "dataMax"]} ticks={ticks} tickFormatter={(ts: number) => timeTickLabel(ts, ticks)} tick={AXIS_TICK} interval="preserveStartEnd" />
         <Tooltip trigger={isMobile ? "click" : "hover"} labelFormatter={(ts) => formatDateTime(new Date(Number(ts)).toISOString())} contentStyle={{ fontSize: 11 }} />
         <Legend {...LEGEND_PROPS} />
-        {renderSeriesChildren(resolveSeries(ids, variables, config, defaults), config, (id) => id, { axisWidth: 36 })}
+        {renderSeriesChildren(resolveSeries(ids, variables, config, defaults), config, (id) => id, { axisWidth, tickFormatter: formatYTick })}
       </LineChart>
     </ResponsiveContainer>
     </div>
@@ -355,7 +382,7 @@ export function defaultTitle(widget: DashboardWidget, labelFor: (id: string) => 
       return (id && labelFor(id)) || "Sensor value";
     }
     case "trend":
-      return `Trend · ${(widget.config as WidgetConfigMap["trend"]).rangeHours ?? 24} h`;
+      return `Trend · ${trendRangeLabel((widget.config as WidgetConfigMap["trend"]).rangeHours ?? 24)}`;
     case "unitsByStatus": {
       const c = widget.config as WidgetConfigMap["unitsByStatus"];
       return c.mode === "list" ? `${c.status ?? "ACTIVE"} units` : "Units by status";

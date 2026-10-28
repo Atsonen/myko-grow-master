@@ -132,7 +132,7 @@ export function renderSeriesChildren(
   resolved: ResolvedSeries[],
   styling: TrendStyling | undefined,
   dataKey: (id: string, index: number) => string,
-  opts: { kind?: "line" | "area"; strokeWidth?: number; dots?: (index: number) => boolean; axisStroke?: string; axisWidth?: number } = {},
+  opts: { kind?: "line" | "area"; strokeWidth?: number; dots?: (index: number) => boolean; axisStroke?: string; axisWidth?: number; tickFormatter?: (v: number) => string } = {},
 ) {
   const hasRight = resolved.some((s) => s.axis === "right");
   const hasLeft = resolved.some((s) => s.axis === "left") || !hasRight;
@@ -143,12 +143,12 @@ export function renderSeriesChildren(
   if (hasLeft)
     out.push(
       <YAxis key="ax-l" yAxisId="left" orientation="left" tick={tick} domain={lDom} width={opts.axisWidth ?? 48}
-        stroke={opts.axisStroke} allowDataOverflow={lDom.some((d) => d !== "auto")} />,
+        tickFormatter={opts.tickFormatter} stroke={opts.axisStroke} allowDataOverflow={lDom.some((d) => d !== "auto")} />,
     );
   if (hasRight)
     out.push(
       <YAxis key="ax-r" yAxisId="right" orientation="right" tick={tick} domain={rDom} width={opts.axisWidth ?? 48}
-        stroke={opts.axisStroke} allowDataOverflow={rDom.some((d) => d !== "auto")} />,
+        tickFormatter={opts.tickFormatter} stroke={opts.axisStroke} allowDataOverflow={rDom.some((d) => d !== "auto")} />,
     );
   resolved.forEach((s, i) => {
     const common = {

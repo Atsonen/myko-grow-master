@@ -14,10 +14,12 @@ import { WidgetSettingsDialog } from "./WidgetSettings";
 import { useIsMobile } from "@/hooks/use-mobile";
 import {
   DEFAULT_LAYOUT,
+  TREND_RANGES,
   WIDGET_META,
   newWidgetId,
   type DashboardLayout,
   type DashboardWidget,
+  type WidgetConfigMap,
   type WidgetType,
 } from "./types";
 
@@ -145,6 +147,52 @@ function DashboardInner() {
     setSettingsFor(null);
   };
 
+  /** Quick range change from the Trend card header (no Edit layout). Persists like a Save. */
+  const updateTrendRange = async (widgetId: string, rangeHours: number) => {
+    const next: DashboardLayout = {
+      ...layout,
+      widgets: layout.widgets.map((w) =>
+        w.id === widgetId && w.type === "trend"
+          ? { ...w, config: { ...(w.config as WidgetConfigMap["trend"]), rangeHours } }
+          : w,
+      ),
+    };
+    setLayout(next);
+    if (editing) {
+      setDirty(true);
+      return;
+    }
+    try {
+      const res = await saveDashboardLayout(next);
+      const l = sanitize(res.layout as DashboardLayout);
+      setSaved(l);
+      setLayout(l);
+      setIsDefault(false);
+      setDirty(false);
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  };
+
+  const trendRangeSelect = (w: DashboardWidget) => {
+    if (w.type !== "trend") return null;
+    const hours = (w.config as WidgetConfigMap["trend"]).rangeHours ?? 24;
+    return (
+      <select
+        aria-label="Trend time range"
+        className="ml-auto h-6 max-w-[5.5rem] shrink-0 rounded border border-border bg-background px-1 text-[11px] font-mono text-foreground"
+        value={hours}
+        onChange={(e) => void updateTrendRange(w.id, Number(e.target.value))}
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {TREND_RANGES.map((r) => (
+          <option key={r.h} value={r.h}>{r.label}</option>
+        ))}
+      </select>
+    );
+  };
+
   const save = async () => {
     setSaving(true);
     try {
@@ -246,8 +294,9 @@ function DashboardInner() {
                   </Card>
                 ) : (
                 <Card key={w.id} className={`flex min-w-0 flex-col bg-card border-border ${w.type === "statusBits" ? "" : "min-[600px]:col-span-2"}`} style={h ? { height: h } : undefined} data-widget={w.type}>
-                  <div className="px-3 pt-2.5 pb-1">
-                    <h2 className="text-base font-medium leading-6 text-foreground truncate">{w.title || defaultTitle(w, labelFor)}</h2>
+                  <div className="flex items-center gap-2 px-3 pt-2.5 pb-1">
+                    <h2 className="min-w-0 flex-1 text-base font-medium leading-6 text-foreground truncate">{w.title || defaultTitle(w, labelFor)}</h2>
+                    {trendRangeSelect(w)}
                   </div>
                   <div className={`min-h-0 flex-1 px-3 pb-3 text-sm ${h ? "overflow-auto" : ""}`}>
                     <WidgetBody widget={w} />
@@ -269,7 +318,8 @@ function DashboardInner() {
         isResizable={editing}
         resizeHandles={["e", "s", "se"]}
         draggableHandle=".myko-drag-handle"
-        compactType="vertical"
+        compactType={null}
+        preventCollision
         onLayoutChange={onLayoutChange}
       >
         {layout.widgets.map((w) => (
@@ -278,9 +328,10 @@ function DashboardInner() {
               {(w.type === "measurementPoint" || w.type === "sensorBlock") && !editing ? null : (
               <div className={`flex items-center gap-1 px-3 pt-2 pb-1 ${editing ? "myko-drag-handle cursor-move" : ""}`}>
                 {editing && <GripVertical className="h-4 w-4 text-muted-foreground" />}
-                <h2 className="text-[15px] font-medium leading-6 text-foreground truncate">
+                <h2 className="min-w-0 flex-1 text-[15px] font-medium leading-6 text-foreground truncate">
                   {w.title || defaultTitle(w, labelFor)}
                 </h2>
+                {!editing && trendRangeSelect(w)}
                 {editing && (
                   <div className="ml-auto flex items-center gap-1" onMouseDown={(e) => e.stopPropagation()}>
                     {(
