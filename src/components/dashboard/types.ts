@@ -14,7 +14,8 @@ export type WidgetType =
   | "measurementPoint"
   | "alarmList"
   | "weather"
-  | "spaceWeather";
+  | "spaceWeather"
+  | "sensorBlock";
 
 export interface WidgetConfigMap {
   sensorLatest: { variableId?: string };
@@ -32,6 +33,8 @@ export interface WidgetConfigMap {
   weather: Record<string, never>;
   spaceWeather: Record<string, never>;
   alarmList: { hours?: number; limit?: number; pointId?: string; priority?: 1 | 2; activeOnly?: boolean };
+  /** device: MQTT device name; empty = first configured. */
+  sensorBlock: { device?: string };
 }
 
 export interface DashboardWidget<T extends WidgetType = WidgetType> {
@@ -66,6 +69,7 @@ export const WIDGET_META: Record<
   weather: { label: "Sää", description: "FMI: nykyinen sää (Nurmijärvi Röykkä) ja 48 h ennuste Rajamäelle.", w: 6, h: 6, minW: 3, minH: 4 },
   spaceWeather: { label: "Avaruussää", description: "Kp-indeksi + ennuste, aurinkotuuli, Nurmijärven magnetometri, revontulien todennäköisyys.", w: 6, h: 6, minW: 3, minH: 4 },
   note: { label: "Note", description: "Free text note.", w: 3, h: 3, minW: 2, minH: 2 },
+  sensorBlock: { label: "SensorBlock", description: "SensorBlock-faceplate: telemetria, testit, puhallin (Schema ≥ 4).", w: 3, h: 4, minW: 2, minH: 3 },
 };
 
 export const STATUSES: UnitStatus[] = ["ACTIVE", "CONTAMINATED", "DISCARDED", "HARVESTED", "ARCHIVED"];

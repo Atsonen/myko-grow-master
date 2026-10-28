@@ -275,7 +275,7 @@ function DashboardInner() {
         {layout.widgets.map((w) => (
           <div key={w.id}>
             <Card className={`h-full flex flex-col overflow-hidden bg-card ${editing ? "border-primary/50 border-dashed" : "border-border"}`}>
-              {w.type === "measurementPoint" && !editing ? null : (
+              {(w.type === "measurementPoint" || w.type === "sensorBlock") && !editing ? null : (
               <div className={`flex items-center gap-1 px-3 pt-2 pb-1 ${editing ? "myko-drag-handle cursor-move" : ""}`}>
                 {editing && <GripVertical className="h-4 w-4 text-muted-foreground" />}
                 <h2 className="text-[15px] font-medium leading-6 text-foreground truncate">

@@ -89,9 +89,16 @@ function EnvironmentPage() {
         </div>
       </div>
 
+      <div className="space-y-2" data-testid="sb-env-section">
+        <div className="flex flex-wrap items-center gap-2 px-1">
+          <h2 className="text-base font-mono uppercase tracking-wide text-sky-300">SensorBlock-faceplatet</h2>
+          <span className="text-[10px] font-mono text-muted-foreground">klikkaa korttia avataksesi faceplaten · myös Dashboard → Edit layout → Add widget → SensorBlock</span>
+        </div>
+        <SensorBlockPanel />
+      </div>
+
       <div className="grid grid-cols-1 xl:grid-cols-[1fr_420px] gap-4 items-start">
         <div className="space-y-4">
-          <SensorBlockPanel />
           <Card className="p-4 bg-card border-border">
             <div className="flex items-center gap-2 mb-3"><MapPin className="h-4 w-4 text-muted-foreground" /><h2 className="text-sm font-mono uppercase text-muted-foreground">Unit locations</h2></div>
             <div className="overflow-x-auto">

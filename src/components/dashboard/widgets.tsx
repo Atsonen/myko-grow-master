@@ -22,6 +22,7 @@ import { StatusBitsWidget } from "./StatusBitsWidget";
 import { AlarmListWidget } from "./AlarmListWidget";
 import { SpaceWeatherWidget, WeatherWidget } from "./WeatherWidgets";
 import { MeasurementPointWidget } from "./MeasurementPointWidget";
+import { SensorBlockWidget } from "@/components/SensorBlockFaceplate";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { renderSeriesChildren } from "@/components/trends/SeriesStyleEditor";
 import { STATUSES, type DashboardWidget, type WidgetConfigMap } from "./types";
@@ -330,6 +331,8 @@ export function WidgetBody({ widget }: { widget: DashboardWidget }) {
       return <UnitCurveWidget config={widget.config as WidgetConfigMap["unitCurve"]} />;
     case "measurementPoint":
       return <MeasurementPointWidget config={widget.config as WidgetConfigMap["measurementPoint"]} />;
+    case "sensorBlock":
+      return <SensorBlockWidget config={widget.config as WidgetConfigMap["sensorBlock"]} />;
     case "alarmList":
       return <AlarmListWidget config={widget.config as WidgetConfigMap["alarmList"]} />;
     case "statusBits":
@@ -375,5 +378,9 @@ export function defaultTitle(widget: DashboardWidget, labelFor: (id: string) => 
       return "Avaruussää";
     case "statusBits":
       return `Status · ${(widget.config as WidgetConfigMap["statusBits"]).variableKey ?? "word"}`;
+    case "sensorBlock": {
+      const d = (widget.config as WidgetConfigMap["sensorBlock"]).device;
+      return d ? `SensorBlock · ${d}` : "SensorBlock";
+    }
   }
 }

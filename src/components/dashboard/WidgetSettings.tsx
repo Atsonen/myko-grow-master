@@ -268,6 +268,20 @@ export function WidgetSettingsDialog({
             );
           })()}
 
+
+          {draft.type === "sensorBlock" && (() => {
+            const c = cfg as WidgetConfigMap["sensorBlock"];
+            return (
+              <Field label="Laite (tyhjä = ensimmäinen listasta)">
+                <Input
+                  value={c.device ?? ""}
+                  placeholder="SensorBlock_1"
+                  onChange={(e) => setCfg({ device: e.target.value.trim() || undefined })}
+                  className="font-mono"
+                />
+              </Field>
+            );
+          })()}
           {draft.type === "note" && (
             <Field label="Text">
               <Textarea rows={6} value={(cfg as WidgetConfigMap["note"]).text ?? ""} onChange={(e) => setCfg({ text: e.target.value })} />

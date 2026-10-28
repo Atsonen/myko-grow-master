@@ -389,6 +389,44 @@ export function SensorBlockFaceplate({
   );
 }
 
+
+
+/** Dashboard-widgetti: kompaktin kortin klikkaus avaa faceplaten (kuten Mittauspiste). */
+export function SensorBlockWidget({ config }: { config: { device?: string } }) {
+  const { items, devices, load } = useSensorBlocks(4000);
+  const [open, setOpen] = useState(false);
+  const preferred = config.device;
+  const item =
+    (preferred && items.find((i) => i.device === preferred)) ||
+    items[0] ||
+    null;
+  const sel = item?.device ?? preferred ?? devices[0];
+
+  if (!item) {
+    return (
+      <div className="flex h-full flex-col justify-center gap-1 p-3 text-xs text-muted-foreground" data-testid="sb-widget-empty">
+        <div className="font-mono text-sm text-foreground">SensorBlock</div>
+        <div>Ei telemetriaa vielä…</div>
+        <button type="button" className="text-sky-400 underline" onClick={() => void load()}>Päivitä</button>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="h-full p-1" data-testid="sb-widget">
+        <SensorBlockCard item={item} onOpen={() => setOpen(true)} />
+      </div>
+      <SensorBlockFaceplate
+        open={open}
+        onClose={() => setOpen(false)}
+        initialDevice={sel}
+        devices={devices.length ? devices : items.map((i) => i.device)}
+      />
+    </>
+  );
+}
+
 export function SensorBlockPanel() {
   const { items, devices, load } = useSensorBlocks(4000);
   const [open, setOpen] = useState(false);
