@@ -11,6 +11,7 @@ import { registerPumputRoutes } from "./pumput.js";
 import { startKasvamoAlarms, registerKasvamoAlarmRoutes, kasvamoAlarmRows, kasvamoAck, kasvamoDisabledRows } from "./kasvamoAlarms.js";
 import { startFertDose, registerFertDoseRoutes, fertAlarmRows, fertAck, fertDisabledRows } from "./fertDose.js";
 import { startSequence, registerSequenceRoutes } from "./sequence.js";
+import { startSensorBlock, registerSensorBlockRoutes } from "./sensorBlock.js";
 import { untilTxt } from "./alarmDisable.js";
 import { registerMykoDb } from "./mykoDb.js";
 import { registerAnomaly } from "./anomaly.js";
@@ -1126,6 +1127,7 @@ registerPumputRoutes(app, { mqttClient: mqttPublisher }); // Pumput_DB, read-onl
 startKasvamoAlarms({ port: PORT }); registerKasvamoAlarmRoutes(app); // Kasvamo raja-arvohälytykset -> Valvomo-botti
 startFertDose({ port: PORT, mqttUrl: process.env.MQTT_URL || "mqtt://192.168.1.51:1883" }); registerFertDoseRoutes(app); // lannoiteannostelu: live-ohjaus bridgen kautta (hyväksytty 27.10.2026)
 startSequence({ mqttUrl: process.env.MQTT_URL || "mqtt://192.168.1.51:1883" }); registerSequenceRoutes(app); // kiertovesisekvenssi: vain luku, PLC-kirjoitus pois
+startSensorBlock({ mqttUrl: process.env.MQTT_URL || "mqtt://192.168.1.51:1883" }); registerSensorBlockRoutes(app); // SensorBlock faceplate (Sensors/CommandAck/Commands)
 // kunnossapito: log a manual PID command (UI / Kuittaa PLC-viat) as an action, linked to the PID's open auto-incident
 async function kpLogPidCommand({ key, cmd, result, actor = "myko-ui", label }) {
   const incident_id = await kpOpenIncidentFor([`${key}_PID`, PID_POINTS[key]]);

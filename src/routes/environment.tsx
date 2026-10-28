@@ -16,6 +16,7 @@ import { Label } from "@/components/ui/label";
 import { relativeTime } from "@/lib/format";
 import type { EnvironmentReading, EnvironmentSource, Unit, UnitLocationRecord } from "@/types";
 import { Database, MapPin, RefreshCw, Thermometer, Wifi } from "lucide-react";
+import { SensorBlockPanel } from "@/components/SensorBlockFaceplate";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/environment")({
@@ -90,6 +91,7 @@ function EnvironmentPage() {
 
       <div className="grid grid-cols-1 xl:grid-cols-[1fr_420px] gap-4 items-start">
         <div className="space-y-4">
+          <SensorBlockPanel />
           <Card className="p-4 bg-card border-border">
             <div className="flex items-center gap-2 mb-3"><MapPin className="h-4 w-4 text-muted-foreground" /><h2 className="text-sm font-mono uppercase text-muted-foreground">Unit locations</h2></div>
             <div className="overflow-x-auto">

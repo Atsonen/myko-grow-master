@@ -665,3 +665,50 @@ export async function setFertPumpEnable(enable: boolean) {
 export async function putFertDoseSettings(body: Record<string, unknown>) {
   return requestJson<{ config: FertDoseStatus["config"] }>("/api/fertdose/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 }
+
+
+export type SensorBlockDecoded = { kind: string; text: string; value?: number | boolean | string; unit?: string; code?: number; disabled?: boolean };
+export type SensorBlockItem = {
+  device: string;
+  at: string | null;
+  ageMs: number | null;
+  stale: boolean;
+  values: Record<string, unknown> | null;
+  schema: number | null;
+  commandsSupported: boolean;
+  controlWord: { name: string; bit: number; on: boolean }[];
+  sensorTests: unknown[];
+  testMode: boolean;
+  decoded: Record<string, SensorBlockDecoded>;
+  heat?: boolean;
+  heatRequested?: boolean;
+  fanRequestedPercent?: number;
+  fanDutyPercent?: number;
+  fanPwm?: number;
+  status?: number;
+  rssi?: number;
+  uptime?: number;
+};
+export type SensorBlockListResponse = { devices: string[]; items: SensorBlockItem[] };
+export async function getSensorBlocks() {
+  return requestJson<SensorBlockListResponse>("/api/sensorblock");
+}
+export async function getSensorBlock(dev: string) {
+  return requestJson<SensorBlockItem>(`/api/sensorblock/${encodeURIComponent(dev)}`);
+}
+export async function getSensorBlockConfig() {
+  return requestJson<{ devices: string[] }>("/api/sensorblock/config");
+}
+export async function putSensorBlockConfig(devices: string[]) {
+  return requestJson<{ devices: string[] }>("/api/sensorblock/config", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ devices }),
+  });
+}
+export async function postSensorBlockCommand(dev: string, body: Record<string, unknown>) {
+  return requestJson<{ ok: boolean; ack?: unknown; error?: string }>(
+    `/api/sensorblock/${encodeURIComponent(dev)}/command`,
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
+  );
+}
