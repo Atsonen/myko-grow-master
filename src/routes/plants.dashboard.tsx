@@ -1,7 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { DisableDuration, untilLabel, useNow, reEnableAlarm } from "@/lib/alarmDisable";
-import { useEffect, useState } from "react";
-import { Gauge } from "lucide-react";
+import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from "react";
+import { Gauge, Pencil, RotateCcw, Save } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { FertDosePanel, FertEcModal, useFertDose } from "@/components/FertDosePanel";
@@ -13,6 +14,17 @@ import { toast } from "sonner";
 import { DashboardDataProvider } from "@/components/dashboard/DashboardData";
 import { MeasurementPointWidget } from "@/components/dashboard/MeasurementPointWidget";
 import { usePid, PID_STATE } from "@/components/dashboard/PidFaceplate";
+import {
+  DEFAULT_PROCESS_BOXES,
+  clientToSvg,
+  clampBox,
+  loadProcessBoxes,
+  mergeProcessBoxes,
+  resetProcessBoxes,
+  saveProcessBoxes,
+  type ProcessBox,
+  type ProcessBoxMap,
+} from "@/lib/processLayout";
 
 export const Route = createFileRoute("/plants/dashboard")({
   head: () => ({ meta: [{ title: "Plants dashboard - Myko Valvomo" }] }),
@@ -160,29 +172,31 @@ function fmt(v: number | null | undefined, d: number) {
 
 const ACCENT = "#f59e0b";
 type BoxState = "alarm" | "alarmAck" | "warning" | undefined;
-function ValueBox({ x, y, w = 92, label, value, unit, wired = true, title, onClick, selected = false, alarm = false, state, limits, clickHint }: {
-  x: number; y: number; w?: number; label: string; value?: string; unit?: string; wired?: boolean; title?: string;
+function ValueBox({ x, y, w = 92, h = 40, label, value, unit, wired = true, title, onClick, selected = false, alarm = false, state, limits, clickHint }: {
+  x: number; y: number; w?: number; h?: number; label: string; value?: string; unit?: string; wired?: boolean; title?: string;
   onClick?: () => void; selected?: boolean; alarm?: boolean; state?: BoxState; limits?: string; clickHint?: string;
 }) {
   const st: BoxState = state ?? (alarm ? "alarm" : undefined);
   // kuittaamaton hälytys = punasävy + punainen kehys; kuitattu = vain punainen kehys; varoitus = oranssi kehys
   const fill = st === "alarm" ? "#4a1d22" : C.panel;
   const stroke = st === "alarm" || st === "alarmAck" ? "#ef4444" : st === "warning" ? "#f59e0b" : selected ? ACCENT : wired ? C.stroke : C.na;
+  const labelY = Math.min(14, Math.max(10, h * 0.35));
+  const valueY = Math.max(labelY + 12, h - 8);
   return (
     <g transform={`translate(${x},${y})`} opacity={wired ? 1 : 0.55} onClick={onClick}
       style={onClick ? { cursor: "pointer" } : undefined} role={onClick ? "button" : undefined}
       data-testid={onClick ? `pd-click-${label}` : undefined}>
       <title>{(title ?? label) + (onClick ? (clickHint ?? " – avaa G_Air-säädin") : "")}</title>
-      <rect width={w} height={40} rx={6} fill={fill} stroke={stroke} strokeWidth={selected || st ? 2.5 : 1} data-state={st ?? ""} strokeDasharray={wired ? undefined : "4 3"} />
-      {limits && <text x={w - 6} y={14} textAnchor="end" fontSize={8} fill={st === "alarm" ? "#fecaca" : C.muted} fontFamily="monospace">{limits}</text>}
+      <rect width={w} height={h} rx={6} fill={fill} stroke={stroke} strokeWidth={selected || st ? 2.5 : 1} data-state={st ?? ""} strokeDasharray={wired ? undefined : "4 3"} />
+      {limits && <text x={w - 6} y={labelY} textAnchor="end" fontSize={8} fill={st === "alarm" ? "#fecaca" : C.muted} fontFamily="monospace">{limits}</text>}
       {selected && (
         <g transform={`translate(${w - 26},-7)`}>
           <rect width={26} height={14} rx={4} fill={ACCENT} />
           <text x={13} y={10.5} textAnchor="middle" fontSize={9} fontWeight={700} fill="#111" fontFamily="monospace">PID</text>
         </g>
       )}
-      <text x={8} y={14} fontSize={9} fill={C.muted} fontFamily="monospace">{label}</text>
-      <text x={8} y={32} fontSize={wired ? 15 : 10} fill={wired ? C.text : C.muted} fontFamily="monospace" fontWeight={600}>
+      <text x={8} y={labelY} fontSize={9} fill={C.muted} fontFamily="monospace">{label}</text>
+      <text x={8} y={valueY} fontSize={wired ? 15 : 10} fill={wired ? C.text : C.muted} fontFamily="monospace" fontWeight={600}>
         {wired ? `${value ?? "—"}${unit ? ` ${unit}` : ""}` : "ei kytketty"}
       </text>
     </g>
@@ -287,13 +301,13 @@ function Tank({ x, y, w, h, level, label, sub }: { x: number; y: number; w: numb
   );
 }
 
-function Btn({ x, y, w, label, badge, badgeColor, title }: { x: number; y: number; w: number; label: string; badge?: string; badgeColor?: string; title?: string }) {
+function Btn({ x, y, w, h = 26, label, badge, badgeColor, title }: { x: number; y: number; w: number; h?: number; label: string; badge?: string; badgeColor?: string; title?: string }) {
   const wired = !!title;
   return (
     <g transform={`translate(${x},${y})`} opacity={wired ? 1 : 0.5}>
       <title>{title ?? `${label}: ei kytketty (vain näyttö)`}</title>
-      <rect width={w} height={26} rx={5} fill={C.panel} stroke={wired ? C.stroke : C.na} strokeDasharray={wired ? undefined : "4 3"} />
-      <text x={w / 2} y={17} textAnchor="middle" fontSize={11} fill={wired ? C.text : C.muted} fontFamily="monospace">{label}</text>
+      <rect width={w} height={h} rx={5} fill={C.panel} stroke={wired ? C.stroke : C.na} strokeDasharray={wired ? undefined : "4 3"} />
+      <text x={w / 2} y={h * 0.65} textAnchor="middle" fontSize={11} fill={wired ? C.text : C.muted} fontFamily="monospace">{label}</text>
       {badge !== undefined && (
         <g transform={`translate(${w - 4},-4)`}>
           <circle r={9} fill={badgeColor ?? C.na} />
@@ -315,6 +329,105 @@ function Pipe({ d, active = false }: { d: string; active?: boolean }) {
       )}
     </g>
   );
+}
+
+
+/** Drag + SE-corner resize for Prosessikuva element boxes (edit mode only). */
+function EditableBox({
+  id, box, editing, svgRef, onChange, children,
+}: {
+  id: string;
+  box: ProcessBox;
+  editing: boolean;
+  svgRef: RefObject<SVGSVGElement | null>;
+  onChange: (id: string, next: ProcessBox) => void;
+  children: ReactNode;
+}) {
+  const startPtr = (mode: "move" | "resize") => (e: ReactPointerEvent) => {
+    if (!editing || !svgRef.current) return;
+    e.stopPropagation();
+    e.preventDefault();
+    const svg = svgRef.current;
+    const origin = clientToSvg(svg, e.clientX, e.clientY);
+    const start = { ...box };
+    const move = (ev: PointerEvent) => {
+      const pt = clientToSvg(svg, ev.clientX, ev.clientY);
+      const dx = pt.x - origin.x;
+      const dy = pt.y - origin.y;
+      if (mode === "move") onChange(id, clampBox({ ...start, x: start.x + dx, y: start.y + dy }));
+      else onChange(id, clampBox({ ...start, w: start.w + dx, h: start.h + dy }));
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
+  };
+
+  if (!editing) return <>{children}</>;
+
+  return (
+    <g data-edit-id={id} data-testid={`pd-edit-${id}`} style={{ touchAction: "none" }}>
+      <g onPointerDown={startPtr("move")} style={{ cursor: "move" }}>
+        {children}
+      </g>
+      <rect
+        x={box.x} y={box.y} width={box.w} height={box.h}
+        fill="transparent" stroke="#38bdf8" strokeWidth={1.5} strokeDasharray="3 2" opacity={0.85}
+        pointerEvents="none"
+      />
+      <rect
+        x={box.x + box.w - 12} y={box.y + box.h - 12} width={12} height={12}
+        fill="#38bdf8" stroke="#0ea5e9" strokeWidth={1} rx={2}
+        style={{ cursor: "nwse-resize" }}
+        onPointerDown={startPtr("resize")}
+        data-testid={`pd-resize-${id}`}
+      >
+        <title>Muuta kokoa</title>
+      </rect>
+    </g>
+  );
+}
+
+function useProcessBoxEdit() {
+  const [boxes, setBoxes] = useState<ProcessBoxMap>(() => mergeProcessBoxes(null));
+  const [saved, setSaved] = useState<ProcessBoxMap>(() => mergeProcessBoxes(null));
+  const [editing, setEditing] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  const svgRef = useRef<SVGSVGElement | null>(null);
+
+  useEffect(() => {
+    loadProcessBoxes().then((b) => { setBoxes(b); setSaved(b); }).catch(() => undefined);
+  }, []);
+
+  const onChange = useCallback((id: string, next: ProcessBox) => {
+    setBoxes((prev) => ({ ...prev, [id]: next }));
+    setDirty(true);
+  }, []);
+
+  const box = (id: string): ProcessBox => boxes[id] ?? DEFAULT_PROCESS_BOXES[id];
+
+  const save = async () => {
+    try {
+      const b = await saveProcessBoxes(boxes);
+      setBoxes(b); setSaved(b); setDirty(false); setEditing(false);
+      toast.success("Elementtien asettelu tallennettu");
+    } catch (e) { toast.error((e as Error).message); }
+  };
+  const cancel = () => { setBoxes(saved); setDirty(false); setEditing(false); };
+  const reset = async () => {
+    if (!confirm("Palautetaanko prosessikuvan elementtien oletuskoot ja -paikat?")) return;
+    try {
+      const b = await resetProcessBoxes();
+      setBoxes(b); setSaved(b); setDirty(false); setEditing(false);
+      toast.success("Oletusasettelu palautettu");
+    } catch (e) { toast.error((e as Error).message); }
+  };
+
+  return { boxes, box, editing, setEditing, dirty, svgRef, onChange, save, cancel, reset };
 }
 
 function PlantsDashboardPage() {
@@ -341,6 +454,7 @@ function PlantsDashboardPage() {
   const pu = usePumput();
   const ka = useKasAlarms(); const fd = useFertDose(); const [alSig, setAlSig] = useState<string | null>(null); const [ecDlg, setEcDlg] = useState(false);
   const [fertBusy, setFertBusy] = useState(false);
+  const pe = useProcessBoxEdit();
   const toggleFert = async (en: boolean) => {
     setFertBusy(true);
     try {
@@ -378,8 +492,23 @@ function PlantsDashboardPage() {
       <FertEcModal open={ecDlg} d={fd.d} reload={fd.load} onClose={() => setEcDlg(false)} />
       <PanelLayout layoutId="plants" panels={[
         { id: "process", title: "Prosessikuva", x: 0, y: 0, w: 17, h: 11, minW: 8, minH: 6, node: (
-      <Card className="p-2 bg-card border-border overflow-x-auto">
-        <svg viewBox="0 0 960 580" className="w-full min-w-[720px]" style={{ background: C.bg, borderRadius: 8 }}>
+      <Card className="flex h-full flex-col gap-1 overflow-hidden bg-card border-border p-2">
+        <div className="flex flex-wrap items-center justify-end gap-2" data-testid="pd-elem-toolbar">
+          {!pe.editing ? (
+            <Button size="sm" variant="outline" onClick={() => pe.setEditing(true)} data-testid="pd-elem-edit">
+              <Pencil className="mr-1 h-3 w-3" /> Muokkaa elementtejä
+            </Button>
+          ) : (
+            <>
+              <span className="mr-auto text-[11px] font-mono text-sky-300">Vedä elementtiä · kokoa kulmasta</span>
+              <Button size="sm" variant="ghost" onClick={() => void pe.reset()} data-testid="pd-elem-default"><RotateCcw className="mr-1 h-3 w-3" /> Default</Button>
+              <Button size="sm" variant="ghost" onClick={pe.cancel}>Cancel</Button>
+              <Button size="sm" onClick={() => void pe.save()} disabled={!pe.dirty} data-testid="pd-elem-save"><Save className="mr-1 h-3 w-3" /> Save</Button>
+            </>
+          )}
+        </div>
+        <div className="min-h-0 flex-1 overflow-auto">
+        <svg ref={pe.svgRef} viewBox="0 0 960 580" className="w-full min-w-[720px]" style={{ background: C.bg, borderRadius: 8 }}>
           {/* Air duct + fan */}
           <Pipe d="M 560 70 H 700" active={(fan ?? 0) > 0} />
           <Pipe d="M 780 70 H 870 Q 900 70 900 40" active={(fan ?? 0) > 0} />
@@ -396,36 +525,60 @@ function PlantsDashboardPage() {
             </g>
             <circle r={4} fill={C.text} />
           </g>
-          <ValueBox x={694} y={108} label="Tuuletin PF-1" value={fmt(fan, 1)} unit="%" title={`${TAGS.fan} PF-1 %`} onClick={openFp} />
-          <ValueBox x={560} y={92} label="Poistoilma" value={fmt(v("ductTemp"), 1)} unit="°C" title={`${TAGS.ductTemp} G Poistoilma DS4`} onClick={openFp} selected={pvDl === TAGS.ductTemp} />
+          <EditableBox id="vb-fan" box={pe.box("vb-fan")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
+            <ValueBox {...pe.box("vb-fan")} label="Tuuletin PF-1" value={fmt(fan, 1)} unit="%" title={`${TAGS.fan} PF-1 %`} onClick={pe.editing ? undefined : openFp} />
+          </EditableBox>
+          <EditableBox id="vb-duct" box={pe.box("vb-duct")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
+            <ValueBox {...pe.box("vb-duct")} label="Poistoilma" value={fmt(v("ductTemp"), 1)} unit="°C" title={`${TAGS.ductTemp} G Poistoilma DS4`} onClick={pe.editing ? undefined : openFp} selected={pvDl === TAGS.ductTemp} />
+          </EditableBox>
 
           {/* G_Air PID summary (click -> faceplate) */}
-          <g transform="translate(560,160)" onClick={openFp} style={{ cursor: "pointer" }} data-testid="pd-gair">
-            <title>G_Air PID (PF-1) – avaa säädin</title>
-            <rect width={226} height={44} rx={6} fill={C.panel} stroke={ACCENT} strokeWidth={1.5} />
-            <rect x={6} y={6} width={30} height={14} rx={4} fill={ACCENT} />
-            <text x={21} y={16.5} textAnchor="middle" fontSize={9} fontWeight={700} fill="#111" fontFamily="monospace">PID</text>
-            <text x={42} y={17} fontSize={9} fill={C.muted} fontFamily="monospace">
-              G_Air · {pid.stale ? "ei dataa" : PID_STATE[pv?.State ?? -1] ?? `State ${pv?.State ?? "—"}`}{pv?.ErrBits ? ` · ErrBits 16#${pv.ErrBits.toString(16).toUpperCase().padStart(4, "0")}` : ""}
-            </text>
-            <text x={8} y={36} fontSize={13} fontWeight={600} fill={C.text} fontFamily="monospace">
-              PV {fmt(pv?.PV, 1)} · SP {fmt(pv?.SP, 1)} °C · {fmt(pv?.OutSum, 0)} %
-            </text>
-          </g>
+          <EditableBox id="pid-gair" box={pe.box("pid-gair")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
+            <g transform={`translate(${pe.box("pid-gair").x},${pe.box("pid-gair").y})`} onClick={pe.editing ? undefined : openFp} style={{ cursor: pe.editing ? "move" : "pointer" }} data-testid="pd-gair">
+              <title>G_Air PID (PF-1) – avaa säädin</title>
+              <rect width={pe.box("pid-gair").w} height={pe.box("pid-gair").h} rx={6} fill={C.panel} stroke={ACCENT} strokeWidth={1.5} />
+              <rect x={6} y={6} width={30} height={14} rx={4} fill={ACCENT} />
+              <text x={21} y={16.5} textAnchor="middle" fontSize={9} fontWeight={700} fill="#111" fontFamily="monospace">PID</text>
+              <text x={42} y={17} fontSize={9} fill={C.muted} fontFamily="monospace">
+                G_Air · {pid.stale ? "ei dataa" : PID_STATE[pv?.State ?? -1] ?? `State ${pv?.State ?? "—"}`}{pv?.ErrBits ? ` · ErrBits 16#${pv.ErrBits.toString(16).toUpperCase().padStart(4, "0")}` : ""}
+              </text>
+              <text x={8} y={Math.max(28, pe.box("pid-gair").h - 8)} fontSize={13} fontWeight={600} fill={C.text} fontFamily="monospace">
+                PV {fmt(pv?.PV, 1)} · SP {fmt(pv?.SP, 1)} °C · {fmt(pv?.OutSum, 0)} %
+              </text>
+            </g>
+          </EditableBox>
 
           {/* Air temps */}
-          <ValueBox x={400} y={60} label="Katto" value={fmt(v("roofTemp"), 1)} unit="°C" title={`${TAGS.roofTemp} G Katto DS3`} onClick={openFp} selected={pvDl === TAGS.roofTemp} />
-          <ValueBox x={400} y={110} label="Keskiosa" value={fmt(v("midTemp"), 1)} unit="°C" title={`${TAGS.midTemp} G Mid DS2`} onClick={openFp} selected={pvDl === TAGS.midTemp} />
-          <Btn x={500} y={117} w={28} label="S" />
+          <EditableBox id="vb-roof" box={pe.box("vb-roof")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
+            <ValueBox {...pe.box("vb-roof")} label="Katto" value={fmt(v("roofTemp"), 1)} unit="°C" title={`${TAGS.roofTemp} G Katto DS3`} onClick={pe.editing ? undefined : openFp} selected={pvDl === TAGS.roofTemp} />
+          </EditableBox>
+          <EditableBox id="vb-mid" box={pe.box("vb-mid")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
+            <ValueBox {...pe.box("vb-mid")} label="Keskiosa" value={fmt(v("midTemp"), 1)} unit="°C" title={`${TAGS.midTemp} G Mid DS2`} onClick={pe.editing ? undefined : openFp} selected={pvDl === TAGS.midTemp} />
+          </EditableBox>
+          <EditableBox id="btn-s-mid" box={pe.box("btn-s-mid")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
+            <Btn {...pe.box("btn-s-mid")} label="S" />
+          </EditableBox>
 
           {/* Top bar buttons (HMI) */}
-          <Btn x={20} y={16} w={90} label="Asetukset" />
-          <Btn x={118} y={16} w={50} label="EC" />
-          <Btn x={176} y={16} w={50} label="PH" />
-          <Btn x={20} y={50} w={28} label="S" />
-          <Btn x={840} y={110} w={90} label="Hälytykset" badge={pu.ok ? String(alarms.length) : "?"} badgeColor={pu.ok ? (alarms.length ? C.off : C.on) : undefined}
-            title={pu.ok ? `Pumput_DB-hälytykset: ${alarms.length ? alarms.map((a) => a[1]).join(", ") : "ei aktiivisia"} (A_HumHH.Active, Tayttovesi.Active, EC_Below.Q)` : undefined} />
-          <Btn x={840} y={146} w={90} label="Kuittaus" />
+          <EditableBox id="btn-asetukset" box={pe.box("btn-asetukset")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
+            <Btn {...pe.box("btn-asetukset")} label="Asetukset" />
+          </EditableBox>
+          <EditableBox id="btn-ec" box={pe.box("btn-ec")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
+            <Btn {...pe.box("btn-ec")} label="EC" />
+          </EditableBox>
+          <EditableBox id="btn-ph" box={pe.box("btn-ph")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
+            <Btn {...pe.box("btn-ph")} label="PH" />
+          </EditableBox>
+          <EditableBox id="btn-s-top" box={pe.box("btn-s-top")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
+            <Btn {...pe.box("btn-s-top")} label="S" />
+          </EditableBox>
+          <EditableBox id="btn-halytykset" box={pe.box("btn-halytykset")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
+            <Btn {...pe.box("btn-halytykset")} label="Hälytykset" badge={pu.ok ? String(alarms.length) : "?"} badgeColor={pu.ok ? (alarms.length ? C.off : C.on) : undefined}
+              title={pu.ok ? `Pumput_DB-hälytykset: ${alarms.length ? alarms.map((a) => a[1]).join(", ") : "ei aktiivisia"} (A_HumHH.Active, Tayttovesi.Active, EC_Below.Q)` : undefined} />
+          </EditableBox>
+          <EditableBox id="btn-kuittaus" box={pe.box("btn-kuittaus")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
+            <Btn {...pe.box("btn-kuittaus")} label="Kuittaus" />
+          </EditableBox>
           {/* yellow status bars */}
           <g opacity={0.5}>
             <title>Tilapalkki: ei kytketty</title>
@@ -443,10 +596,18 @@ function PlantsDashboardPage() {
 
           {/* Main tank */}
           <Tank x={300} y={320} w={130} h={200} level={v("level")} label="Ravinnesäiliö" />
-          <ValueBox x={442} y={330} w={100} label="Pinta" value={fmt(v("level"), 1)} unit="%" title={`${TAGS.level} Level · PLC SP ${pu.n("LVL_SP") ?? "—"} %`} {...kp("pinta")} />
-          <ValueBox x={442} y={376} w={100} label="Vesi" value={fmt(v("waterTemp"), 1)} unit="°C" title={`${TAGS.waterTemp} Water Temp`} {...kp("vesi")} />
-          <ValueBox x={442} y={422} w={100} label="EC" value={fmt(v("ec"), 0)} unit="ppm" title={`${TAGS.ec} ppm · PLC TDS_SP ${pu.n("TDS_SP") ?? "—"}`} {...kp("ec")} onClick={() => setEcDlg(true)} state={ecState} limits={fd.d?.config.ec_alarm ? (fd.d.config.ec_alarm.enabled ? `SP${fd.d.config.ec_alarm.lo_off}/+${fd.d.config.ec_alarm.hi_off}` : "pois") : undefined} />
-          <ValueBox x={442} y={468} w={100} label="pH" value={fmt(v("ph"), 2)} title={`${TAGS.ph} pH`} {...kp("ph")} />
+          <EditableBox id="vb-pinta" box={pe.box("vb-pinta")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
+            <ValueBox {...pe.box("vb-pinta")} label="Pinta" value={fmt(v("level"), 1)} unit="%" title={`${TAGS.level} Level · PLC SP ${pu.n("LVL_SP") ?? "—"} %`} {...kp("pinta")} onClick={pe.editing ? undefined : kp("pinta").onClick} />
+          </EditableBox>
+          <EditableBox id="vb-vesi" box={pe.box("vb-vesi")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
+            <ValueBox {...pe.box("vb-vesi")} label="Vesi" value={fmt(v("waterTemp"), 1)} unit="°C" title={`${TAGS.waterTemp} Water Temp`} {...kp("vesi")} onClick={pe.editing ? undefined : kp("vesi").onClick} />
+          </EditableBox>
+          <EditableBox id="vb-ec" box={pe.box("vb-ec")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
+            <ValueBox {...pe.box("vb-ec")} label="EC" value={fmt(v("ec"), 0)} unit="ppm" title={`${TAGS.ec} ppm · PLC TDS_SP ${pu.n("TDS_SP") ?? "—"}`} {...kp("ec")} onClick={pe.editing ? undefined : () => setEcDlg(true)} state={ecState} limits={fd.d?.config.ec_alarm ? (fd.d.config.ec_alarm.enabled ? `SP${fd.d.config.ec_alarm.lo_off}/+${fd.d.config.ec_alarm.hi_off}` : "pois") : undefined} />
+          </EditableBox>
+          <EditableBox id="vb-ph" box={pe.box("vb-ph")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
+            <ValueBox {...pe.box("vb-ph")} label="pH" value={fmt(v("ph"), 2)} title={`${TAGS.ph} pH`} {...kp("ph")} onClick={pe.editing ? undefined : kp("ph").onClick} />
+          </EditableBox>
           <g opacity={0.55}>
             <title>Lämmitin: ei kytketty</title>
             <rect x={300} y={530} width={130} height={14} rx={3} fill={C.na} />
@@ -454,10 +615,18 @@ function PlantsDashboardPage() {
           </g>
 
           {/* G1 temp + timer */}
-          <ValueBox x={560} y={280} w={100} label="G1 lämpötila" value={fmt(v("g1Temp"), 1)} unit="°C" title={`${TAGS.g1Temp} G1 temp TT`} />
-          <Btn x={666} y={287} w={28} label="S" />
-          <ValueBox x={560} y={226} w={100} label="Ajastin" wired={!!tmr} value={tmr} title={`Pumput_DB FillingOnTime.ET / PT ${Math.round((pu.n("FillingOnTime_PT") ?? 0) / 1000)} s · kiertoajastin Työ ${pu.n("OnTime") ?? "—"} s / Tauko ${pu.n("OffTime") ?? "—"} s (${pu.b("Tyo_IN") ? "työ" : "tauko"} ${Math.round(((pu.b("Tyo_IN") ? pu.n("Tyo_ET") : pu.n("Tauko_ET")) ?? 0) / 1000)} s)`} />
-          <ValueBox x={120} y={84} w={100} label="Kosteus" wired={pu.n("G_Hum") !== undefined} value={fmt(pu.n("G_Hum"), 1)} unit="%" title={`Pumput_DB G_Hum (HH-raja ${pu.n("HumHH_SP") ?? "—"} %)`} />
+          <EditableBox id="vb-g1" box={pe.box("vb-g1")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
+            <ValueBox {...pe.box("vb-g1")} label="G1 lämpötila" value={fmt(v("g1Temp"), 1)} unit="°C" title={`${TAGS.g1Temp} G1 temp TT`} />
+          </EditableBox>
+          <EditableBox id="btn-s-g1" box={pe.box("btn-s-g1")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
+            <Btn {...pe.box("btn-s-g1")} label="S" />
+          </EditableBox>
+          <EditableBox id="vb-ajastin" box={pe.box("vb-ajastin")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
+            <ValueBox {...pe.box("vb-ajastin")} label="Ajastin" wired={!!tmr} value={tmr} title={`Pumput_DB FillingOnTime.ET / PT ${Math.round((pu.n("FillingOnTime_PT") ?? 0) / 1000)} s · kiertoajastin Työ ${pu.n("OnTime") ?? "—"} s / Tauko ${pu.n("OffTime") ?? "—"} s (${pu.b("Tyo_IN") ? "työ" : "tauko"} ${Math.round(((pu.b("Tyo_IN") ? pu.n("Tyo_ET") : pu.n("Tauko_ET")) ?? 0) / 1000)} s)`} />
+          </EditableBox>
+          <EditableBox id="vb-kosteus" box={pe.box("vb-kosteus")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
+            <ValueBox {...pe.box("vb-kosteus")} label="Kosteus" wired={pu.n("G_Hum") !== undefined} value={fmt(pu.n("G_Hum"), 1)} unit="%" title={`Pumput_DB G_Hum (HH-raja ${pu.n("HumHH_SP") ?? "—"} %)`} />
+          </EditableBox>
 
           {/* Left: water tank + pumps */}
           <Tank x={20} y={420} w={90} h={100} label="L" sub="pinta ei kytketty" />
@@ -471,7 +640,9 @@ function PlantsDashboardPage() {
             busy={fertBusy}
             onToggle={(en) => void toggleFert(en)} />
           <Tank x={135} y={505} w={50} h={45} label="" sub="Ferts" />
-          <ValueBox x={200} y={505} w={92} label="Lämmitin T" wired={false} />
+          <EditableBox id="vb-lammitin-t" box={pe.box("vb-lammitin-t")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
+            <ValueBox {...pe.box("vb-lammitin-t")} label="Lämmitin T" wired={false} />
+          </EditableBox>
 
           {/* pH dosing */}
           <Pump x={590} y={430} label="pH+" color="#f43f5e" />
@@ -483,6 +654,7 @@ function PlantsDashboardPage() {
           <Pump x={800} y={350} label="Täyttö" state={pu.b("Filling")} />
           <Tank x={840} y={420} w={90} h={100} label="" sub="Täyttövesi (Fill)" />
         </svg>
+        </div>
       </Card>
         ) },
         { id: "alarms", title: "Hälytykset", x: 17, y: 0, w: 7, h: 22, minW: 5, minH: 6, node: (
