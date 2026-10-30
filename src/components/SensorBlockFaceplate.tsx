@@ -212,6 +212,13 @@ export function SensorBlockFaceplate({
   const canCmd = Boolean(item?.commandsSupported);
   const canSettings = Boolean(item?.settingsSupported) || (item?.schema != null && item.schema >= 5);
 
+  // SB3-only FanRpm telemetry (show next to fan controls only when present in MQTT payload)
+  const sb3FanRpm = useMemo(() => {
+    if (dev !== "SensorBlock_3") return null;
+    const raw = item?.fanRpm ?? item?.values?.FanRpm;
+    return typeof raw === "number" && Number.isFinite(raw) ? raw : null;
+  }, [dev, item]);
+
   const settingsOverridden: string[] = Array.isArray(item?.settingsOverridden)
     ? item!.settingsOverridden!
     : Array.isArray(item?.values?.SettingsOverridden)
@@ -490,10 +497,20 @@ export function SensorBlockFaceplate({
                     <Button size="sm" disabled={busy} data-testid="sb-fan-send" onClick={() => { send({ FanDutyPercent: fanPct }); fanDirty.current = false; }}>
                       Lähetä
                     </Button>
+                    {sb3FanRpm != null && (
+                      <span className="ml-2 tabular-nums text-sm" data-testid="sb-fan-rpm" title="FanRpm (telemetria)">
+                        {sb3FanRpm} rpm
+                      </span>
+                    )}
                   </div>
                   <div className="text-xs text-muted-foreground">
                     Nykyinen duty {item?.fanDutyPercent ?? "—"} % · PWM {item?.fanPwm ?? "—"} · req {item?.fanRequestedPercent ?? "—"} %
                   </div>
+                </div>
+              )}
+              {!canCmd && sb3FanRpm != null && (
+                <div className="mt-2 text-sm tabular-nums" data-testid="sb-fan-rpm" title="FanRpm (telemetria)">
+                  FanRpm: <b>{sb3FanRpm}</b> rpm
                 </div>
               )}
               {ackMsg && <div className="mt-2 rounded border border-border bg-black/30 px-2 py-1 text-xs" data-testid="sb-ack">{ackMsg}</div>}

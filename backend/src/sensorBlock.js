@@ -46,6 +46,7 @@ export const FIELD_UNITS = {
   FanRequestedPercent: "%",
   FanDutyPercent: "%",
   FanPWM: "",
+  FanRpm: "rpm",
 };
 
 export const SENSOR_TEST_KEYS = new Set([
@@ -84,6 +85,7 @@ const META_KEYS = new Set([
   "FanRequestedPercent",
   "FanDutyPercent",
   "FanPWM",
+  "FanRpm",
   "Schema",
   "Status",
   "SensorTests",
@@ -360,7 +362,7 @@ function enrich(dev, entry) {
     : [];
   const decoded = {};
   for (const [k, raw] of Object.entries(v)) {
-    if (META_KEYS.has(k) && k !== "FanRequestedPercent" && k !== "FanDutyPercent" && k !== "FanPWM") continue;
+    if (META_KEYS.has(k) && k !== "FanRequestedPercent" && k !== "FanDutyPercent" && k !== "FanPWM" && k !== "FanRpm") continue;
     decoded[k] = decodeSensorValue(k, raw);
   }
   // Always decode primary sensor-ish keys present
@@ -391,6 +393,7 @@ function enrich(dev, entry) {
     fanRequestedPercent: v.FanRequestedPercent,
     fanDutyPercent: v.FanDutyPercent,
     fanPwm: v.FanPWM,
+    fanRpm: v.FanRpm,
     status: v.Status,
     rssi: v.RSSI,
     uptime: v.Uptime,
