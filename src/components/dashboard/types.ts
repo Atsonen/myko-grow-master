@@ -134,7 +134,8 @@ export const PLANTS_DEFAULT_LAYOUT: DashboardLayout = {
 
 /** Map legacy PanelLayout rows (type:"panel") to dashboard widgets; preserve x/y/w/h. */
 export function migrateLegacyPanelWidget(raw: Record<string, unknown>): DashboardWidget | null {
-  const id = String(raw.id ?? "");
+  try {
+  const id = String(raw?.id ?? "");
   const x = Number(raw.x) || 0;
   const y = Number(raw.y) || 0;
   const w = Number(raw.w) || 4;
@@ -163,5 +164,8 @@ export function migrateLegacyPanelWidget(raw: Record<string, unknown>): Dashboar
       return { id, type: "note", title: "Selite", config: { text: "Harmaat katkoviivalla merkityt elementit: ei kytketty \u2013 signaalia ei ole tunnistettu Myko-datasta varmasti (pH\u00b1, l\u00e4mmittimet, vesis\u00e4ili\u00f6n pinta, painikkeet). Kytketyt arvot: Datalogger; OPC UA Pumput_DB \u2013 pumput L/R, t\u00e4ytt\u00f6, ajastin, h\u00e4lytykset, kosteus, pinta/EC-asetusarvot; FB_FertDose_DB \u2013 Lannoite (Pump/Enable, K\u00e4ytt\u00f6 On/Off). Vain Enable kirjoitetaan." }, x, y, w, h };
     default:
       return null;
+  }
+  } catch {
+    return null;
   }
 }

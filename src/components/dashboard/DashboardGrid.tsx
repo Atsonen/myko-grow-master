@@ -41,23 +41,72 @@ export type DashboardGridProps = {
   titleIcon?: "grid" | "gauge";
 };
 
+function asNum(v: unknown, d: number) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : d;
+}
+
+/** Never throw on corrupt/legacy saved layouts; drop garbage rows; map panel→widget. */
 function sanitize(layout: DashboardLayout | null | undefined, fallback: DashboardLayout): DashboardLayout {
-  if (!layout || !Array.isArray(layout.widgets)) return sanitize(fallback, fallback);
-  const k = layout.version === 2 ? 1 : 2;
-  const widgets: DashboardWidget[] = [];
-  for (const raw of layout.widgets) {
-    if (!raw) continue;
-    let w: DashboardWidget | null = null;
-    if (typeof raw === "object" && (raw as DashboardWidget).type in WIDGET_META) {
-      w = { ...(raw as DashboardWidget), config: (raw as DashboardWidget).config ?? {} };
-    } else {
-      w = migrateLegacyPanelWidget(raw as unknown as Record<string, unknown>);
+  try {
+    if (!layout || !Array.isArray(layout.widgets)) {
+      return { version: 2, widgets: [...(fallback.widgets ?? [])] };
     }
-    if (!w || !(w.type in WIDGET_META)) continue;
-    widgets.push({ ...w, x: w.x * k, w: w.w * k, config: w.config ?? {} });
+    const k = layout.version === 2 ? 1 : 2;
+    const widgets: DashboardWidget[] = [];
+    for (const raw of layout.widgets) {
+      try {
+        if (!raw || typeof raw !== "object") continue;
+        const row = raw as Record<string, unknown>;
+        let w: DashboardWidget | null = null;
+        const type = String(row.type ?? "");
+        if (type && type in WIDGET_META) {
+          w = {
+            id: String(row.id ?? `w-${widgets.length}`),
+            type: type as WidgetType,
+            title: typeof row.title === "string" ? row.title : undefined,
+            config: (row.config as DashboardWidget["config"]) ?? {},
+            x: asNum(row.x, 0),
+            y: asNum(row.y, 0),
+            w: asNum(row.w, 4),
+            h: asNum(row.h, 4),
+          };
+        } else {
+          w = migrateLegacyPanelWidget(row);
+        }
+        if (!w) {
+          // Preserve unknown entries as a note placeholder so we do not delete user layout slots.
+          const id = String(row.id ?? "");
+          if (!id) continue;
+          w = {
+            id,
+            type: "note",
+            title: `Unknown widget (${type || id})`,
+            config: { text: `Saved widget type "${type || "?"}" is not supported in this build. Position preserved.` },
+            x: asNum(row.x, 0),
+            y: asNum(row.y, 0),
+            w: asNum(row.w, 4),
+            h: asNum(row.h, 3),
+          };
+        }
+        if (!(w.type in WIDGET_META)) continue;
+        widgets.push({
+          ...w,
+          x: asNum(w.x, 0) * k,
+          y: asNum(w.y, 0),
+          w: Math.max(1, asNum(w.w, 4) * k),
+          h: Math.max(1, asNum(w.h, 3)),
+          config: w.config ?? {},
+        });
+      } catch {
+        /* skip bad row */
+      }
+    }
+    if (widgets.length === 0) return { version: 2, widgets: [...(fallback.widgets ?? [])] };
+    return { version: 2, widgets };
+  } catch {
+    return { version: 2, widgets: [...(fallback.widgets ?? [])] };
   }
-  if (widgets.length === 0) return sanitize(fallback, fallback);
-  return { version: 2, widgets };
 }
 
 export function CustomDashboard(props: DashboardGridProps = {}) {
@@ -126,15 +175,18 @@ function DashboardInner({ layoutId, defaultLayout = DEFAULT_LAYOUT, title = "Das
 
   const gridItems: Layout[] = useMemo(
     () =>
-      layout.widgets.map((w) => ({
-        i: w.id,
-        x: w.x,
-        y: w.y,
-        w: w.w,
-        h: w.h,
-        minW: MINW_24[w.type] ?? WIDGET_META[w.type].minW * 2,
-        minH: WIDGET_META[w.type].minH,
-      })),
+      layout.widgets.map((w) => {
+        const meta = WIDGET_META[w.type] ?? WIDGET_META.note;
+        return {
+          i: w.id,
+          x: w.x,
+          y: w.y,
+          w: w.w,
+          h: w.h,
+          minW: MINW_24[w.type] ?? meta.minW * 2,
+          minH: meta.minH,
+        };
+      }),
     [layout],
   );
 

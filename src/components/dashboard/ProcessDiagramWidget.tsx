@@ -11,7 +11,7 @@ import { FertDosePanel, FertEcModal, useFertDose } from "@/components/FertDosePa
 import { getDataloggerLatest, getKasvamoAlarms, putKasvamoAlarms, type KasvamoAlarms, type KasLimit, getPumput, getPvFeed, type DataloggerLatest, type PumputResponse, setFertPumpEnable } from "@/lib/apiClient";
 import { toast } from "sonner";
 import { MeasurementPointWidget } from "@/components/dashboard/MeasurementPointWidget";
-import { usePid } from "@/components/dashboard/PidFaceplate";
+import { usePid, PID_STATE } from "@/components/dashboard/PidFaceplate";
 import {
   DEFAULT_PROCESS_BOXES,
   clientToSvg,
@@ -522,7 +522,7 @@ export function ProcessDiagramWidget() {
               <rect x={6} y={6} width={30} height={14} rx={4} fill={ACCENT} />
               <text x={21} y={16.5} textAnchor="middle" fontSize={9} fontWeight={700} fill="#111" fontFamily="monospace">PID</text>
               <text x={42} y={17} fontSize={9} fill={C.muted} fontFamily="monospace">
-                G_Air · {pid.stale ? "ei dataa" : PID_STATE[pv?.State ?? -1] ?? `State ${pv?.State ?? "—"}`}{pv?.ErrBits ? ` · ErrBits 16#${pv.ErrBits.toString(16).toUpperCase().padStart(4, "0")}` : ""}
+                G_Air · {pid.stale ? "ei dataa" : (PID_STATE?.[pv?.State ?? -1] ?? `State ${pv?.State ?? "—"}`)}{pv?.ErrBits ? ` · ErrBits 16#${pv.ErrBits.toString(16).toUpperCase().padStart(4, "0")}` : ""}
               </text>
               <text x={8} y={Math.max(28, pe.box("pid-gair").h - 8)} fontSize={13} fontWeight={600} fill={C.text} fontFamily="monospace">
                 PV {fmt(pv?.PV, 1)} · SP {fmt(pv?.SP, 1)} °C · {fmt(pv?.OutSum, 0)} %

@@ -344,7 +344,12 @@ export function NoteWidget({ config }: { config: WidgetConfigMap["note"] }) {
   return <div className="whitespace-pre-wrap text-sm">{config.text || <Muted>Empty note — edit in settings.</Muted>}</div>;
 }
 
+function UnknownWidgetPlaceholder({ type, id }: { type: string; id: string }) {
+  return <Muted>Unknown widget type “{type}” (id {id}). Layout slot kept.</Muted>;
+}
+
 export function WidgetBody({ widget }: { widget: DashboardWidget }) {
+  try {
   switch (widget.type) {
     case "sensorLatest":
       return <SensorLatestWidget config={widget.config as WidgetConfigMap["sensorLatest"]} />;
@@ -381,7 +386,10 @@ export function WidgetBody({ widget }: { widget: DashboardWidget }) {
     case "note":
       return <NoteWidget config={widget.config as WidgetConfigMap["note"]} />;
     default:
-      return <Muted>Unknown widget type.</Muted>;
+      return <UnknownWidgetPlaceholder type={String((widget as { type?: string }).type ?? "?")} id={widget.id} />;
+  }
+  } catch (e) {
+    return <Muted>Widget failed to render: {(e as Error).message}</Muted>;
   }
 }
 
@@ -425,5 +433,7 @@ export function defaultTitle(widget: DashboardWidget, labelFor: (id: string) => 
       const d = (widget.config as WidgetConfigMap["sensorBlock"]).device;
       return d ? `SensorBlock · ${d}` : "SensorBlock";
     }
+    default:
+      return "Widget";
   }
 }
