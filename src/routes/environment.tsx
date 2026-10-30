@@ -15,9 +15,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { relativeTime } from "@/lib/format";
 import type { EnvironmentReading, EnvironmentSource, Unit, UnitLocationRecord } from "@/types";
-import { Database, MapPin, RefreshCw, Thermometer, Wifi } from "lucide-react";
+import { ArrowLeft, Database, LayoutGrid, MapPin, RefreshCw, Thermometer, Wifi } from "lucide-react";
 import { SensorBlockPanel } from "@/components/SensorBlockFaceplate";
 import { toast } from "sonner";
+
+/** Sentinel ids for synthetic location cards. */
+const LOC_ALL = "__ALL__";
+const LOC_NONE = "__NONE__";
 
 export const Route = createFileRoute("/environment")({
   head: () => ({ meta: [{ title: "Environment - Myko Valvomo" }] }),
@@ -32,6 +36,8 @@ function EnvironmentPage() {
   const [readings, setReadings] = useState<EnvironmentReading[]>([]);
   const [apiStatus, setApiStatus] = useState<"idle" | "loading" | "ok" | "error">("idle");
   const [apiError, setApiError] = useState("");
+  /** null = location card grid; LOC_ALL / LOC_NONE / location name = unit list */
+  const [selectedLoc, setSelectedLoc] = useState<string | null>(null);
 
   const loadApiData = async () => {
     setApiStatus("loading");
@@ -60,10 +66,6 @@ function EnvironmentPage() {
 
   const visibleUnits = units.filter((u) => showArchived || u.status !== "ARCHIVED");
   const visibleLocationRecords = locationRecords.filter((r) => showArchived || !r.archived);
-  const locationOptions = useMemo(
-    () => buildLocationOptions(visibleLocationRecords, sources, readings, units),
-    [visibleLocationRecords, sources, readings, units],
-  );
 
   const currentLocationByUnit = useMemo(() => {
     const map = new Map<string, UnitLocationRecord>();
@@ -73,6 +75,61 @@ function EnvironmentPage() {
     }
     return map;
   }, [visibleLocationRecords]);
+
+  const unitLocation = (unit: Unit) => {
+    const rec = currentLocationByUnit.get(unit.code);
+    const loc = (rec?.location ?? unit.currentLocation ?? "").trim();
+    return loc ? normalizeLocation(loc) : "";
+  };
+
+  /** Latest temperature per location from GET /api/environment/latest (environment_readings). */
+  const tempByLocation = useMemo(() => {
+    const map = new Map<string, EnvironmentReading>();
+    for (const r of readings) {
+      const loc = normalizeLocation(r.location);
+      if (!loc) continue;
+      const prev = map.get(loc);
+      if (!prev || r.timestamp > prev.timestamp) map.set(loc, r);
+    }
+    return map;
+  }, [readings]);
+
+  const namedLocations = useMemo(() => {
+    const set = new Set<string>();
+    for (const u of visibleUnits) {
+      const loc = unitLocation(u);
+      if (loc) set.add(loc);
+    }
+    for (const r of readings) {
+      const loc = normalizeLocation(r.location);
+      if (loc) set.add(loc);
+    }
+    return Array.from(set).sort();
+  }, [visibleUnits, currentLocationByUnit, readings]);
+
+  const countFor = (key: string) => {
+    if (key === LOC_ALL) return visibleUnits.length;
+    if (key === LOC_NONE) return visibleUnits.filter((u) => !unitLocation(u)).length;
+    return visibleUnits.filter((u) => unitLocation(u) === key).length;
+  };
+
+  const filteredUnits = useMemo(() => {
+    if (selectedLoc == null || selectedLoc === LOC_ALL) return visibleUnits;
+    if (selectedLoc === LOC_NONE) return visibleUnits.filter((u) => !unitLocation(u));
+    return visibleUnits.filter((u) => unitLocation(u) === selectedLoc);
+  }, [selectedLoc, visibleUnits, currentLocationByUnit]);
+
+  const cards: { id: string; title: string; subtitle?: string }[] = [
+    { id: LOC_ALL, title: "Kaikki", subtitle: "Kaikki yksiköt" },
+    ...namedLocations.map((loc) => ({ id: loc, title: loc })),
+    { id: LOC_NONE, title: "Ei sijaintia", subtitle: "Yksiköt ilman sijaintia" },
+  ];
+
+  // Keep detached panels referenced so they are not tree-shaken / deleted by mistake.
+  // Not rendered on this page (SensorBlock also available via Dashboard widget).
+  void SensorBlockPanel;
+  void MoveUnitForm;
+  void ManualReadingForm;
 
   return (
     <div className="p-4 space-y-4">
@@ -89,90 +146,149 @@ function EnvironmentPage() {
         </div>
       </div>
 
-      <div className="space-y-2" data-testid="sb-env-section">
-        <div className="flex flex-wrap items-center gap-2 px-1">
-          <h2 className="text-base font-mono uppercase tracking-wide text-sky-300">SensorBlock-faceplatet</h2>
-          <span className="text-[10px] font-mono text-muted-foreground">klikkaa korttia avataksesi faceplaten · myös Dashboard → Edit layout → Add widget → SensorBlock</span>
-        </div>
-        <SensorBlockPanel />
-      </div>
-
-      <div className="grid grid-cols-1 xl:grid-cols-[1fr_420px] gap-4 items-start">
-        <div className="space-y-4">
-          <Card className="p-4 bg-card border-border">
-            <div className="flex items-center gap-2 mb-3"><MapPin className="h-4 w-4 text-muted-foreground" /><h2 className="text-sm font-mono uppercase text-muted-foreground">Unit locations</h2></div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead className="bg-secondary/50 text-muted-foreground uppercase font-mono text-[10px]">
-                  <tr><th className="text-left p-2">Unit</th><th className="text-left p-2">Current location</th><th className="text-left p-2">Moved</th><th className="text-left p-2">Note</th></tr>
-                </thead>
-                <tbody>
-                  {visibleUnits.map((unit) => {
-                    const loc = currentLocationByUnit.get(unit.code);
-                    return (
-                      <tr key={unit.code} className="border-t border-border">
-                        <td className="p-2 font-mono">{unit.code}</td>
-                        <td className="p-2 font-mono">{loc?.location ?? unit.currentLocation ?? "-"}</td>
-                        <td className="p-2 text-muted-foreground">{loc ? relativeTime(loc.movedAt) : "-"}</td>
-                        <td className="p-2 text-muted-foreground">{loc?.note ?? ""}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </Card>
-
-          <Card className="p-4 bg-card border-border">
-            <div className="flex items-center gap-2 mb-3"><Database className="h-4 w-4 text-muted-foreground" /><h2 className="text-sm font-mono uppercase text-muted-foreground">Latest DB readings by location</h2></div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-              {readings.map((reading) => (
-                <div key={`${reading.location}-${reading.timestamp}-${reading.source}`} className="border border-border rounded p-3 bg-secondary/20">
-                  <div className="font-mono text-sm">{reading.location}</div>
-                  <div className="mt-1 text-2xl font-mono">{reading.temperatureC ?? "-"} C</div>
-                  <div className="text-xs text-muted-foreground">{reading.humidityRh !== undefined ? `${reading.humidityRh}%RH - ` : ""}{reading.source} - {relativeTime(reading.timestamp)}</div>
-                </div>
-              ))}
-              {readings.length === 0 && <div className="text-xs text-muted-foreground italic">No readings yet.</div>}
-            </div>
-          </Card>
-
-          <Card className="p-4 bg-card border-border">
-            <div className="flex items-center gap-2 mb-3"><Wifi className="h-4 w-4 text-muted-foreground" /><h2 className="text-sm font-mono uppercase text-muted-foreground">MQTT sources</h2></div>
-            <div className="space-y-2">
-              {sources.filter((source) => showArchived || !source.archived).map((source) => (
-                <div key={source.id} className="border border-border rounded p-2 text-xs bg-secondary/20">
-                  <div className="font-mono">{source.name} - {source.location}</div>
-                  <div className="text-muted-foreground font-mono">{source.mqttTopic ?? "no topic"}</div>
-                  {source.channelMap && (
-                    <div className="mt-1 flex flex-wrap gap-1">
-                      {source.channelMap.map((channel) => (
-                        <span key={`${channel.payloadKey}-${channel.alias}`} className="rounded border border-border px-2 py-0.5 font-mono text-[10px] text-muted-foreground">
-                          {channel.payloadKey} - {channel.alias} - {channel.location}
-                        </span>
-                      ))}
+      {selectedLoc == null ? (
+        <div className="space-y-3" data-testid="env-location-grid">
+          <div className="flex items-center gap-2 px-1">
+            <LayoutGrid className="h-4 w-4 text-muted-foreground" />
+            <h2 className="text-sm font-mono uppercase text-muted-foreground">Sijainnit</h2>
+          </div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {cards.map((card) => {
+              const reading = card.id !== LOC_ALL && card.id !== LOC_NONE ? tempByLocation.get(card.id) : undefined;
+              const n = countFor(card.id);
+              const hasTemp = reading?.temperatureC != null && Number.isFinite(reading.temperatureC);
+              return (
+                <button
+                  key={card.id}
+                  type="button"
+                  data-testid={`env-loc-card-${card.id}`}
+                  onClick={() => setSelectedLoc(card.id)}
+                  className="rounded-xl border border-border bg-card p-6 text-left shadow-sm transition hover:border-sky-500/60 hover:bg-secondary/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="font-mono text-lg font-semibold tracking-wide text-foreground truncate">{card.title}</div>
+                      {card.subtitle && <div className="mt-1 text-xs text-muted-foreground font-mono">{card.subtitle}</div>}
                     </div>
-                  )}
-                  {source.description && <div className="text-muted-foreground mt-1">{source.description}</div>}
-                </div>
-              ))}
+                    <MapPin className="h-5 w-5 shrink-0 text-sky-400/80" />
+                  </div>
+                  <div className="mt-6 flex items-end justify-between gap-3">
+                    <div>
+                      {hasTemp ? (
+                        <>
+                          <div className="font-mono text-3xl font-semibold tabular-nums text-foreground">
+                            {Number(reading!.temperatureC).toFixed(1)}
+                            <span className="ml-1 text-base font-normal text-muted-foreground">°C</span>
+                          </div>
+                          <div className="mt-1 text-[10px] font-mono text-muted-foreground truncate max-w-[14rem]" title={reading?.source}>
+                            {reading?.source} · {relativeTime(reading!.timestamp)}
+                          </div>
+                        </>
+                      ) : (
+                        <div className="font-mono text-sm text-muted-foreground">ei lämpötilaa</div>
+                      )}
+                    </div>
+                    <div className="text-right">
+                      <div className="font-mono text-2xl font-semibold tabular-nums">{n}</div>
+                      <div className="text-[10px] font-mono uppercase text-muted-foreground">yksikköä</div>
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : (
+        <Card className="p-4 bg-card border-border" data-testid="env-unit-list">
+          <div className="mb-3 flex flex-wrap items-center gap-3">
+            <Button size="sm" variant="outline" onClick={() => setSelectedLoc(null)} data-testid="env-back">
+              <ArrowLeft className="mr-1 h-3 w-3" /> Takaisin
+            </Button>
+            <div className="flex items-center gap-2">
+              <MapPin className="h-4 w-4 text-muted-foreground" />
+              <h2 className="text-sm font-mono uppercase text-muted-foreground">
+                {selectedLoc === LOC_ALL ? "Kaikki yksiköt" : selectedLoc === LOC_NONE ? "Ei sijaintia" : selectedLoc}
+              </h2>
             </div>
-          </Card>
-        </div>
+            <span className="text-xs font-mono text-muted-foreground">{filteredUnits.length} kpl</span>
+            {selectedLoc !== LOC_ALL && selectedLoc !== LOC_NONE && tempByLocation.get(selectedLoc)?.temperatureC != null && (
+              <span className="ml-auto font-mono text-sm tabular-nums">
+                {Number(tempByLocation.get(selectedLoc)!.temperatureC).toFixed(1)} °C
+              </span>
+            )}
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className="bg-secondary/50 text-muted-foreground uppercase font-mono text-[10px]">
+                <tr>
+                  <th className="text-left p-2">Unit</th>
+                  <th className="text-left p-2">Current location</th>
+                  <th className="text-left p-2">Moved</th>
+                  <th className="text-left p-2">Note</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredUnits.map((unit) => {
+                  const loc = currentLocationByUnit.get(unit.code);
+                  return (
+                    <tr key={unit.code} className="border-t border-border">
+                      <td className="p-2 font-mono">{unit.code}</td>
+                      <td className="p-2 font-mono">{loc?.location ?? unit.currentLocation ?? "-"}</td>
+                      <td className="p-2 text-muted-foreground">{loc ? relativeTime(loc.movedAt) : "-"}</td>
+                      <td className="p-2 text-muted-foreground">{loc?.note ?? ""}</td>
+                    </tr>
+                  );
+                })}
+                {filteredUnits.length === 0 && (
+                  <tr><td colSpan={4} className="p-4 text-muted-foreground italic">Ei yksiköitä.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
 
-        <div className="space-y-4">
-          <MoveUnitForm
-            units={visibleUnits.map((unit) => unit.code)}
-            locations={locationOptions}
-            onSaved={loadApiData}
-          />
-          <ManualReadingForm locations={locationOptions} onSaved={loadApiData} />
-          <Card className="p-4 bg-secondary/20 border-border text-xs text-muted-foreground leading-relaxed">
-            <div className="font-mono uppercase text-foreground mb-1">MQTT / DB status</div>
-            Sensor data is read from the Lubuntu backend API. The MQTT logger writes SensorBlock values into MariaDB, and this page polls latest readings once per minute.
-          </Card>
+      <Card className="p-4 bg-card border-border">
+        <div className="flex items-center gap-2 mb-3"><Database className="h-4 w-4 text-muted-foreground" /><h2 className="text-sm font-mono uppercase text-muted-foreground">Latest DB readings by location</h2></div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+          {readings.map((reading) => (
+            <div key={`${reading.location}-${reading.timestamp}-${reading.source}`} className="border border-border rounded p-3 bg-secondary/20">
+              <div className="font-mono text-sm">{reading.location}</div>
+              <div className="mt-1 text-2xl font-mono">{reading.temperatureC ?? "-"} C</div>
+              <div className="text-xs text-muted-foreground">{reading.humidityRh !== undefined ? `${reading.humidityRh}%RH - ` : ""}{reading.source} - {relativeTime(reading.timestamp)}</div>
+            </div>
+          ))}
+          {readings.length === 0 && <div className="text-xs text-muted-foreground italic">No readings yet.</div>}
         </div>
-      </div>
+      </Card>
+
+      <Card className="p-4 bg-card border-border">
+        <div className="flex items-center gap-2 mb-3"><Wifi className="h-4 w-4 text-muted-foreground" /><h2 className="text-sm font-mono uppercase text-muted-foreground">MQTT sources</h2></div>
+        <div className="space-y-2">
+          {sources.filter((source) => showArchived || !source.archived).map((source) => (
+            <div key={source.id} className="border border-border rounded p-2 text-xs bg-secondary/20">
+              <div className="font-mono">{source.name} - {source.location}</div>
+              <div className="text-muted-foreground font-mono">{source.mqttTopic ?? "no topic"}</div>
+              {source.channelMap && (
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {source.channelMap.map((channel) => (
+                    <span key={`${channel.payloadKey}-${channel.alias}`} className="rounded border border-border px-2 py-0.5 font-mono text-[10px] text-muted-foreground">
+                      {channel.payloadKey} - {channel.alias} - {channel.location}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {source.description && <div className="text-muted-foreground mt-1">{source.description}</div>}
+            </div>
+          ))}
+        </div>
+      </Card>
+
+      <Card className="p-4 bg-secondary/20 border-border text-xs text-muted-foreground leading-relaxed">
+        <div className="font-mono uppercase text-foreground mb-1">MQTT / DB status</div>
+        Sensor data is read from the Lubuntu backend API. The MQTT logger writes SensorBlock values into MariaDB, and this page polls latest readings once per minute.
+        Move unit / Manual reading / SensorBlock-faceplatet on irrotettu tästä näkymästä (koodi ja API säilyvät).
+      </Card>
     </div>
   );
 }
