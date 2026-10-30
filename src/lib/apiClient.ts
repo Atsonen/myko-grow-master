@@ -695,6 +695,8 @@ export type SensorBlockItem = {
   fanDutyPercent?: number;
   fanPwm?: number;
   fanRpm?: number;
+  fanMode?: string;
+  fanRpmSetpoint?: number;
   status?: number;
   rssi?: number;
   uptime?: number;

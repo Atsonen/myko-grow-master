@@ -10,6 +10,7 @@ import {
   type SensorBlockItem,
   type SensorBlockListResponse,
 } from "@/lib/apiClient";
+import { FAN_MQTT, FAN_MODE_SCHEMA_MIN, parseFanMode, parseFanRpmSetpoint, type FanControlMode } from "@/lib/sensorBlockFan";
 import { toast } from "sonner";
 
 const CW_BITS = [
@@ -142,7 +143,11 @@ export function SensorBlockFaceplate({
   const [testKey, setTestKey] = useState<string>("Tds");
   const [testVal, setTestVal] = useState("1500");
   const [fanPct, setFanPct] = useState(0);
+  const [fanUiMode, setFanUiMode] = useState<FanControlMode>(FAN_MQTT.modePercent);
+  const [fanRpmSp, setFanRpmSp] = useState(0);
   const fanDirty = useRef(false);
+  const fanRpmDirty = useRef(false);
+  const fanModeDirty = useRef(false);
   const cwDirty = useRef(false);
   const [cwDraft, setCwDraft] = useState<number>(0);
   const [restartOpen, setRestartOpen] = useState(false);
@@ -156,6 +161,8 @@ export function SensorBlockFaceplate({
   useEffect(() => {
     if (!open || !dev) return;
     fanDirty.current = false;
+    fanRpmDirty.current = false;
+    fanModeDirty.current = false;
     cwDirty.current = false;
     let stop = false;
     const load = () =>
@@ -164,6 +171,10 @@ export function SensorBlockFaceplate({
           if (!stop) {
             setItem(r);
             if (!fanDirty.current && typeof r.fanDutyPercent === "number") setFanPct(r.fanDutyPercent);
+            const teleMode = parseFanMode(r.fanMode ?? r.values?.[FAN_MQTT.mode]);
+            if (!fanModeDirty.current && teleMode) setFanUiMode(teleMode);
+            const sp = parseFanRpmSetpoint(r.fanRpmSetpoint ?? r.values?.[FAN_MQTT.rpmSetpoint]);
+            if (!fanRpmDirty.current && sp != null) setFanRpmSp(sp);
             const cw = r.values?.ControlWord;
             if (!cwDirty.current && typeof cw === "number" && Number.isFinite(cw)) setCwDraft(cw);
           }
@@ -195,6 +206,7 @@ export function SensorBlockFaceplate({
       "DStemp1", "DStemp2", "DStemp3", "DStemp4", "DStemp5", "DStemp6", "DStemp7", "DStemp8",
       "Tds", "Tds25", "PH", "PHr", "kPa", "RSSI", "Uptime",
       "Heat", "HeatRequested", "FanRequestedPercent", "FanDutyPercent", "FanPWM",
+      "FanMode", "FanRpm", "FanRpmSetpoint",
       "TestMode", "Status", "Schema", "ControlWord", "ConfigCached",
     ];
     const ordered = [...preferred.filter((k) => k in v), ...keys.filter((k) => !preferred.includes(k))];
@@ -212,12 +224,17 @@ export function SensorBlockFaceplate({
   const canCmd = Boolean(item?.commandsSupported);
   const canSettings = Boolean(item?.settingsSupported) || (item?.schema != null && item.schema >= 5);
 
-  // SB3-only FanRpm telemetry (show next to fan controls only when present in MQTT payload)
-  const sb3FanRpm = useMemo(() => {
-    if (dev !== "SensorBlock_3") return null;
-    const raw = item?.fanRpm ?? item?.values?.FanRpm;
-    return typeof raw === "number" && Number.isFinite(raw) ? raw : null;
-  }, [dev, item]);
+  const isSb3 = dev === "SensorBlock_3";
+
+  // SB3-only fan telemetry (FanRpm / FanMode / FanRpmSetpoint when present)
+  const sb3FanTele = useMemo(() => {
+    if (!isSb3 || !item) return { rpm: null as number | null, mode: null as FanControlMode | null, sp: null as number | null };
+    const rpmRaw = item.fanRpm ?? item.values?.[FAN_MQTT.rpmActual];
+    const rpm = typeof rpmRaw === "number" && Number.isFinite(rpmRaw) ? rpmRaw : null;
+    const mode = parseFanMode(item.fanMode ?? item.values?.[FAN_MQTT.mode]);
+    const sp = parseFanRpmSetpoint(item.fanRpmSetpoint ?? item.values?.[FAN_MQTT.rpmSetpoint]);
+    return { rpm, mode, sp };
+  }, [isSb3, item]);
 
   const settingsOverridden: string[] = Array.isArray(item?.settingsOverridden)
     ? item!.settingsOverridden!
@@ -483,34 +500,147 @@ export function SensorBlockFaceplate({
                       ControlWord.Fan = off — laite voi vastata error:outputs
                     </div>
                   )}
-                  <div className="flex items-center gap-3">
-                    <input
-                      type="range"
-                      min={0}
-                      max={100}
-                      value={fanPct}
-                      onChange={(e) => { fanDirty.current = true; setFanPct(Number(e.target.value)); }}
-                      className="flex-1"
-                      data-testid="sb-fan-slider"
-                    />
-                    <span className="w-12 tabular-nums text-sm">{fanPct} %</span>
-                    <Button size="sm" disabled={busy} data-testid="sb-fan-send" onClick={() => { send({ FanDutyPercent: fanPct }); fanDirty.current = false; }}>
-                      Lähetä
-                    </Button>
-                    {sb3FanRpm != null && (
-                      <span className="ml-2 tabular-nums text-sm" data-testid="sb-fan-rpm" title="FanRpm (telemetria)">
-                        {sb3FanRpm} rpm
-                      </span>
-                    )}
-                  </div>
-                  <div className="text-xs text-muted-foreground">
-                    Nykyinen duty {item?.fanDutyPercent ?? "—"} % · PWM {item?.fanPwm ?? "—"} · req {item?.fanRequestedPercent ?? "—"} %
-                  </div>
+                  {isSb3 && (
+                    <div className="space-y-2" data-testid="sb-fan-mode">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Ohjaustapa</span>
+                        <Button
+                          size="sm"
+                          variant={fanUiMode === FAN_MQTT.modePercent ? "default" : "secondary"}
+                          disabled={busy}
+                          data-testid="sb-fan-mode-percent"
+                          onClick={() => { fanModeDirty.current = true; setFanUiMode(FAN_MQTT.modePercent); }}
+                        >
+                          Prosentti
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant={fanUiMode === FAN_MQTT.modeRpm ? "default" : "secondary"}
+                          disabled={busy}
+                          data-testid="sb-fan-mode-rpm"
+                          onClick={() => { fanModeDirty.current = true; setFanUiMode(FAN_MQTT.modeRpm); }}
+                        >
+                          Kierrosnopeus
+                        </Button>
+                        {(item?.schema == null || item.schema < FAN_MODE_SCHEMA_MIN) && (
+                          <span className="text-[11px] text-amber-200">vaatii Schema ≥ {FAN_MODE_SCHEMA_MIN} (nyt {item?.schema ?? "—"})</span>
+                        )}
+                      </div>
+                      <div className="text-xs text-muted-foreground" data-testid="sb-fan-tele">
+                        {sb3FanTele.mode != null && (
+                          <>FanMode: <b className="text-foreground">{sb3FanTele.mode}</b></>
+                        )}
+                        {sb3FanTele.mode != null && (sb3FanTele.sp != null || sb3FanTele.rpm != null) && " · "}
+                        {(sb3FanTele.sp != null || sb3FanTele.rpm != null) && (
+                          <>
+                            SP <b className="text-foreground" data-testid="sb-fan-rpm-sp">{sb3FanTele.sp ?? "—"}</b>
+                            {" / "}
+                            actual <b className="text-foreground" data-testid="sb-fan-rpm">{sb3FanTele.rpm ?? "—"}</b> rpm
+                          </>
+                        )}
+                        {sb3FanTele.mode == null && sb3FanTele.sp == null && sb3FanTele.rpm == null && (
+                          <span>FanMode / FanRpmSetpoint / FanRpm — odottaa Schema {FAN_MODE_SCHEMA_MIN} -firmwarea</span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  {(!isSb3 || fanUiMode === FAN_MQTT.modePercent) && (
+                    <>
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="range"
+                          min={0}
+                          max={100}
+                          value={fanPct}
+                          onChange={(e) => { fanDirty.current = true; setFanPct(Number(e.target.value)); }}
+                          className="flex-1"
+                          data-testid="sb-fan-slider"
+                        />
+                        <span className="w-12 tabular-nums text-sm">{fanPct} %</span>
+                        <Button
+                          size="sm"
+                          disabled={busy}
+                          data-testid="sb-fan-send"
+                          onClick={() => {
+                            const body: Record<string, unknown> = isSb3
+                              ? { [FAN_MQTT.mode]: FAN_MQTT.modePercent, [FAN_MQTT.dutyPercent]: fanPct }
+                              : { [FAN_MQTT.dutyPercent]: fanPct };
+                            void send(body).then((r) => {
+                              if (r && "ok" in r && r.ok) {
+                                fanDirty.current = false;
+                                if (isSb3) fanModeDirty.current = false;
+                              }
+                            });
+                          }}
+                        >
+                          Lähetä
+                        </Button>
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        Nykyinen duty {item?.fanDutyPercent ?? "—"} % · PWM {item?.fanPwm ?? "—"} · req {item?.fanRequestedPercent ?? "—"} %
+                      </div>
+                    </>
+                  )}
+                  {isSb3 && fanUiMode === FAN_MQTT.modeRpm && (
+                    <>
+                      <div className="flex flex-wrap items-center gap-3">
+                        <input
+                          type="range"
+                          min={FAN_MQTT.rpmMin}
+                          max={FAN_MQTT.rpmMax}
+                          step={50}
+                          value={fanRpmSp}
+                          onChange={(e) => { fanRpmDirty.current = true; setFanRpmSp(Number(e.target.value)); }}
+                          className="min-w-[8rem] flex-1"
+                          data-testid="sb-fan-rpm-slider"
+                        />
+                        <input
+                          type="number"
+                          min={FAN_MQTT.rpmMin}
+                          max={FAN_MQTT.rpmMax}
+                          step={1}
+                          value={fanRpmSp}
+                          onChange={(e) => {
+                            fanRpmDirty.current = true;
+                            const n = Number(e.target.value);
+                            if (!Number.isFinite(n)) return;
+                            setFanRpmSp(Math.max(FAN_MQTT.rpmMin, Math.min(FAN_MQTT.rpmMax, Math.round(n))));
+                          }}
+                          className="h-9 w-24 rounded border border-input bg-background px-2 tabular-nums text-sm"
+                          data-testid="sb-fan-rpm-input"
+                          disabled={busy}
+                        />
+                        <span className="text-sm text-muted-foreground">rpm</span>
+                        <Button
+                          size="sm"
+                          disabled={busy}
+                          data-testid="sb-fan-rpm-send"
+                          onClick={() => {
+                            const body = {
+                              [FAN_MQTT.mode]: FAN_MQTT.modeRpm,
+                              [FAN_MQTT.rpmSetpoint]: fanRpmSp,
+                            };
+                            void send(body).then((r) => {
+                              if (r && "ok" in r && r.ok) {
+                                fanRpmDirty.current = false;
+                                fanModeDirty.current = false;
+                              }
+                            });
+                          }}
+                        >
+                          Lähetä
+                        </Button>
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        0 = off · käytännön alue ~1500–{FAN_MQTT.rpmMax} rpm · PWM {item?.fanPwm ?? "—"}
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
-              {!canCmd && sb3FanRpm != null && (
+              {!canCmd && isSb3 && sb3FanTele.rpm != null && (
                 <div className="mt-2 text-sm tabular-nums" data-testid="sb-fan-rpm" title="FanRpm (telemetria)">
-                  FanRpm: <b>{sb3FanRpm}</b> rpm
+                  FanRpm: <b>{sb3FanTele.rpm}</b> rpm
                 </div>
               )}
               {ackMsg && <div className="mt-2 rounded border border-border bg-black/30 px-2 py-1 text-xs" data-testid="sb-ack">{ackMsg}</div>}

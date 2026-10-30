@@ -1,6 +1,7 @@
 // SensorBlock faceplate: MQTT Sensors/<dev> + CommandAck/<dev>, komentoihin Commands/<dev>.
 // Laitelista: myko_settings k='sensorblock' { devices: string[] }. Oletus SensorBlock_1..3.
 // Schema>=4: sensorTests/FanDuty. Schema>=5: settings/settingsClear/restart.
+// Schema>=7: FanMode percent|rpm + FanDutyPercent / FanRpmSetpoint (SB3).
 // Ack ilman correlation-id:ä (yksi pending / laite, ~5 s timeout).
 import mqtt from "mqtt";
 import { query } from "./db.js";
@@ -12,6 +13,25 @@ const MAX_PAYLOAD_BYTES = 768;
 const MAX_OVERRIDES = 16;
 const CMD_SCHEMA_MIN = 4;
 const SETTINGS_SCHEMA_MIN = 5;
+/** Schema that accepts FanMode / FanRpmSetpoint commands (adjust if firmware changes). */
+const FAN_MODE_SCHEMA_MIN = 7;
+
+/**
+ * MQTT / command field names for fan control — change here if firmware renames keys.
+ * Keep in sync with src/lib/sensorBlockFan.ts
+ */
+export const FAN_MQTT = {
+  mode: "FanMode",
+  dutyPercent: "FanDutyPercent",
+  rpmSetpoint: "FanRpmSetpoint",
+  rpmActual: "FanRpm",
+  pwm: "FanPWM",
+  requestedPercent: "FanRequestedPercent",
+  modePercent: "percent",
+  modeRpm: "rpm",
+  rpmMin: 0,
+  rpmMax: 5500,
+};
 
 export const ERROR_CODES = {
   [-127]: "Missing",
@@ -47,6 +67,7 @@ export const FIELD_UNITS = {
   FanDutyPercent: "%",
   FanPWM: "",
   FanRpm: "rpm",
+  FanRpmSetpoint: "rpm",
 };
 
 export const SENSOR_TEST_KEYS = new Set([
@@ -86,6 +107,8 @@ const META_KEYS = new Set([
   "FanDutyPercent",
   "FanPWM",
   "FanRpm",
+  "FanMode",
+  "FanRpmSetpoint",
   "Schema",
   "Status",
   "SensorTests",
@@ -137,7 +160,7 @@ export function ackErrorFi(err) {
  * @param {unknown} body
  * @param {{ device?: string, schema?: number|null }} [opts]
  * Returns { ok, payload, json, needsSchema } or { ok:false, error }.
- * needsSchema: 5 for restart/settings, else 4.
+ * needsSchema: 7 for FanMode/FanRpmSetpoint, 5 for restart/settings, else 4.
  */
 export function validateCommandBody(body, opts = {}) {
   if (body == null || typeof body !== "object" || Array.isArray(body)) {
@@ -182,11 +205,35 @@ export function validateCommandBody(body, opts = {}) {
     needsSchema = Math.max(needsSchema, SETTINGS_SCHEMA_MIN);
   }
 
+  if (body.FanMode !== undefined) {
+    const m = String(body.FanMode);
+    if (m !== FAN_MQTT.modePercent && m !== FAN_MQTT.modeRpm) {
+      return { ok: false, error: "outputs" };
+    }
+    out[FAN_MQTT.mode] = m;
+    fields++;
+    needsSchema = Math.max(needsSchema, FAN_MODE_SCHEMA_MIN);
+  }
+
   if (body.FanDutyPercent !== undefined) {
     const n = Number(body.FanDutyPercent);
     if (!Number.isFinite(n) || n < 0 || n > 100) return { ok: false, error: "outputs" };
-    out.FanDutyPercent = Math.round(n);
+    out[FAN_MQTT.dutyPercent] = Math.round(n);
     fields++;
+    // FanMode+duty is Schema 7; bare FanDutyPercent stays Schema 4 for SB1/SB2
+    if (out[FAN_MQTT.mode] != null) {
+      needsSchema = Math.max(needsSchema, FAN_MODE_SCHEMA_MIN);
+    }
+  }
+
+  if (body.FanRpmSetpoint !== undefined) {
+    const n = Number(body.FanRpmSetpoint);
+    if (!Number.isFinite(n) || n < FAN_MQTT.rpmMin || n > FAN_MQTT.rpmMax || !Number.isInteger(n)) {
+      return { ok: false, error: "outputs" };
+    }
+    out[FAN_MQTT.rpmSetpoint] = n;
+    fields++;
+    needsSchema = Math.max(needsSchema, FAN_MODE_SCHEMA_MIN);
   }
 
   if (body.settings !== undefined) {
@@ -251,6 +298,8 @@ export function validateCommandBody(body, opts = {}) {
     "sensorTestsClear",
     "settingsClear",
     "FanDutyPercent",
+    "FanMode",
+    "FanRpmSetpoint",
     "settings",
     "sensorTests",
     "restart",
@@ -362,7 +411,7 @@ function enrich(dev, entry) {
     : [];
   const decoded = {};
   for (const [k, raw] of Object.entries(v)) {
-    if (META_KEYS.has(k) && k !== "FanRequestedPercent" && k !== "FanDutyPercent" && k !== "FanPWM" && k !== "FanRpm") continue;
+    if (META_KEYS.has(k) && k !== "FanRequestedPercent" && k !== "FanDutyPercent" && k !== "FanPWM" && k !== "FanRpm" && k !== "FanMode" && k !== "FanRpmSetpoint") continue;
     decoded[k] = decodeSensorValue(k, raw);
   }
   // Always decode primary sensor-ish keys present
@@ -394,6 +443,8 @@ function enrich(dev, entry) {
     fanDutyPercent: v.FanDutyPercent,
     fanPwm: v.FanPWM,
     fanRpm: v.FanRpm,
+    fanMode: v.FanMode,
+    fanRpmSetpoint: v.FanRpmSetpoint,
     status: v.Status,
     rssi: v.RSSI,
     uptime: v.Uptime,
@@ -510,9 +561,11 @@ export function registerSensorBlockRoutes(app) {
           error: "ei tue komentoja",
           schema: schema ?? null,
           needsSchema: need,
-          message: need >= SETTINGS_SCHEMA_MIN
-            ? `asetukset/restart vaatii Schema >= ${SETTINGS_SCHEMA_MIN}`
-            : `komennot vaativat Schema >= ${CMD_SCHEMA_MIN}`,
+          message: need >= FAN_MODE_SCHEMA_MIN
+            ? `FanMode/FanRpmSetpoint vaatii Schema >= ${FAN_MODE_SCHEMA_MIN}`
+            : need >= SETTINGS_SCHEMA_MIN
+              ? `asetukset/restart vaatii Schema >= ${SETTINGS_SCHEMA_MIN}`
+              : `komennot vaativat Schema >= ${CMD_SCHEMA_MIN}`,
         });
       }
       if (!MQ?.connected) return res.status(503).json({ error: "MQTT ei yhteydessä" });
