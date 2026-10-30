@@ -26,7 +26,7 @@ const COLS: [SortKey, string, string][] = [
   ["point", "Mittauspiste", ""],
   ["alarm", "Hälytys", ""],
   ["priority", "Prio", "w-14"],
-  ["state", "Tila", "w-24"],
+  ["state", "Tila", "w-44"],
   ["value", "Arvo", "w-20 text-right"],
   ["duration", "Kesto", "w-24 text-right"],
 ];
@@ -60,6 +60,20 @@ function SrcBadge({ r }: { r: AlarmSummaryRow }) {
 }
 const hex = (n: number | undefined) => (n === undefined || n === null ? "—" : `16#${(n >>> 0).toString(16).toUpperCase().padStart(4, "0")}`);
 const activeText = (r: AlarmSummaryRow) => (r.active ? (r.priority === 1 ? "text-red-400 font-semibold" : "text-amber-300 font-semibold") : "text-muted-foreground");
+/** Kuitattu mutta vielä aktiivinen: odottaa poistumista (+ clear-timer / esto jos tiedossa). */
+function ackWaitLabel(r: AlarmSummaryRow, now = Date.now()): string | null {
+  if (!r.active || !r.acked || r.disabledUntil || r.priority === 3) return null;
+  if (r.clearBlock) return `Kuitattu · odottaa: ${r.clearBlock}`;
+  if (r.clearSince && r.clearMin != null) {
+    const remainMin = Math.max(0, Math.ceil((Date.parse(r.clearSince) + r.clearMin * 60_000 - now) / 60_000));
+    return remainMin > 0 ? `Kuitattu · poistuu ~${remainMin} min` : "Kuitattu · poistuu pian";
+  }
+  if (r.clearRemainSec != null && r.clearRemainSec > 0) {
+    const remainMin = Math.max(1, Math.ceil(r.clearRemainSec / 60));
+    return `Kuitattu · poistuu ~${remainMin} min`;
+  }
+  return "Kuitattu · odottaa poistumista";
+}
 
 type Saved = { hours?: number; points?: string[]; types?: string[]; prio?: string; activeOnly?: boolean; source?: string; sort?: { key: SortKey; dir: 1 | -1 } };
 const loadSaved = (k: string): Saved => { try { return typeof localStorage === "undefined" ? {} : JSON.parse(localStorage.getItem(k) ?? "{}"); } catch { return {}; } };
@@ -254,7 +268,7 @@ export function AlarmListWidget({ config, storageKey = "main" }: { config: Widge
                     <td className="px-2 py-1.5"><div className={`font-mono ${activeText(r)}`}>{r.alarm}</div>{r.desc && r.desc !== r.alarm && <div className="line-clamp-2 text-xs text-muted-foreground" data-testid="al-desc">{r.desc}</div>}</td>
                     <td className="px-2 py-1.5"><Prio r={r} /></td>
                     <td className={`px-2 py-1.5 ${r.active ? "text-foreground" : "text-muted-foreground"}`}>
-                      {r.active ? "Aktiivinen" : <span title={r.end ? `Poistunut ${fmtTime(r.end)}` : ""}>Poistunut</span>}
+                      {(() => { const w = ackWaitLabel(r); return r.active ? (w ? <span className="text-xs text-sky-300" data-testid="al-ack-wait" title={w}>{w}</span> : "Aktiivinen") : <span title={r.end ? `Poistunut ${fmtTime(r.end)}` : ""}>Poistunut</span>; })()}
                       {!r.acked && <span className="ml-1 text-xs text-amber-300" title="Kuittaamaton">●</span>}
                       {r.disabledUntil && <button type="button" data-testid="al-reenable" onClick={async (e) => { e.stopPropagation(); try { await reEnableAlarm(r.disableKind!, r.disableKey!); toast.success("Hälytys kytketty päälle"); } catch (err) { toast.error(String(err)); } setReload((x) => x + 1); }} className="ml-2 rounded border border-amber-400 px-2 py-0.5 text-xs text-amber-300">Päälle nyt</button>}
                     {!r.acked && r.source === "Kasvamo" && <button type="button" data-testid="al-kas-ack" onClick={async (e) => { e.stopPropagation(); await ackAlarms([r.id]); setReload((x) => x + 1); }} className="ml-2 rounded border border-red-500/70 px-1.5 text-[11px] font-semibold text-red-200 hover:bg-red-500/20">Kuittaa</button>}
@@ -286,7 +300,7 @@ export function AlarmListWidget({ config, storageKey = "main" }: { config: Widge
                     <div className="flex flex-wrap items-baseline gap-x-2">
                       <span className={`font-mono ${activeText(r)}`}>{r.alarm}</span>
                       <SrcBadge r={r} /><span className="truncate">{r.pointName}</span>
-                      <span className={`ml-auto text-xs ${r.active ? "text-foreground" : "text-muted-foreground"}`}>{r.active ? "Aktiivinen" : "Poistunut"}{!r.acked ? " · kuittaamaton" : ""}</span>
+                      <span className={`ml-auto text-xs ${r.active ? "text-foreground" : "text-muted-foreground"}`} data-testid={ackWaitLabel(r) ? "al-ack-wait" : undefined}>{r.active ? (ackWaitLabel(r) ?? "Aktiivinen") : "Poistunut"}{!r.acked ? " · kuittaamaton" : ""}</span>
                     </div>
                     {r.desc && r.desc !== r.alarm && <div className="line-clamp-2 text-xs text-muted-foreground">{r.desc}</div>}
                     <div className="text-xs tabular-nums text-muted-foreground">

@@ -528,6 +528,12 @@ export interface AlarmSummaryRow {
   ackedAt?: string | null;
   ackedBy?: string | null;
   disabledUntil?: string; disableKind?: "fert" | "kasvamo"; disableKey?: string;
+  /** EC-hälytys: clear-timer käynnissä (ISO) tai null jos estetty/ei käynnissä */
+  clearSince?: string | null;
+  clearMin?: number | null;
+  clearRemainSec?: number | null;
+  /** miksi clear-timer ei käy, esim. "mittaus epäluotettava" / "arvo yli rajan" */
+  clearBlock?: string | null;
 }
 export interface AlarmSummary {
   hours: number;

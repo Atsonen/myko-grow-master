@@ -105,14 +105,29 @@ async function setEvent(code, level, active, text, c) {
 // vähintään clear_min minuuttia. Epäluotettava/vanha mittaus ei koskaan poista hälytystä eikä lukitusta.
 async function evalEcAlarm(code, c, ec, reliable, raise, inside, lo, hi) {
   const e = S.ev[code];
-  if (!e?.active) { delete S.clrSince?.[code]; if (raise) await setEvent(code, "alarm", true, raise, c); else delete S.evSince[code]; return; }
-  S.clrSince ??= {};
-  if (raise) { e.text = raise; delete S.clrSince[code]; return; }
-  if (!reliable || ec == null || !inside) { delete S.clrSince[code]; return; } // pidä hälytys + lukitus
+  const clearMin = Math.max(1, Number(c.ec_alarm.clear_min) || 3);
+  const sideBlock = code.endsWith("_hi") ? "arvo yli rajan" : "arvo alle rajan";
+  if (!e?.active) {
+    delete S.clrSince?.[code]; delete S.clrInfo?.[code];
+    if (raise) await setEvent(code, "alarm", true, raise, c); else delete S.evSince[code];
+    return;
+  }
+  S.clrSince ??= {}; S.clrInfo ??= {};
+  if (raise) {
+    e.text = raise; delete S.clrSince[code];
+    S.clrInfo[code] = { since: null, clearMin, block: sideBlock };
+    return;
+  }
+  if (!reliable || ec == null || !inside) {
+    delete S.clrSince[code];
+    S.clrInfo[code] = { since: null, clearMin, block: (!reliable || ec == null) ? "mittaus epäluotettava" : sideBlock };
+    return; // pidä hälytys + lukitus
+  }
   S.clrSince[code] ??= Date.now();
-  const need = Math.max(1, Number(c.ec_alarm.clear_min) || 3) * 60_000;
+  S.clrInfo[code] = { since: S.clrSince[code], clearMin, block: null };
+  const need = clearMin * 60_000;
   if (Date.now() - S.clrSince[code] < need) return;
-  delete S.clrSince[code];
+  delete S.clrSince[code]; delete S.clrInfo[code];
   await setEvent(code, "alarm", false, "", { ...c, recoveryText: `✅ Palautui: EC ${ec} ppm, takaisin rajoissa (${lo}–${hi}) – ${code === "ec_alarm_hi" ? "annostelulukitus poistui" : "alaraja OK"}` });
 }
 async function ecDisableCheck(c) {
@@ -129,7 +144,7 @@ async function ecDisableCheck(c) {
 }
 async function clearEcAlarmsDisabled() {
   for (const code of ["ec_alarm_lo", "ec_alarm_hi"]) if (S.ev[code]?.active) {
-    await setEvent(code, "alarm", false, "", {}); delete S.evSince[code]; delete S.clrSince?.[code];
+    await setEvent(code, "alarm", false, "", {}); delete S.evSince[code]; delete S.clrSince?.[code]; delete S.clrInfo?.[code];
     await logRow(CFG.fert, 0, S.samples.at(-1)?.v, S.sp, `${code} kuitattu: hälytys kytketty pois käyttäjän toimesta (aikaraja) – lukitus vapautettu`, "live");
   }
 }
@@ -238,11 +253,26 @@ async function tick(port) {
 export function fertDisabledRows() {
   const A = CFG.ec_alarm; return !A.enabled && A.disabled_until ? [{ key: "ec", name: "EC (lannoite)", until: A.disabled_until }] : [];
 }
+function fertClearFields(code) {
+  const info = S.clrInfo?.[code];
+  if (!info) return {};
+  const clearSince = info.since ? new Date(info.since).toISOString() : null;
+  const clearMin = info.clearMin ?? null;
+  let clearRemainSec = null;
+  if (info.since && clearMin != null && !info.block) {
+    clearRemainSec = Math.max(0, Math.ceil((info.since + clearMin * 60_000 - Date.now()) / 1000));
+  }
+  return { clearSince, clearMin, clearRemainSec, clearBlock: info.block ?? null };
+}
 export async function fertAlarmRows(hours) {
   const ev = await query("SELECT id, DATE_FORMAT(ts, '%Y-%m-%dT%H:%i:%sZ') ts, DATE_FORMAT(cleared_ts, '%Y-%m-%dT%H:%i:%sZ') cl, level, code, text, acked_ts FROM fert_events WHERE ts > UTC_TIMESTAMP() - INTERVAL ? HOUR OR cleared_ts IS NULL ORDER BY id DESC LIMIT 300", [hours]);
-  return ev.map((e) => ({ id: -(2_000_000_000 + Number(e.id)), pointId: "Kasvamo_EC", pointName: "Kasvamo · EC / lannoitus", unit: "ppm", alarm: String(e.code).toUpperCase(),
-    bit: null, priority: e.level === "alarm" ? 1 : 2, start: e.ts, end: e.cl, active: !e.cl && Boolean(S.ev[e.code]?.active), value: null, endValue: null,
-    source: "Kasvamo", desc: e.text, acked: e.level !== "alarm" || e.acked_ts != null, ackedAt: null, ackedBy: null })).map((r) => (r.active || r.end ? r : { ...r, end: r.start }));
+  return ev.map((e) => {
+    const active = !e.cl && Boolean(S.ev[e.code]?.active);
+    return { id: -(2_000_000_000 + Number(e.id)), pointId: "Kasvamo_EC", pointName: "Kasvamo · EC / lannoitus", unit: "ppm", alarm: String(e.code).toUpperCase(),
+      bit: null, priority: e.level === "alarm" ? 1 : 2, start: e.ts, end: e.cl, active, value: null, endValue: null,
+      source: "Kasvamo", desc: e.text, acked: e.level !== "alarm" || e.acked_ts != null, ackedAt: null, ackedBy: null,
+      ...(active ? fertClearFields(e.code) : {}) };
+  }).map((r) => (r.active || r.end ? r : { ...r, end: r.start }));
 }
 // Kuittaus (vain hälytykset; varoitukset eivät vaadi kuittausta). ids = fert_events.id
 export async function fertAck(ids, by) {
@@ -296,7 +326,7 @@ export function registerFertDoseRoutes(app) {
         interlock: alarmActive(), ec: lastS ? { value: lastS.v, at: new Date(lastS.t).toISOString() } : null, sp: S.sp,
         belowSince: S.belowSince ? new Date(S.belowSince).toISOString() : null, lastDoseAt: S.lastDoseAt ? new Date(S.lastDoseAt).toISOString() : null,
         nextAllowedAt: S.lastDoseAt ? new Date(S.lastDoseAt + c.pause_min * 60_000).toISOString() : null,
-        reason: S.reason, active: Object.entries(S.ev).filter(([, e]) => e.active).map(([code, e]) => ({ code, ...e })), events: events.map((e) => ({ ...e, id: Number(e.id) })),
+        reason: S.reason, active: Object.entries(S.ev).filter(([, e]) => e.active).map(([code, e]) => ({ code, ...e, ...fertClearFields(code) })), events: events.map((e) => ({ ...e, id: Number(e.id) })),
         reliable: { ok: Boolean(S.relOk), why: S.relWhy ?? null }, validSince: S.validSince ? new Date(S.validSince).toISOString() : null, spPlc: S.spPlc ?? null, trend: (S.trend ?? []).map((p) => [p.t, p.v]), spNow: S.sp,
         cumulative: cum.map((r) => ({ ...r, n: Number(r.n), req_ms: Number(r.req_ms), act_ms: Number(r.act_ms) })), recent });
     } catch (e) { res.status(500).json({ error: e.message }); }
