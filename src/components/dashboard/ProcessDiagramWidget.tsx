@@ -1,0 +1,655 @@
+/**
+ * Kasvamo Prosessikuva widget – SVG process view with editable element boxes.
+ * Used as dashboard widget type "processDiagram" (shared DashboardGrid).
+ */
+import { DisableDuration, untilLabel, useNow, reEnableAlarm } from "@/lib/alarmDisable";
+import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from "react";
+import { Pencil, RotateCcw, Save } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { FertDosePanel, FertEcModal, useFertDose } from "@/components/FertDosePanel";
+import { getDataloggerLatest, getKasvamoAlarms, putKasvamoAlarms, type KasvamoAlarms, type KasLimit, getPumput, getPvFeed, type DataloggerLatest, type PumputResponse, setFertPumpEnable } from "@/lib/apiClient";
+import { toast } from "sonner";
+import { MeasurementPointWidget } from "@/components/dashboard/MeasurementPointWidget";
+import { usePid } from "@/components/dashboard/PidFaceplate";
+import {
+  DEFAULT_PROCESS_BOXES,
+  clientToSvg,
+  clampBox,
+  loadProcessBoxes,
+  mergeProcessBoxes,
+  resetProcessBoxes,
+  saveProcessBoxes,
+  type ProcessBox,
+  type ProcessBoxMap,
+} from "@/lib/processLayout";
+
+// Signals identified by matching HMI screenshot values (23.10.2026 ~14:05) to datalogger values.
+const TAGS = {
+  level: "dl25", // Level %
+  waterTemp: "dl24", // Water Temp
+  ec: "dl23", // ppm
+  ph: "dl26", // pH
+  fan: "dl04", // PF-1 %
+  ductTemp: "dl31", // G Poistoilma DS4
+  roofTemp: "dl30", // G Katto DS3
+  midTemp: "dl03", // G Mid DS2
+  g1Temp: "dl09", // G1 temp TT
+} as const;
+type TagName = keyof typeof TAGS;
+const POLL_MS = 5000;
+
+// Pumput_DB (OPC UA, väliaikainen): vain luku. Kytketty vain yksiselitteiset signaalit.
+function usePumput() {
+  const [p, setP] = useState<PumputResponse | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const load = () => getPumput().then((d) => alive && setP(d)).catch(() => undefined);
+    load();
+    const t = setInterval(load, POLL_MS);
+    return () => { alive = false; clearInterval(t); };
+  }, []);
+  const ok = p && !p.stale;
+  const b = (k: string) => (ok && typeof p.values[k] === "boolean" ? (p.values[k] as boolean) : undefined);
+  const n = (k: string) => (ok && typeof p.values[k] === "number" ? (p.values[k] as number) : undefined);
+  return { ok, b, n };
+}
+
+// Kasvamo-hälytysrajat (Myko-asetus kasvamo_alarms, backend kasvamoAlarms.js). Ei PLC-kirjoituksia.
+function useKasAlarms() {
+  const [a, setA] = useState<KasvamoAlarms | null>(null);
+  const load = () => getKasvamoAlarms().then(setA).catch(() => undefined);
+  useEffect(() => { load(); const t = setInterval(load, 15_000); return () => clearInterval(t); }, []);
+  return { a, setA, load };
+}
+const limTxt = (L?: KasLimit) => (!L ? undefined : !L.enabled ? (L.disabled_until ? untilLabel(L.disabled_until).replace(/ \(.*\)$/, "") : "pois") : `${L.lo ?? ""}–${L.hi ?? ""}`);
+
+function AlarmDialog({ sig, data, onClose, onSaved }: { sig: string | null; data: KasvamoAlarms | null; onClose: () => void; onSaved: (d: KasvamoAlarms) => void }) {
+  const L = sig && data ? data.config.limits[sig] : undefined; const S = sig && data ? data.signals[sig] : undefined;
+  const [f, setF] = useState({ lo: "", hi: "", hyst: "", enabled: true, delay: "" }); const [disMin, setDisMin] = useState(60); const now = useNow(15_000);
+  const [err, setErr] = useState<string | null>(null); const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (L && data) setF({ lo: L.lo == null ? "" : String(L.lo), hi: L.hi == null ? "" : String(L.hi), hyst: String(L.hyst ?? 0), enabled: L.enabled !== false, delay: String(data.config.delay_min) });
+    setErr(null);
+  }, [sig]); // eslint-disable-line react-hooks/exhaustive-deps
+  const save = async () => {
+    if (!sig) return; setBusy(true); setErr(null);
+    const n = (v: string) => (v.trim() === "" ? null : Number(v.replace(",", ".")));
+    try {
+      const d = await putKasvamoAlarms({ delay_min: Number(f.delay.replace(",", ".")), disable_min: !f.enabled && L?.enabled !== false ? disMin : undefined, limits: { [sig]: { lo: n(f.lo), hi: n(f.hi), hyst: n(f.hyst) ?? 0, enabled: f.enabled } } });
+      onSaved(d); onClose();
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
+  };
+  const inp = "w-full rounded border border-border bg-background px-2 py-1 font-mono text-sm";
+  return (
+    <Dialog open={!!sig} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-sm font-mono">
+        <DialogHeader><DialogTitle className="text-base">Hälytysrajat · {S?.name} {S?.unit && `(${S.unit})`}</DialogTitle></DialogHeader>
+        <div className="space-y-2 text-sm">
+          <label className="flex items-center gap-2"><input type="checkbox" checked={f.enabled} onChange={(e) => setF({ ...f, enabled: e.target.checked })} /> Hälytys käytössä</label>
+          {L?.enabled === false && L.disabled_until && (
+            <div className="flex items-center justify-between gap-2 rounded border border-amber-500/50 bg-amber-500/10 px-2 py-1 text-xs text-amber-300" data-testid="kas-dis-until">
+              <span>🔕 {untilLabel(L.disabled_until, now)}</span>
+              <button type="button" className="rounded border border-amber-400 px-2 py-0.5" disabled={busy} onClick={async () => { setBusy(true); try { onSaved(await reEnableAlarm("kasvamo", sig!) as KasvamoAlarms); onClose(); } catch (e) { setErr(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); } }}>Päälle nyt</button>
+            </div>)}
+          {!f.enabled && L?.enabled !== false && <DisableDuration value={disMin} onChange={setDisMin} />}
+          <div className="grid grid-cols-3 gap-2">
+            <label>Alaraja<input className={inp} value={f.lo} placeholder="ei" onChange={(e) => setF({ ...f, lo: e.target.value })} /></label>
+            <label>Yläraja<input className={inp} value={f.hi} placeholder="ei" onChange={(e) => setF({ ...f, hi: e.target.value })} /></label>
+            <label>Hystereesi<input className={inp} value={f.hyst} onChange={(e) => setF({ ...f, hyst: e.target.value })} /></label>
+          </div>
+          <label className="block">Viive (min, kaikki signaalit)<input className={inp} value={f.delay} onChange={(e) => setF({ ...f, delay: e.target.value })} /></label>
+          <div className="text-xs text-muted-foreground">Tyhjä = ei rajaa. Sallittu {S?.range[0]}–{S?.range[1]}. Ilmoitus Valvomo-bottiin kerran alkaessa ja palautuessa. Vain Myko-asetus, ei PLC-kirjoitusta.</div>
+          {err && <div className="text-xs text-red-500">{err}</div>}
+          <div className="flex justify-end gap-2 pt-1">
+            <button className="rounded border border-border px-3 py-1" onClick={onClose}>Peruuta</button>
+            <button className="rounded bg-primary px-3 py-1 text-primary-foreground disabled:opacity-50" disabled={busy} onClick={save}>{busy ? "Tallennetaan…" : "Tallenna"}</button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function useLive() {
+  const [vals, setVals] = useState<Partial<Record<TagName, DataloggerLatest>>>({});
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      try {
+        const rows = await getDataloggerLatest(Object.values(TAGS));
+        if (!alive) return;
+        const out: Partial<Record<TagName, DataloggerLatest>> = {};
+        for (const [name, key] of Object.entries(TAGS)) {
+          const r = rows.find((x) => x.variableKey === key);
+          if (r) out[name as TagName] = r;
+        }
+        setVals(out);
+        setErr(null);
+      } catch (e) {
+        if (alive) setErr(e instanceof Error ? e.message : String(e));
+      }
+    };
+    load();
+    const t = setInterval(load, POLL_MS);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, []);
+  return { vals, err };
+}
+
+const C = {
+  bg: "#0f172a",
+  panel: "#1e293b",
+  stroke: "#334155",
+  pipe: "#3b82f6",
+  pipeOff: "#475569",
+  water: "#38bdf8",
+  text: "#e2e8f0",
+  muted: "#64748b",
+  on: "#22c55e",
+  off: "#ef4444",
+  na: "#475569",
+};
+
+function fmt(v: number | null | undefined, d: number) {
+  return v === null || v === undefined || !Number.isFinite(v) ? "—" : v.toFixed(d);
+}
+
+const ACCENT = "#f59e0b";
+type BoxState = "alarm" | "alarmAck" | "warning" | undefined;
+function ValueBox({ x, y, w = 92, h = 40, label, value, unit, wired = true, title, onClick, selected = false, alarm = false, state, limits, clickHint }: {
+  x: number; y: number; w?: number; h?: number; label: string; value?: string; unit?: string; wired?: boolean; title?: string;
+  onClick?: () => void; selected?: boolean; alarm?: boolean; state?: BoxState; limits?: string; clickHint?: string;
+}) {
+  const st: BoxState = state ?? (alarm ? "alarm" : undefined);
+  // kuittaamaton hälytys = punasävy + punainen kehys; kuitattu = vain punainen kehys; varoitus = oranssi kehys
+  const fill = st === "alarm" ? "#4a1d22" : C.panel;
+  const stroke = st === "alarm" || st === "alarmAck" ? "#ef4444" : st === "warning" ? "#f59e0b" : selected ? ACCENT : wired ? C.stroke : C.na;
+  const labelY = Math.min(14, Math.max(10, h * 0.35));
+  const valueY = Math.max(labelY + 12, h - 8);
+  return (
+    <g transform={`translate(${x},${y})`} opacity={wired ? 1 : 0.55} onClick={onClick}
+      style={onClick ? { cursor: "pointer" } : undefined} role={onClick ? "button" : undefined}
+      data-testid={onClick ? `pd-click-${label}` : undefined}>
+      <title>{(title ?? label) + (onClick ? (clickHint ?? " – avaa G_Air-säädin") : "")}</title>
+      <rect width={w} height={h} rx={6} fill={fill} stroke={stroke} strokeWidth={selected || st ? 2.5 : 1} data-state={st ?? ""} strokeDasharray={wired ? undefined : "4 3"} />
+      {limits && <text x={w - 6} y={labelY} textAnchor="end" fontSize={8} fill={st === "alarm" ? "#fecaca" : C.muted} fontFamily="monospace">{limits}</text>}
+      {selected && (
+        <g transform={`translate(${w - 26},-7)`}>
+          <rect width={26} height={14} rx={4} fill={ACCENT} />
+          <text x={13} y={10.5} textAnchor="middle" fontSize={9} fontWeight={700} fill="#111" fontFamily="monospace">PID</text>
+        </g>
+      )}
+      <text x={8} y={labelY} fontSize={9} fill={C.muted} fontFamily="monospace">{label}</text>
+      <text x={8} y={valueY} fontSize={wired ? 15 : 10} fill={wired ? C.text : C.muted} fontFamily="monospace" fontWeight={600}>
+        {wired ? `${value ?? "—"}${unit ? ` ${unit}` : ""}` : "ei kytketty"}
+      </text>
+    </g>
+  );
+}
+
+// state: true/false = ON/OFF, undefined = unwired
+function Pump({ x, y, label, state, color = C.pipe }: { x: number; y: number; label: string; state?: boolean; color?: string }) {
+  const wired = state !== undefined;
+  const fill = !wired ? C.na : state ? C.on : C.off;
+  return (
+    <g transform={`translate(${x},${y})`} opacity={wired ? 1 : 0.6}>
+      <title>{wired ? `${label}: ${state ? "PÄÄLLÄ" : "POIS"}` : `${label}: ei kytketty`}</title>
+      <circle r={16} fill={C.panel} stroke={wired ? color : C.na} strokeWidth={3} />
+      <path d="M -7 -8 L 9 0 L -7 8 Z" fill={wired ? color : C.na}>
+        {wired && state && <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="2s" repeatCount="indefinite" />}
+      </path>
+      <text y={32} textAnchor="middle" fontSize={10} fill={C.text} fontFamily="monospace">{label}</text>
+      <rect x={-22} y={38} width={44} height={16} rx={8} fill={fill} />
+      <text y={50} textAnchor="middle" fontSize={9} fill="#fff" fontFamily="monospace" fontWeight={700}>
+        {!wired ? "ei kytk." : state ? "ON" : "OFF"}
+      </text>
+    </g>
+  );
+}
+
+/** Lannoitepumppu (FB_FertDose_DB): yksi symboli (2 fyysistä samaan lähtöön). Lähtö KÄY/seis, vika, Käyttö On/Off. */
+function FertPump({ x, y, pump, enable, fault, faultText, writeAllowed, busy, onToggle }: {
+  x: number; y: number; pump?: boolean; enable?: boolean; fault?: boolean; faultText?: string;
+  writeAllowed?: boolean; busy?: boolean; onToggle?: (en: boolean) => void;
+}) {
+  const wired = pump !== undefined;
+  const run = !!pump;
+  const fill = !wired ? C.na : run ? C.on : C.off;
+  const stroke = fault ? C.off : wired ? C.pipe : C.na;
+  const canToggle = wired && enable !== undefined && !!writeAllowed && !busy && !!onToggle;
+  return (
+    <g transform={`translate(${x},${y})`} opacity={wired ? 1 : 0.6} data-testid="pd-fert-pump">
+      <title>{wired
+        ? `Lannoitepumppu: lähtö ${run ? "KÄY" : "seis"}, käyttö ${enable ? "ON" : "OFF"}${fault ? ` · VIKA ${faultText ?? ""}` : ""} · FB_FertDose_DB.Output.Pump / Input.Enable`
+        : "Lannoitepumppu: ei kytketty"}</title>
+      <circle r={16} fill={C.panel} stroke={stroke} strokeWidth={3} />
+      <path d="M -7 -8 L 9 0 L -7 8 Z" fill={wired ? (fault ? C.off : C.pipe) : C.na}>
+        {wired && run && <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="2s" repeatCount="indefinite" />}
+      </path>
+      <text y={32} textAnchor="middle" fontSize={10} fill={C.text} fontFamily="monospace">Lannoite</text>
+      <rect x={-28} y={38} width={56} height={16} rx={8} fill={fill} />
+      <text y={50} textAnchor="middle" fontSize={9} fill="#fff" fontFamily="monospace" fontWeight={700}>
+        {!wired ? "ei kytk." : run ? "KÄY" : "seis"}
+      </text>
+      {fault && (
+        <g>
+          <rect x={-28} y={56} width={56} height={14} rx={4} fill="#7f1d1d" stroke={C.off} />
+          <text y={66} textAnchor="middle" fontSize={8} fill="#fecaca" fontFamily="monospace" fontWeight={700}>VIKA</text>
+        </g>
+      )}
+      <g transform={`translate(0, ${fault ? 78 : 60})`}>
+        <text y={0} textAnchor="middle" fontSize={8} fill={C.muted} fontFamily="monospace">
+          Käyttö {enable === undefined ? "—" : enable ? "ON" : "OFF"}
+        </text>
+        <g transform="translate(-22, 6)" style={canToggle ? { cursor: "pointer" } : undefined}
+          opacity={canToggle ? 1 : 0.45}
+          onClick={canToggle ? (e) => { e.stopPropagation(); onToggle!(!enable); } : undefined}
+          role={canToggle ? "button" : undefined}
+          data-testid="pd-fert-enable">
+          <rect width={44} height={16} rx={8} fill={enable ? C.on : "#3f3f46"} stroke={C.stroke} />
+          <text x={22} y={12} textAnchor="middle" fontSize={9} fill="#fff" fontFamily="monospace" fontWeight={700}>
+            {busy ? "…" : enable ? "Off" : "On"}
+          </text>
+        </g>
+      </g>
+    </g>
+  );
+}
+
+function Tank({ x, y, w, h, level, label, sub }: { x: number; y: number; w: number; h: number; level?: number | null; label: string; sub?: string }) {
+  const wired = level !== undefined;
+  const pct = Math.max(0, Math.min(100, Number(level ?? 0)));
+  const lh = (h * pct) / 100;
+  const id = `clip-${label.replace(/\W/g, "")}`;
+  return (
+    <g transform={`translate(${x},${y})`}>
+      <defs>
+        <clipPath id={id}><rect width={w} height={h} rx={10} /></clipPath>
+        <linearGradient id={`${id}-g`} x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0" stopColor={C.water} stopOpacity={0.9} />
+          <stop offset="1" stopColor="#0369a1" stopOpacity={0.9} />
+        </linearGradient>
+      </defs>
+      <rect width={w} height={h} rx={10} fill="#0b1220" stroke={C.stroke} strokeWidth={2} />
+      {wired && (
+        <g clipPath={`url(#${id})`}>
+          <rect x={0} width={w} y={h - lh} height={lh} fill={`url(#${id}-g)`} style={{ transition: "all 1s ease" }} />
+          <path d={`M0 ${h - lh} q ${w / 4} -5 ${w / 2} 0 t ${w / 2} 0 v 6 h ${-w} z`} fill={C.water} opacity={0.6} style={{ transition: "all 1s ease" }}>
+            <animateTransform attributeName="transform" type="translate" values={`0 0; ${-w / 8} 0; 0 0`} dur="3s" repeatCount="indefinite" />
+          </path>
+        </g>
+      )}
+      <text x={w / 2} y={-8} textAnchor="middle" fontSize={11} fill={C.text} fontFamily="monospace">{label}</text>
+      {sub && <text x={w / 2} y={h + 14} textAnchor="middle" fontSize={9} fill={C.muted} fontFamily="monospace">{sub}</text>}
+    </g>
+  );
+}
+
+function Btn({ x, y, w, h = 26, label, badge, badgeColor, title }: { x: number; y: number; w: number; h?: number; label: string; badge?: string; badgeColor?: string; title?: string }) {
+  const wired = !!title;
+  return (
+    <g transform={`translate(${x},${y})`} opacity={wired ? 1 : 0.5}>
+      <title>{title ?? `${label}: ei kytketty (vain näyttö)`}</title>
+      <rect width={w} height={h} rx={5} fill={C.panel} stroke={wired ? C.stroke : C.na} strokeDasharray={wired ? undefined : "4 3"} />
+      <text x={w / 2} y={h * 0.65} textAnchor="middle" fontSize={11} fill={wired ? C.text : C.muted} fontFamily="monospace">{label}</text>
+      {badge !== undefined && (
+        <g transform={`translate(${w - 4},-4)`}>
+          <circle r={9} fill={badgeColor ?? C.na} />
+          <text y={3} textAnchor="middle" fontSize={8} fill="#fff" fontFamily="monospace">{badge}</text>
+        </g>
+      )}
+    </g>
+  );
+}
+
+function Pipe({ d, active = false }: { d: string; active?: boolean }) {
+  return (
+    <g>
+      <path d={d} fill="none" stroke={active ? C.pipe : C.pipeOff} strokeWidth={8} strokeLinecap="round" strokeLinejoin="round" opacity={0.85} />
+      {active && (
+        <path d={d} fill="none" stroke="#bfdbfe" strokeWidth={2} strokeDasharray="6 10" strokeLinecap="round">
+          <animate attributeName="stroke-dashoffset" from="32" to="0" dur="1.2s" repeatCount="indefinite" />
+        </path>
+      )}
+    </g>
+  );
+}
+
+
+/** Drag + SE-corner resize for Prosessikuva element boxes (edit mode only). */
+function EditableBox({
+  id, box, editing, svgRef, onChange, children,
+}: {
+  id: string;
+  box: ProcessBox;
+  editing: boolean;
+  svgRef: RefObject<SVGSVGElement | null>;
+  onChange: (id: string, next: ProcessBox) => void;
+  children: ReactNode;
+}) {
+  const startPtr = (mode: "move" | "resize") => (e: ReactPointerEvent) => {
+    if (!editing || !svgRef.current) return;
+    e.stopPropagation();
+    e.preventDefault();
+    const svg = svgRef.current;
+    const origin = clientToSvg(svg, e.clientX, e.clientY);
+    const start = { ...box };
+    const move = (ev: PointerEvent) => {
+      const pt = clientToSvg(svg, ev.clientX, ev.clientY);
+      const dx = pt.x - origin.x;
+      const dy = pt.y - origin.y;
+      if (mode === "move") onChange(id, clampBox({ ...start, x: start.x + dx, y: start.y + dy }));
+      else onChange(id, clampBox({ ...start, w: start.w + dx, h: start.h + dy }));
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
+  };
+
+  if (!editing) return <>{children}</>;
+
+  return (
+    <g data-edit-id={id} data-testid={`pd-edit-${id}`} style={{ touchAction: "none" }}>
+      <g onPointerDown={startPtr("move")} style={{ cursor: "move" }}>
+        {children}
+      </g>
+      <rect
+        x={box.x} y={box.y} width={box.w} height={box.h}
+        fill="transparent" stroke="#38bdf8" strokeWidth={1.5} strokeDasharray="3 2" opacity={0.85}
+        pointerEvents="none"
+      />
+      <rect
+        x={box.x + box.w - 12} y={box.y + box.h - 12} width={12} height={12}
+        fill="#38bdf8" stroke="#0ea5e9" strokeWidth={1} rx={2}
+        style={{ cursor: "nwse-resize" }}
+        onPointerDown={startPtr("resize")}
+        data-testid={`pd-resize-${id}`}
+      >
+        <title>Muuta kokoa</title>
+      </rect>
+    </g>
+  );
+}
+
+function useProcessBoxEdit() {
+  const [boxes, setBoxes] = useState<ProcessBoxMap>(() => mergeProcessBoxes(null));
+  const [saved, setSaved] = useState<ProcessBoxMap>(() => mergeProcessBoxes(null));
+  const [editing, setEditing] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  const svgRef = useRef<SVGSVGElement | null>(null);
+
+  useEffect(() => {
+    loadProcessBoxes().then((b) => { setBoxes(b); setSaved(b); }).catch(() => undefined);
+  }, []);
+
+  const onChange = useCallback((id: string, next: ProcessBox) => {
+    setBoxes((prev) => ({ ...prev, [id]: next }));
+    setDirty(true);
+  }, []);
+
+  const box = (id: string): ProcessBox => boxes[id] ?? DEFAULT_PROCESS_BOXES[id];
+
+  const save = async () => {
+    try {
+      const b = await saveProcessBoxes(boxes);
+      setBoxes(b); setSaved(b); setDirty(false); setEditing(false);
+      toast.success("Elementtien asettelu tallennettu");
+    } catch (e) { toast.error((e as Error).message); }
+  };
+  const cancel = () => { setBoxes(saved); setDirty(false); setEditing(false); };
+  const reset = async () => {
+    if (!confirm("Palautetaanko prosessikuvan elementtien oletuskoot ja -paikat?")) return;
+    try {
+      const b = await resetProcessBoxes();
+      setBoxes(b); setSaved(b); setDirty(false); setEditing(false);
+      toast.success("Oletusasettelu palautettu");
+    } catch (e) { toast.error((e as Error).message); }
+  };
+
+  return { boxes, box, editing, setEditing, dirty, svgRef, onChange, save, cancel, reset };
+}
+
+
+export function ProcessDiagramWidget() {
+  const { vals, err } = useLive();
+  const [fpOpen, setFpOpen] = useState(false);
+  const pid = usePid("G_Air", fpOpen ? 2000 : 5000);
+  const [pvDl, setPvDl] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const load = () => getPvFeed("G_Air").then((d) => {
+      if (!alive) return;
+      const f = d.feed;
+      setPvDl(d.sources?.find((s) => s.topic === f.topic && s.field === f.field)?.dl ?? null);
+    }).catch(() => undefined);
+    load();
+    const t = setInterval(load, 10_000);
+    return () => { alive = false; clearInterval(t); };
+  }, [fpOpen]);
+  const openFp = () => setFpOpen(true);
+  const pv = pid.v;
+  const v = (k: TagName) => vals[k]?.value ?? null;
+  const ts = vals.level?.timestamp ?? vals.ec?.timestamp;
+  const fan = v("fan");
+  const pu = usePumput();
+  const ka = useKasAlarms(); const fd = useFertDose(); const [alSig, setAlSig] = useState<string | null>(null); const [ecDlg, setEcDlg] = useState(false);
+  const [fertBusy, setFertBusy] = useState(false);
+  const pe = useProcessBoxEdit();
+  const toggleFert = async (en: boolean) => {
+    setFertBusy(true);
+    try {
+      const r = await setFertPumpEnable(en);
+      toast.success(r.interlock ? `Lannoite Käyttö ${en ? "ON" : "OFF"} (EC-lukitus pitää Enable OFF)` : `Lannoite Käyttö: ${en ? "ON" : "OFF"}`);
+      fd.load();
+    } catch (e) { toast.error(e instanceof Error ? e.message : String(e)); }
+    finally { setFertBusy(false); }
+  };
+  const fp = fd.d?.plc;
+  const fertLive = !!(fp?.present && fp?.fresh !== false && (fp?.Pump !== undefined || fp?.Enable !== undefined));
+  const fertFault = fertLive && (fp!.HB_OK === false || (typeof fp!.Status === "number" && fp!.Status >= 10));
+  const fertFaultTxt = !fertLive ? undefined : fp!.HB_OK === false ? "HB" : (fp!.statusText ?? `Status ${fp!.Status}`);
+  const kState = (k: string): BoxState => { const ks = [`${k}:lo`, `${k}:hi`].filter((x) => ka.a?.active[x]); return !ks.length ? undefined : ks.some((x) => !ka.a?.acked?.[x]) ? "alarm" : "alarmAck"; };
+  const ecEv = (fd.d?.active ?? []).filter((e) => e.code?.startsWith("ec_"));
+  const ecState: BoxState = ecEv.some((e) => e.level === "alarm" && !e.acked) ? "alarm" : ecEv.some((e) => e.level === "alarm") ? "alarmAck" : ecEv.length ? "warning" : undefined;
+  const kp = (k: string) => ({ onClick: () => setAlSig(k), clickHint: " – muokkaa hälytysrajoja", state: kState(k), limits: limTxt(ka.a?.config.limits[k]) });
+  const alarms = [["A_HumHH", "Kosteus HH"], ["A_Tayttovesi", "Täyttövesi"], ["EC_Below_Q", "EC alhainen (EC_Below)"]].filter(([k]) => pu.b(k));
+  const fet = pu.n("FillingOnTime_ET");
+  const tmr = fet !== undefined ? `${Math.round(fet / 1000)} s` : undefined;
+
+  return (
+    <>
+      <div className="mb-1 text-[10px] font-mono text-muted-foreground" data-testid="pd-status">
+        {err ? `Virhe: ${err}` : ts ? `Päivitetty ${new Date(ts).toLocaleTimeString("fi-FI")}` : "Ladataan…"} · {POLL_MS / 1000} s · vain luku
+      </div>
+      <AlarmDialog sig={alSig} data={ka.a} onClose={() => setAlSig(null)} onSaved={ka.setA} />
+      <MeasurementPointWidget config={{ pointId: "GardenAir", name: "Kasvamo ilma · G_Air (PF-1)" }} open={fpOpen} onOpenChange={setFpOpen} dialogOnly />
+      <FertEcModal open={ecDlg} d={fd.d} reload={fd.load} onClose={() => setEcDlg(false)} />
+<div className="flex h-full flex-col gap-1 overflow-hidden p-1" data-testid="pd-process">
+        <div className="flex flex-wrap items-center justify-end gap-2" data-testid="pd-elem-toolbar">
+          {!pe.editing ? (
+            <Button size="sm" variant="outline" onClick={() => pe.setEditing(true)} data-testid="pd-elem-edit">
+              <Pencil className="mr-1 h-3 w-3" /> Muokkaa elementtejä
+            </Button>
+          ) : (
+            <>
+              <span className="mr-auto text-[11px] font-mono text-sky-300">Vedä elementtiä · kokoa kulmasta</span>
+              <Button size="sm" variant="ghost" onClick={() => void pe.reset()} data-testid="pd-elem-default"><RotateCcw className="mr-1 h-3 w-3" /> Default</Button>
+              <Button size="sm" variant="ghost" onClick={pe.cancel}>Cancel</Button>
+              <Button size="sm" onClick={() => void pe.save()} disabled={!pe.dirty} data-testid="pd-elem-save"><Save className="mr-1 h-3 w-3" /> Save</Button>
+            </>
+          )}
+        </div>
+        <div className="min-h-0 flex-1 overflow-auto">
+        <svg ref={pe.svgRef} viewBox="0 0 960 580" className="w-full min-w-[720px]" style={{ background: C.bg, borderRadius: 8 }}>
+          {/* Air duct + fan */}
+          <Pipe d="M 560 70 H 700" active={(fan ?? 0) > 0} />
+          <Pipe d="M 780 70 H 870 Q 900 70 900 40" active={(fan ?? 0) > 0} />
+          <g transform="translate(740,70)" onClick={openFp} style={{ cursor: "pointer" }} data-testid="pd-fan">
+            <title>Tuuletin PF-1 – avaa G_Air-säädin</title>
+            <circle r={30} fill={C.panel} stroke={C.stroke} strokeWidth={3} />
+            <g>
+              {[0, 120, 240].map((a) => (
+                <path key={a} d="M0 0 Q 8 -20 0 -24 Q -8 -20 0 0" fill={C.water} transform={`rotate(${a})`} />
+              ))}
+              {(fan ?? 0) > 0 && (
+                <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur={`${Math.max(0.4, 3 - (fan ?? 0) / 40)}s`} repeatCount="indefinite" />
+              )}
+            </g>
+            <circle r={4} fill={C.text} />
+          </g>
+          <EditableBox id="vb-fan" box={pe.box("vb-fan")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
+            <ValueBox {...pe.box("vb-fan")} label="Tuuletin PF-1" value={fmt(fan, 1)} unit="%" title={`${TAGS.fan} PF-1 %`} onClick={pe.editing ? undefined : openFp} />
+          </EditableBox>
+          <EditableBox id="vb-duct" box={pe.box("vb-duct")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
+            <ValueBox {...pe.box("vb-duct")} label="Poistoilma" value={fmt(v("ductTemp"), 1)} unit="°C" title={`${TAGS.ductTemp} G Poistoilma DS4`} onClick={pe.editing ? undefined : openFp} selected={pvDl === TAGS.ductTemp} />
+          </EditableBox>
+
+          {/* G_Air PID summary (click -> faceplate) */}
+          <EditableBox id="pid-gair" box={pe.box("pid-gair")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
+            <g transform={`translate(${pe.box("pid-gair").x},${pe.box("pid-gair").y})`} onClick={pe.editing ? undefined : openFp} style={{ cursor: pe.editing ? "move" : "pointer" }} data-testid="pd-gair">
+              <title>G_Air PID (PF-1) – avaa säädin</title>
+              <rect width={pe.box("pid-gair").w} height={pe.box("pid-gair").h} rx={6} fill={C.panel} stroke={ACCENT} strokeWidth={1.5} />
+              <rect x={6} y={6} width={30} height={14} rx={4} fill={ACCENT} />
+              <text x={21} y={16.5} textAnchor="middle" fontSize={9} fontWeight={700} fill="#111" fontFamily="monospace">PID</text>
+              <text x={42} y={17} fontSize={9} fill={C.muted} fontFamily="monospace">
+                G_Air · {pid.stale ? "ei dataa" : PID_STATE[pv?.State ?? -1] ?? `State ${pv?.State ?? "—"}`}{pv?.ErrBits ? ` · ErrBits 16#${pv.ErrBits.toString(16).toUpperCase().padStart(4, "0")}` : ""}
+              </text>
+              <text x={8} y={Math.max(28, pe.box("pid-gair").h - 8)} fontSize={13} fontWeight={600} fill={C.text} fontFamily="monospace">
+                PV {fmt(pv?.PV, 1)} · SP {fmt(pv?.SP, 1)} °C · {fmt(pv?.OutSum, 0)} %
+              </text>
+            </g>
+          </EditableBox>
+
+          {/* Air temps */}
+          <EditableBox id="vb-roof" box={pe.box("vb-roof")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
+            <ValueBox {...pe.box("vb-roof")} label="Katto" value={fmt(v("roofTemp"), 1)} unit="°C" title={`${TAGS.roofTemp} G Katto DS3`} onClick={pe.editing ? undefined : openFp} selected={pvDl === TAGS.roofTemp} />
+          </EditableBox>
+          <EditableBox id="vb-mid" box={pe.box("vb-mid")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
+            <ValueBox {...pe.box("vb-mid")} label="Keskiosa" value={fmt(v("midTemp"), 1)} unit="°C" title={`${TAGS.midTemp} G Mid DS2`} onClick={pe.editing ? undefined : openFp} selected={pvDl === TAGS.midTemp} />
+          </EditableBox>
+          <EditableBox id="btn-s-mid" box={pe.box("btn-s-mid")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
+            <Btn {...pe.box("btn-s-mid")} label="S" />
+          </EditableBox>
+
+          {/* Top bar buttons (HMI) */}
+          <EditableBox id="btn-asetukset" box={pe.box("btn-asetukset")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
+            <Btn {...pe.box("btn-asetukset")} label="Asetukset" />
+          </EditableBox>
+          <EditableBox id="btn-ec" box={pe.box("btn-ec")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
+            <Btn {...pe.box("btn-ec")} label="EC" />
+          </EditableBox>
+          <EditableBox id="btn-ph" box={pe.box("btn-ph")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
+            <Btn {...pe.box("btn-ph")} label="PH" />
+          </EditableBox>
+          <EditableBox id="btn-s-top" box={pe.box("btn-s-top")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
+            <Btn {...pe.box("btn-s-top")} label="S" />
+          </EditableBox>
+          <EditableBox id="btn-halytykset" box={pe.box("btn-halytykset")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
+            <Btn {...pe.box("btn-halytykset")} label="Hälytykset" badge={pu.ok ? String(alarms.length) : "?"} badgeColor={pu.ok ? (alarms.length ? C.off : C.on) : undefined}
+              title={pu.ok ? `Pumput_DB-hälytykset: ${alarms.length ? alarms.map((a) => a[1]).join(", ") : "ei aktiivisia"} (A_HumHH.Active, Tayttovesi.Active, EC_Below.Q)` : undefined} />
+          </EditableBox>
+          <EditableBox id="btn-kuittaus" box={pe.box("btn-kuittaus")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
+            <Btn {...pe.box("btn-kuittaus")} label="Kuittaus" />
+          </EditableBox>
+          {/* yellow status bars */}
+          <g opacity={0.5}>
+            <title>Tilapalkki: ei kytketty</title>
+            <rect x={40} y={150} width={70} height={14} rx={3} fill={C.na} />
+            <rect x={770} y={196} width={70} height={14} rx={3} fill={C.na} />
+            <text x={75} y={180} textAnchor="middle" fontSize={9} fill={C.muted} fontFamily="monospace">ei kytketty</text>
+            <text x={805} y={224} textAnchor="middle" fontSize={9} fill={C.muted} fontFamily="monospace">ei kytketty</text>
+          </g>
+
+          {/* Pipes */}
+          <Pipe d="M 60 360 V 260 H 300 V 320" active={pu.b("Circulation_L")} />
+          <Pipe d="M 160 420 V 350 H 330" active={fertLive && fp?.Pump === true} />
+          <Pipe d="M 360 320 V 230 H 800 V 360" active={pu.b("Filling")} />
+          <Pipe d="M 400 320 V 270 H 690 V 360" active={pu.b("Circulation_R")} />
+
+          {/* Main tank */}
+          <Tank x={300} y={320} w={130} h={200} level={v("level")} label="Ravinnesäiliö" />
+          <EditableBox id="vb-pinta" box={pe.box("vb-pinta")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
+            <ValueBox {...pe.box("vb-pinta")} label="Pinta" value={fmt(v("level"), 1)} unit="%" title={`${TAGS.level} Level · PLC SP ${pu.n("LVL_SP") ?? "—"} %`} {...kp("pinta")} onClick={pe.editing ? undefined : kp("pinta").onClick} />
+          </EditableBox>
+          <EditableBox id="vb-vesi" box={pe.box("vb-vesi")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
+            <ValueBox {...pe.box("vb-vesi")} label="Vesi" value={fmt(v("waterTemp"), 1)} unit="°C" title={`${TAGS.waterTemp} Water Temp`} {...kp("vesi")} onClick={pe.editing ? undefined : kp("vesi").onClick} />
+          </EditableBox>
+          <EditableBox id="vb-ec" box={pe.box("vb-ec")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
+            <ValueBox {...pe.box("vb-ec")} label="EC" value={fmt(v("ec"), 0)} unit="ppm" title={`${TAGS.ec} ppm · PLC TDS_SP ${pu.n("TDS_SP") ?? "—"}`} {...kp("ec")} onClick={pe.editing ? undefined : () => setEcDlg(true)} state={ecState} limits={fd.d?.config.ec_alarm ? (fd.d.config.ec_alarm.enabled ? `SP${fd.d.config.ec_alarm.lo_off}/+${fd.d.config.ec_alarm.hi_off}` : "pois") : undefined} />
+          </EditableBox>
+          <EditableBox id="vb-ph" box={pe.box("vb-ph")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
+            <ValueBox {...pe.box("vb-ph")} label="pH" value={fmt(v("ph"), 2)} title={`${TAGS.ph} pH`} {...kp("ph")} onClick={pe.editing ? undefined : kp("ph").onClick} />
+          </EditableBox>
+          <g opacity={0.55}>
+            <title>Lämmitin: ei kytketty</title>
+            <rect x={300} y={530} width={130} height={14} rx={3} fill={C.na} />
+            <text x={365} y={541} textAnchor="middle" fontSize={9} fill="#fff" fontFamily="monospace">Lämmitin – ei kytketty</text>
+          </g>
+
+          {/* G1 temp + timer */}
+          <EditableBox id="vb-g1" box={pe.box("vb-g1")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
+            <ValueBox {...pe.box("vb-g1")} label="G1 lämpötila" value={fmt(v("g1Temp"), 1)} unit="°C" title={`${TAGS.g1Temp} G1 temp TT`} />
+          </EditableBox>
+          <EditableBox id="btn-s-g1" box={pe.box("btn-s-g1")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
+            <Btn {...pe.box("btn-s-g1")} label="S" />
+          </EditableBox>
+          <EditableBox id="vb-ajastin" box={pe.box("vb-ajastin")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
+            <ValueBox {...pe.box("vb-ajastin")} label="Ajastin" wired={!!tmr} value={tmr} title={`Pumput_DB FillingOnTime.ET / PT ${Math.round((pu.n("FillingOnTime_PT") ?? 0) / 1000)} s · kiertoajastin Työ ${pu.n("OnTime") ?? "—"} s / Tauko ${pu.n("OffTime") ?? "—"} s (${pu.b("Tyo_IN") ? "työ" : "tauko"} ${Math.round(((pu.b("Tyo_IN") ? pu.n("Tyo_ET") : pu.n("Tauko_ET")) ?? 0) / 1000)} s)`} />
+          </EditableBox>
+          <EditableBox id="vb-kosteus" box={pe.box("vb-kosteus")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
+            <ValueBox {...pe.box("vb-kosteus")} label="Kosteus" wired={pu.n("G_Hum") !== undefined} value={fmt(pu.n("G_Hum"), 1)} unit="%" title={`Pumput_DB G_Hum (HH-raja ${pu.n("HumHH_SP") ?? "—"} %)`} />
+          </EditableBox>
+
+          {/* Left: water tank + pumps */}
+          <Tank x={20} y={420} w={90} h={100} label="L" sub="pinta ei kytketty" />
+          <Pump x={60} y={330} label="Pumppu L" state={pu.b("Circulation_L")} />
+          <FertPump x={160} y={410}
+            pump={fertLive ? fp?.Pump : undefined}
+            enable={fertLive ? fp?.Enable : undefined}
+            fault={fertFault}
+            faultText={fertFaultTxt}
+            writeAllowed={!!fd.d?.pump_write_allowed && !!fd.d?.config.live}
+            busy={fertBusy}
+            onToggle={(en) => void toggleFert(en)} />
+          <Tank x={135} y={505} w={50} h={45} label="" sub="Ferts" />
+          <EditableBox id="vb-lammitin-t" box={pe.box("vb-lammitin-t")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
+            <ValueBox {...pe.box("vb-lammitin-t")} label="Lämmitin T" wired={false} />
+          </EditableBox>
+
+          {/* pH dosing */}
+          <Pump x={590} y={430} label="pH+" color="#f43f5e" />
+          <Pump x={670} y={430} label="pH−" color="#f43f5e" />
+
+          {/* Right tanks */}
+          <Pump x={690} y={350} label="Pumppu R" state={pu.b("Circulation_R")} />
+          <Tank x={730} y={420} w={90} h={100} label="" sub="R" />
+          <Pump x={800} y={350} label="Täyttö" state={pu.b("Filling")} />
+          <Tank x={840} y={420} w={90} h={100} label="" sub="Täyttövesi (Fill)" />
+        </svg>
+        </div>
+      </div>
+    </>
+  );
+}
+
+/** Compact fertiliser row + EC modal opener for dashboard widget. */
+export function FertDoseWidget() {
+  const fd = useFertDose();
+  const [ecDlg, setEcDlg] = useState(false);
+  return (
+    <>
+      <FertEcModal open={ecDlg} d={fd.d} reload={fd.load} onClose={() => setEcDlg(false)} />
+      <FertDosePanel d={fd.d} onOpen={() => setEcDlg(true)} />
+    </>
+  );
+}

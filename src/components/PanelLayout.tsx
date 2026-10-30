@@ -51,6 +51,7 @@ export function PanelLayout({ layoutId, panels, rowHeight = 40, cols = 24 }: { l
   return (
     <div className="space-y-2">
       {toolbar}
+      <><style dangerouslySetInnerHTML={{ __html: ".react-grid-placeholder{background:rgb(56 189 248 / 0.28)!important;opacity:1!important;border-radius:0.5rem;}" }} />
       <Grid className="layout" layout={items} cols={cols} rowHeight={rowHeight} margin={[12, 12]} containerPadding={[0, 0]}
         isDraggable={editing} isResizable={editing} draggableHandle=".panel-drag" onLayoutChange={onChange} compactType={null} preventCollision>
         {panels.map((p) => (
@@ -59,6 +60,7 @@ export function PanelLayout({ layoutId, panels, rowHeight = 40, cols = 24 }: { l
             <div className="min-h-0 flex-1 overflow-auto">{p.node}</div>
           </div>))}
       </Grid>
+      </>
     </div>
   );
 }

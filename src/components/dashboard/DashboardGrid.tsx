@@ -3,7 +3,7 @@ import GridLayout, { WidthProvider, type Layout } from "react-grid-layout";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
 import { toast } from "sonner";
-import { GripVertical, LayoutGrid, Pencil, Plus, RefreshCw, RotateCcw, Save, Settings2, X } from "lucide-react";
+import { Gauge, GripVertical, LayoutGrid, Pencil, Plus, RefreshCw, RotateCcw, Save, Settings2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -16,12 +16,14 @@ import {
   DEFAULT_LAYOUT,
   TREND_RANGES,
   WIDGET_META,
+  migrateLegacyPanelWidget,
   newWidgetId,
   type DashboardLayout,
   type DashboardWidget,
   type WidgetConfigMap,
   type WidgetType,
 } from "./types";
+import type { ReactNode } from "react";
 
 const ResponsiveGrid = WidthProvider(GridLayout);
 /** 24-column grid (layout v2). v1 layouts were 12 columns: x/w are doubled on load. WIDGET_META sizes are in 12-col units. */
@@ -29,22 +31,42 @@ const COLS = 24;
 const MINW_24: Partial<Record<WidgetType, number>> = { measurementPoint: 2 };
 const ROW_HEIGHT = 44;
 
-function sanitize(layout: DashboardLayout | null | undefined): DashboardLayout {
-  if (!layout || !Array.isArray(layout.widgets)) return sanitize(DEFAULT_LAYOUT);
+export type DashboardGridProps = {
+  /** dashboard_layouts id; omit for the main Myko dashboard. */
+  layoutId?: string;
+  defaultLayout?: DashboardLayout;
+  title?: string;
+  /** Optional status line under/beside the title (e.g. process poll age). */
+  headerExtra?: ReactNode;
+  titleIcon?: "grid" | "gauge";
+};
+
+function sanitize(layout: DashboardLayout | null | undefined, fallback: DashboardLayout): DashboardLayout {
+  if (!layout || !Array.isArray(layout.widgets)) return sanitize(fallback, fallback);
   const k = layout.version === 2 ? 1 : 2;
-  return {
-    version: 2,
-    widgets: layout.widgets.filter((w) => w && w.type in WIDGET_META).map((w) => ({ ...w, x: w.x * k, w: w.w * k, config: w.config ?? {} })),
-  };
+  const widgets: DashboardWidget[] = [];
+  for (const raw of layout.widgets) {
+    if (!raw) continue;
+    let w: DashboardWidget | null = null;
+    if (typeof raw === "object" && (raw as DashboardWidget).type in WIDGET_META) {
+      w = { ...(raw as DashboardWidget), config: (raw as DashboardWidget).config ?? {} };
+    } else {
+      w = migrateLegacyPanelWidget(raw as unknown as Record<string, unknown>);
+    }
+    if (!w || !(w.type in WIDGET_META)) continue;
+    widgets.push({ ...w, x: w.x * k, w: w.w * k, config: w.config ?? {} });
+  }
+  if (widgets.length === 0) return sanitize(fallback, fallback);
+  return { version: 2, widgets };
 }
 
-export function CustomDashboard() {
+export function CustomDashboard(props: DashboardGridProps = {}) {
   // react-grid-layout measures the DOM; render only on the client to avoid SSR mismatch.
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
   return (
     <DashboardDataProvider>
-      {mounted ? <DashboardInner /> : <div className="p-4 text-xs text-muted-foreground font-mono">Loading dashboard…</div>}
+      {mounted ? <DashboardInner {...props} /> : <div className="p-4 text-xs text-muted-foreground font-mono">Loading dashboard…</div>}
     </DashboardDataProvider>
   );
 }
@@ -64,18 +86,24 @@ function mobileHeight(w: DashboardWidget): number | undefined {
     case "measurementPoint":
     case "alarmList":
     case "note":
+    case "fertDose":
       return undefined; // natural height
+    case "processDiagram":
+      return 520;
+    case "circSequence":
+      return 360;
     default:
       return Math.min(420, Math.max(200, w.h * ROW_HEIGHT));
   }
 }
 
-function DashboardInner() {
+function DashboardInner({ layoutId, defaultLayout = DEFAULT_LAYOUT, title = "Dashboard", headerExtra, titleIcon = "grid" }: DashboardGridProps) {
   const data = useDashboardData();
+  const fallback = defaultLayout;
   // < 768 px: read-only single column in saved desktop order; the saved grid is never touched here.
   const isMobile = useIsMobile();
   const [saved, setSaved] = useState<DashboardLayout | null>(null);
-  const [layout, setLayout] = useState<DashboardLayout>(() => sanitize(DEFAULT_LAYOUT));
+  const [layout, setLayout] = useState<DashboardLayout>(() => sanitize(fallback, fallback));
   const [isDefault, setIsDefault] = useState(true);
   const [editing, setEditing] = useState(false);
   const [dirty, setDirty] = useState(false);
@@ -84,15 +112,15 @@ function DashboardInner() {
   const [settingsFor, setSettingsFor] = useState<DashboardWidget | null>(null);
 
   useEffect(() => {
-    getDashboardLayout<DashboardLayout>()
+    getDashboardLayout<DashboardLayout>(layoutId)
       .then((res) => {
-        const l = sanitize(res.layout);
+        const l = sanitize(res.layout, fallback);
         setSaved(l);
         setLayout(l);
         setIsDefault(!res.layout);
       })
       .catch((e) => toast.error(`Layout load failed: ${(e as Error).message}`));
-  }, []);
+  }, [layoutId, fallback]);
 
   const labelFor = (id: string) => data.variables.find((v) => v.id === id)?.label;
 
@@ -133,7 +161,7 @@ function DashboardInner() {
     setLayout({ ...layout, widgets: [...layout.widgets, w] });
     setDirty(true);
     setPicker(false);
-    if (type !== "locationSummary") setSettingsFor(w);
+    if (type !== "locationSummary" && type !== "processDiagram" && type !== "circSequence" && type !== "fertDose" && type !== "weather" && type !== "spaceWeather") setSettingsFor(w);
   };
 
   const removeWidget = (id: string) => {
@@ -163,8 +191,8 @@ function DashboardInner() {
       return;
     }
     try {
-      const res = await saveDashboardLayout(next);
-      const l = sanitize(res.layout as DashboardLayout);
+      const res = await saveDashboardLayout(next, layoutId);
+      const l = sanitize(res.layout as DashboardLayout, fallback);
       setSaved(l);
       setLayout(l);
       setIsDefault(false);
@@ -196,8 +224,8 @@ function DashboardInner() {
   const save = async () => {
     setSaving(true);
     try {
-      const res = await saveDashboardLayout(layout);
-      const l = sanitize(res.layout as DashboardLayout);
+      const res = await saveDashboardLayout(layout, layoutId);
+      const l = sanitize(res.layout as DashboardLayout, fallback);
       setSaved(l);
       setLayout(l);
       setIsDefault(false);
@@ -212,7 +240,7 @@ function DashboardInner() {
   };
 
   const cancel = () => {
-    setLayout(saved ?? sanitize(DEFAULT_LAYOUT));
+    setLayout(saved ?? sanitize(fallback, fallback));
     setDirty(false);
     setEditing(false);
   };
@@ -220,9 +248,9 @@ function DashboardInner() {
   const resetToDefault = async () => {
     if (!confirm("Reset the dashboard to the default layout? Your saved layout will be removed.")) return;
     try {
-      await resetDashboardLayout();
-      setSaved(sanitize(DEFAULT_LAYOUT));
-      setLayout(sanitize(DEFAULT_LAYOUT));
+      await resetDashboardLayout(layoutId);
+      setSaved(sanitize(fallback, fallback));
+      setLayout(sanitize(fallback, fallback));
       setIsDefault(true);
       setDirty(false);
       setEditing(false);
@@ -236,8 +264,9 @@ function DashboardInner() {
     <div className="p-4 max-md:p-3 space-y-3">
       <div className="flex flex-wrap items-center gap-2">
         <h1 className="text-lg font-mono flex items-center gap-2">
-          <LayoutGrid className="h-4 w-4" /> Dashboard
+          {titleIcon === "gauge" ? <Gauge className="h-4 w-4" /> : <LayoutGrid className="h-4 w-4" />} {title}
         </h1>
+        {headerExtra}
         {isDefault && !editing && <span className="text-[10px] font-mono uppercase text-muted-foreground">default layout</span>}
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <span className="text-[10px] max-md:text-xs font-mono text-muted-foreground">
@@ -307,8 +336,10 @@ function DashboardInner() {
             })}
         </div>
       ) : (
+        <>
+      <style dangerouslySetInnerHTML={{ __html: ".react-grid-placeholder{background:rgb(56 189 248 / 0.28)!important;opacity:1!important;border-radius:0.5rem;}" }} />
       <ResponsiveGrid
-        className={editing ? "myko-grid-editing" : ""}
+        className={editing ? "myko-grid-editing layout" : "layout"}
         layout={gridItems}
         cols={COLS}
         rowHeight={ROW_HEIGHT}
@@ -320,7 +351,10 @@ function DashboardInner() {
         draggableHandle=".myko-drag-handle"
         compactType={null}
         preventCollision
+        allowOverlap={false}
         onLayoutChange={onLayoutChange}
+        onDragStop={onLayoutChange}
+        onResizeStop={onLayoutChange}
       >
         {layout.widgets.map((w) => (
           <div key={w.id}>
@@ -346,13 +380,14 @@ function DashboardInner() {
                 )}
               </div>
               )}
-              <div className={`min-h-0 flex-1 overflow-auto ${w.type === "measurementPoint" ? "" : "px-3 pb-3"}`}>
+              <div className={`min-h-0 flex-1 overflow-auto ${w.type === "measurementPoint" || w.type === "processDiagram" || w.type === "alarmList" || w.type === "circSequence" || w.type === "fertDose" ? "px-1 pb-1" : "px-3 pb-3"}`}>
                 <WidgetBody widget={w} />
               </div>
             </Card>
           </div>
         ))}
       </ResponsiveGrid>
+      </>
       )}
 
       {picker && (

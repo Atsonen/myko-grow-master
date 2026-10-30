@@ -20,6 +20,8 @@ import { AXIS_TICK, autoBucket, LEGEND_PROPS, resolveSeries, timeTickLabel, time
 import { useWidth } from "@/lib/useWidth";
 import { StatusBitsWidget } from "./StatusBitsWidget";
 import { AlarmListWidget } from "./AlarmListWidget";
+import { SequencePanel } from "@/components/SequencePanel";
+import { FertDoseWidget, ProcessDiagramWidget } from "./ProcessDiagramWidget";
 import { SpaceWeatherWidget, WeatherWidget } from "./WeatherWidgets";
 import { MeasurementPointWidget } from "./MeasurementPointWidget";
 import { SensorBlockWidget } from "@/components/SensorBlockFaceplate";
@@ -360,8 +362,16 @@ export function WidgetBody({ widget }: { widget: DashboardWidget }) {
       return <MeasurementPointWidget config={widget.config as WidgetConfigMap["measurementPoint"]} />;
     case "sensorBlock":
       return <SensorBlockWidget config={widget.config as WidgetConfigMap["sensorBlock"]} />;
-    case "alarmList":
-      return <AlarmListWidget config={widget.config as WidgetConfigMap["alarmList"]} />;
+    case "processDiagram":
+      return <ProcessDiagramWidget />;
+    case "circSequence":
+      return <SequencePanel />;
+    case "fertDose":
+      return <FertDoseWidget />;
+    case "alarmList": {
+      const c = widget.config as WidgetConfigMap["alarmList"];
+      return <AlarmListWidget config={c} storageKey={c.storageKey ?? "main"} />;
+    }
     case "statusBits":
       return <StatusBitsWidget config={widget.config as WidgetConfigMap["statusBits"]} />;
     case "weather":
@@ -405,6 +415,12 @@ export function defaultTitle(widget: DashboardWidget, labelFor: (id: string) => 
       return "Avaruussää";
     case "statusBits":
       return `Status · ${(widget.config as WidgetConfigMap["statusBits"]).variableKey ?? "word"}`;
+    case "processDiagram":
+      return "Prosessikuva";
+    case "circSequence":
+      return "Kiertovesisekvenssi";
+    case "fertDose":
+      return "Lannoiteannostelu";
     case "sensorBlock": {
       const d = (widget.config as WidgetConfigMap["sensorBlock"]).device;
       return d ? `SensorBlock · ${d}` : "SensorBlock";
