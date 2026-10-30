@@ -851,7 +851,7 @@ app.get(
           start: e.at_iso.replace(/\.(\d{3})\d*Z$/, ".$1Z"), end: null, active: true,
           value: e.value === null ? null : Number(e.value), endValue: null,
           source: PLC_POINT_IDS.has(e.point_id) ? "PLC" : "Myko", desc: alarmText(m?.bits, e.alarm).desc,
-          acked: Boolean(e.acked_iso), ackedAt: e.acked_iso ? e.acked_iso.replace(/\.(\d{3})\d*Z$/, ".$1Z") : null, ackedBy: e.acked_by ?? null,
+          acked: Boolean(e.acked_iso), ackedAt: e.acked_iso ? e.acked_iso.replace(/\.(\d{3})\d*Z$/, ".$1Z") : null, ackedBy: e.acked_by ?? null, ackRequired: true,
         };
         open.set(k, row);
         rows.push(row);
@@ -874,7 +874,7 @@ app.get(
       for (const f of lf) rows.push({
         id: -Number(f.id), pointId: "LLM_Advisor", pointName: `DeepSeek-valvoja · ${f.point}`, unit: "", alarm: `LLM_${String(f.category ?? "other").toUpperCase()}`,
         bit: null, priority: f.severity === "high" ? 1 : 2, start: f.at_iso, end: f.at_iso, active: false, value: null, endValue: null,
-        source: "LLM", desc: String(f.finding ?? ""), acked: true, ackedAt: null, ackedBy: null,
+        source: "LLM", desc: String(f.finding ?? ""), acked: true, ackedAt: null, ackedBy: null, ackRequired: false,
       });
     } catch (e) { console.error("[alarms] llm rows", e.message); }
     try { rows.push(...(await fertAlarmRows(hours)), ...kasvamoAlarmRows()); } catch (e) { console.error("[alarms] kasvamo rows", e.message); }
@@ -882,7 +882,7 @@ app.get(
     for (const [i, d] of [...fertDisabledRows().map((d) => ({ ...d, kind: "fert" })), ...kasvamoDisabledRows().map((d) => ({ ...d, kind: "kasvamo" }))].entries()) rows.push({
       id: -(1_800_000_000 + i), pointId: d.kind === "fert" ? "Kasvamo_EC" : "Kasvamo", pointName: d.name, unit: "", alarm: "POIS_KAYTOSTA", bit: null, priority: 3,
       start: new Date().toISOString(), end: null, active: true, value: null, endValue: null, source: "Kasvamo", desc: `🔕 Hälytys ${d.name} pois päältä ${untilTxt(d.until)} asti`,
-      acked: true, ackedAt: null, ackedBy: null, disabledUntil: d.until, disableKind: d.kind, disableKey: d.key });
+      acked: true, ackedAt: null, ackedBy: null, ackRequired: false, disabledUntil: d.until, disableKind: d.kind, disableKey: d.key });
     const out = rows
       .filter((r) => r.active || new Date(r.start).getTime() >= from || (r.end && new Date(r.end).getTime() >= from))
       .map((r) => ({ ...r, durationSec: Math.round(((r.end ? new Date(r.end).getTime() : now) - new Date(r.start).getTime()) / 1000) }))

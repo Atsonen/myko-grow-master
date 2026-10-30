@@ -60,19 +60,24 @@ function SrcBadge({ r }: { r: AlarmSummaryRow }) {
 }
 const hex = (n: number | undefined) => (n === undefined || n === null ? "—" : `16#${(n >>> 0).toString(16).toUpperCase().padStart(4, "0")}`);
 const activeText = (r: AlarmSummaryRow) => (r.active ? (r.priority === 1 ? "text-red-400 font-semibold" : "text-amber-300 font-semibold") : "text-muted-foreground");
-/** Kuitattu mutta vielä aktiivinen: odottaa poistumista (+ clear-timer / esto jos tiedossa). */
+/** Aktiivinen + "acked" (oikea kuittaus TAI varoitus joka ei vaadi kuittausta): odottaa poistumista. */
 function ackWaitLabel(r: AlarmSummaryRow, now = Date.now()): string | null {
   if (!r.active || !r.acked || r.disabledUntil || r.priority === 3) return null;
-  if (r.clearBlock) return `Kuitattu · odottaa: ${r.clearBlock}`;
+  const noAckNeeded = r.ackRequired === false || (r.ackRequired !== true && r.priority !== 1 && !r.ackedAt);
+  const who = !noAckNeeded && (r.ackedBy || r.ackedAt)
+    ? ` (${[r.ackedBy, r.ackedAt ? fmtTime(r.ackedAt) : null].filter(Boolean).join(" · ")})`
+    : "";
+  const prefix = noAckNeeded ? "Ei vaadi kuittausta" : `Kuitattu${who}`;
+  if (r.clearBlock) return `${prefix} · odottaa: ${r.clearBlock}`;
   if (r.clearSince && r.clearMin != null) {
     const remainMin = Math.max(0, Math.ceil((Date.parse(r.clearSince) + r.clearMin * 60_000 - now) / 60_000));
-    return remainMin > 0 ? `Kuitattu · poistuu ~${remainMin} min` : "Kuitattu · poistuu pian";
+    return remainMin > 0 ? `${prefix} · poistuu ~${remainMin} min` : `${prefix} · poistuu pian`;
   }
   if (r.clearRemainSec != null && r.clearRemainSec > 0) {
     const remainMin = Math.max(1, Math.ceil(r.clearRemainSec / 60));
-    return `Kuitattu · poistuu ~${remainMin} min`;
+    return `${prefix} · poistuu ~${remainMin} min`;
   }
-  return "Kuitattu · odottaa poistumista";
+  return `${prefix} · odottaa poistumista`;
 }
 
 type Saved = { hours?: number; points?: string[]; types?: string[]; prio?: string; activeOnly?: boolean; source?: string; sort?: { key: SortKey; dir: 1 | -1 } };

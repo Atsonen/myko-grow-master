@@ -167,12 +167,12 @@ export function MeasurementPointWidget({ config, open: openProp, onOpenChange, d
       <div className="w-full">
         <div className="min-w-0 overflow-hidden">
           <div className="truncate pr-9 text-[15px] font-medium leading-6 text-muted-foreground" data-testid="mp-name">{config.name || point.name}</div>
-          <div className="flex items-center gap-3">
-            <span className="flex items-baseline gap-1"><span className="text-3xl font-semibold tabular-nums text-foreground @[11rem]:text-4xl" data-testid="mp-value">
+          <div className="flex min-w-0 flex-col gap-1 @[15rem]:flex-row @[15rem]:items-center @[15rem]:gap-3">
+            <span className="flex min-w-0 items-baseline gap-1"><span className="text-3xl font-semibold tabular-nums text-foreground @[11rem]:text-4xl" data-testid="mp-value">
               {value === null || value === undefined ? "—" : value.toFixed(1)}
             </span>
             <span className="text-base text-muted-foreground">{point.unit}</span></span>
-            {pidKey && pid.v && <span className={`shrink-0 ${pid.stale ? "opacity-60" : ""}`}><OutputGauge v={pid.v} size={88} /></span>}
+            {pidKey && pid.v && <span className={`w-[min(5.5rem,100%)] max-w-[5.5rem] shrink-0 self-start @[15rem]:ml-auto ${pid.stale ? "opacity-60" : ""}`}><OutputGauge v={pid.v} size={88} /></span>}
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1" data-testid="mp-chips">
             {active.length === 0 ? (

@@ -106,6 +106,31 @@ export function WeatherWidget() {
 const LEVEL_COLOR = ["text-muted-foreground", "text-lime-400", "text-yellow-400", "text-orange-400", "text-red-500"];
 const kpColor = (kp: number | null) => (kp == null ? "#64748b" : kp >= 6 ? "#ef4444" : kp >= 5 ? "#f97316" : kp >= 4 ? "#facc15" : "#22c55e");
 
+
+type OutdoorResp = { t: number | null; time: string | null; symbol: number | null; station: string; location: string; source: string; fetchedAt: string };
+
+/** Compact outdoor temperature card (Rajamäki / FMI Röykkä). */
+export function OutdoorTempWidget() {
+  const { data, err } = usePoll<OutdoorResp>("/api/weather/outdoor");
+  if (err && !data) return <div className="text-xs text-destructive">{err}</div>;
+  if (!data) return <div className="text-xs text-muted-foreground italic">Ladataan…</div>;
+  return (
+    <div className="@container flex h-full min-h-0 flex-col justify-center px-1" data-testid="outdoor-temp">
+      <div className="flex items-baseline gap-2">
+        <span className="text-2xl leading-none" aria-hidden>{sym(data.symbol)}</span>
+        <span className="text-4xl font-semibold tabular-nums text-foreground @[11rem]:text-5xl" data-testid="outdoor-t">
+          {data.t == null ? "—" : data.t.toFixed(1)}
+        </span>
+        <span className="text-base text-muted-foreground">°C</span>
+      </div>
+      <div className="mt-1 text-xs text-muted-foreground">
+        {data.location} · {data.station}
+        {data.time ? ` · klo ${hhmm(typeof data.time === "string" ? data.time : new Date(data.time).toISOString())}` : ""}
+      </div>
+    </div>
+  );
+}
+
 export function SpaceWeatherWidget() {
   const { data, err } = usePoll<SpaceResp>("/api/space-weather");
   if (err && !data) return <div className="text-xs text-destructive">{err}</div>;

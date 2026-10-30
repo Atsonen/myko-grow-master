@@ -22,7 +22,7 @@ import { StatusBitsWidget } from "./StatusBitsWidget";
 import { AlarmListWidget } from "./AlarmListWidget";
 import { SequencePanel } from "@/components/SequencePanel";
 import { FertDoseWidget, ProcessDiagramWidget } from "./ProcessDiagramWidget";
-import { SpaceWeatherWidget, WeatherWidget } from "./WeatherWidgets";
+import { OutdoorTempWidget, SpaceWeatherWidget, WeatherWidget } from "./WeatherWidgets";
 import { MeasurementPointWidget } from "./MeasurementPointWidget";
 import { SensorBlockWidget } from "@/components/SensorBlockFaceplate";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -379,6 +379,8 @@ export function WidgetBody({ widget }: { widget: DashboardWidget }) {
     }
     case "statusBits":
       return <StatusBitsWidget config={widget.config as WidgetConfigMap["statusBits"]} />;
+    case "outdoorTemp":
+      return <OutdoorTempWidget />;
     case "weather":
       return <WeatherWidget />;
     case "spaceWeather":
@@ -417,8 +419,10 @@ export function defaultTitle(widget: DashboardWidget, labelFor: (id: string) => 
       return "Mittauspiste";
     case "alarmList":
       return "Hälytyslista";
+    case "outdoorTemp":
+      return "Sää";
     case "weather":
-      return "Sää · Rajamäki";
+      return "Sääennuste · Rajamäki";
     case "spaceWeather":
       return "Avaruussää";
     case "statusBits":

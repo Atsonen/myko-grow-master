@@ -73,7 +73,7 @@ async function notify(text) { for (const chat_id of await allowedChats()) await 
 export function kasvamoAlarmRows() {
   return Object.entries(st.active).filter(([, v]) => v).map(([k]) => ({ id: kId(k), pointId: "Kasvamo", pointName: "Kasvamo", unit: "", alarm: k.toUpperCase(),
     bit: null, priority: 1, start: new Date(st.at?.[k] ?? Date.now()).toISOString(), end: null, active: true, value: null, endValue: null,
-    source: "Kasvamo", desc: String(st.msg[k] ?? k).replace("🌱 ", ""), acked: Boolean(st.acked?.[k]), ackedAt: st.acked?.[k]?.at ?? null, ackedBy: st.acked?.[k]?.by ?? null }));
+    source: "Kasvamo", desc: String(st.msg[k] ?? k).replace("🌱 ", ""), acked: Boolean(st.acked?.[k]), ackedAt: st.acked?.[k]?.at ?? null, ackedBy: st.acked?.[k]?.by ?? null, ackRequired: true }));
 }
 const kId = (k) => { let h = 0; for (const ch of k) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return -(1_900_000_000 + (h % 100_000_000)); };
 export function kasvamoAck(ids, by) {

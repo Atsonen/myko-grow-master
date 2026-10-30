@@ -86,8 +86,8 @@ export function OutputGauge({ v, size = 76 }: { v: Partial<PidValues>; size?: nu
   const arc = (a: number, b: number) => { const [x1, y1] = pt(a, r), [x2, y2] = pt(b, r); return `M${x1.toFixed(2)} ${y1.toFixed(2)} A${r} ${r} 0 0 1 ${x2.toFixed(2)} ${y2.toFixed(2)}`; };
   const sum = num(v.OutSum);
   return (
-    <div className="flex shrink-0 flex-col items-center" data-testid="pid-outgauge">
-      <svg viewBox="0 0 80 62" width={size} height={size * 62 / 80} aria-label={`Lähtö ${f1(sum ?? undefined, 0)} %`} role="img">
+    <div className="flex w-full max-w-full flex-col items-center" style={{ maxWidth: size }} data-testid="pid-outgauge">
+      <svg viewBox="0 0 80 62" width="100%" height="auto" preserveAspectRatio="xMidYMid meet" aria-label={`Lähtö ${f1(sum ?? undefined, 0)} %`} role="img">
         <path d={arc(-100, 0)} fill="none" stroke="#a9c8e8" strokeOpacity={0.55} strokeWidth={5} />
         <path d={arc(0, 100)} fill="none" stroke="#d9b08f" strokeOpacity={0.55} strokeWidth={5} />
         {[-100, -50, 0, 50, 100].map((t) => { const [x1, y1] = pt(t, r - 5), [x2, y2] = pt(t, r + 3); return <line key={t} x1={x1} y1={y1} x2={x2} y2={y2} stroke="#d4d4d8" strokeWidth={t === 0 ? 1.6 : 1} />; })}

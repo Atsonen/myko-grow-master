@@ -131,6 +131,8 @@ function mobileHeight(w: DashboardWidget): number | undefined {
     case "weather":
     case "spaceWeather":
       return 380;
+    case "outdoorTemp":
+      return 150;
     case "statusBits":
     case "measurementPoint":
     case "alarmList":
@@ -213,7 +215,7 @@ function DashboardInner({ layoutId, defaultLayout = DEFAULT_LAYOUT, title = "Das
     setLayout({ ...layout, widgets: [...layout.widgets, w] });
     setDirty(true);
     setPicker(false);
-    if (type !== "locationSummary" && type !== "processDiagram" && type !== "circSequence" && type !== "fertDose" && type !== "weather" && type !== "spaceWeather") setSettingsFor(w);
+    if (type !== "locationSummary" && type !== "processDiagram" && type !== "circSequence" && type !== "fertDose" && type !== "weather" && type !== "outdoorTemp" && type !== "spaceWeather") setSettingsFor(w);
   };
 
   const removeWidget = (id: string) => {
@@ -402,7 +404,7 @@ function DashboardInner({ layoutId, defaultLayout = DEFAULT_LAYOUT, title = "Das
         resizeHandles={["e", "s", "se"]}
         draggableHandle=".myko-drag-handle"
         compactType={null}
-        preventCollision
+        preventCollision={false}
         allowOverlap={false}
         onLayoutChange={onLayoutChange}
         onDragStop={onLayoutChange}

@@ -203,6 +203,21 @@ export function registerFmiWeather(app, { query, asyncRoute }) {
   }
 
   app.get("/api/weather/fmi", asyncRoute(async (_req, res) => res.json(await getWeather())));
+  // Compact outdoor temp for dashboard "Sää" card (same FMI cache, ~10 min TTL).
+  app.get("/api/weather/outdoor", asyncRoute(async (_req, res) => {
+    const w = await getWeather();
+    const c = w.current;
+    const fc0 = w.forecast?.[0];
+    res.json({
+      t: c?.t ?? null,
+      time: c?.time ?? null,
+      symbol: fc0?.symbol ?? null,
+      station: w.station?.name ?? "Nurmijärvi Röykkä",
+      location: w.forecastLocation?.name ?? "Rajamäki",
+      source: w.source,
+      fetchedAt: w.fetchedAt,
+    });
+  }));
   app.get("/api/space-weather", asyncRoute(async (_req, res) => res.json(await getSpace())));
 
   let lastFcStore = 0;

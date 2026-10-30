@@ -527,6 +527,8 @@ export interface AlarmSummaryRow {
   acked?: boolean;
   ackedAt?: string | null;
   ackedBy?: string | null;
+  /** false = warning/info that never needs operator ack (e.g. fertDose ec_unrel) */
+  ackRequired?: boolean;
   disabledUntil?: string; disableKind?: "fert" | "kasvamo"; disableKey?: string;
   /** EC-hälytys: clear-timer käynnissä (ISO) tai null jos estetty/ei käynnissä */
   clearSince?: string | null;

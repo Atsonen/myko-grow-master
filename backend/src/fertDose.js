@@ -265,12 +265,13 @@ function fertClearFields(code) {
   return { clearSince, clearMin, clearRemainSec, clearBlock: info.block ?? null };
 }
 export async function fertAlarmRows(hours) {
-  const ev = await query("SELECT id, DATE_FORMAT(ts, '%Y-%m-%dT%H:%i:%sZ') ts, DATE_FORMAT(cleared_ts, '%Y-%m-%dT%H:%i:%sZ') cl, level, code, text, acked_ts FROM fert_events WHERE ts > UTC_TIMESTAMP() - INTERVAL ? HOUR OR cleared_ts IS NULL ORDER BY id DESC LIMIT 300", [hours]);
+  const ev = await query("SELECT id, DATE_FORMAT(ts, '%Y-%m-%dT%H:%i:%sZ') ts, DATE_FORMAT(cleared_ts, '%Y-%m-%dT%H:%i:%sZ') cl, level, code, text, DATE_FORMAT(acked_ts, '%Y-%m-%dT%H:%i:%sZ') acked_ts, acked_by FROM fert_events WHERE ts > UTC_TIMESTAMP() - INTERVAL ? HOUR OR cleared_ts IS NULL ORDER BY id DESC LIMIT 300", [hours]);
   return ev.map((e) => {
     const active = !e.cl && Boolean(S.ev[e.code]?.active);
+    const needsAck = e.level === "alarm";
     return { id: -(2_000_000_000 + Number(e.id)), pointId: "Kasvamo_EC", pointName: "Kasvamo · EC / lannoitus", unit: "ppm", alarm: String(e.code).toUpperCase(),
-      bit: null, priority: e.level === "alarm" ? 1 : 2, start: e.ts, end: e.cl, active, value: null, endValue: null,
-      source: "Kasvamo", desc: e.text, acked: e.level !== "alarm" || e.acked_ts != null, ackedAt: null, ackedBy: null,
+      bit: null, priority: needsAck ? 1 : 2, start: e.ts, end: e.cl, active, value: null, endValue: null,
+      source: "Kasvamo", desc: e.text, acked: !needsAck || e.acked_ts != null, ackedAt: e.acked_ts ?? null, ackedBy: e.acked_by ?? null, ackRequired: needsAck,
       ...(active ? fertClearFields(e.code) : {}) };
   }).map((r) => (r.active || r.end ? r : { ...r, end: r.start }));
 }
