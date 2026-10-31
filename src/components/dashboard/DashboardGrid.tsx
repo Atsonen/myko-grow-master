@@ -46,6 +46,19 @@ function asNum(v: unknown, d: number) {
   return Number.isFinite(n) ? n : d;
 }
 
+/** Shift layout so the topmost card sits at y=0 (no empty rows above). */
+function normalizeWidgetsY<T extends { y: number }>(widgets: T[]): T[] {
+  if (!widgets.length) return widgets;
+  let minY = Infinity;
+  for (const w of widgets) {
+    const y = Number(w.y);
+    if (Number.isFinite(y) && y < minY) minY = y;
+  }
+  if (!Number.isFinite(minY) || minY <= 0) return widgets;
+  return widgets.map((w) => ({ ...w, y: Number(w.y) - minY }));
+}
+
+
 /** Never throw on corrupt/legacy saved layouts; drop garbage rows; map panel→widget. */
 function sanitize(layout: DashboardLayout | null | undefined, fallback: DashboardLayout): DashboardLayout {
   try {
@@ -103,7 +116,7 @@ function sanitize(layout: DashboardLayout | null | undefined, fallback: Dashboar
       }
     }
     if (widgets.length === 0) return { version: 2, widgets: [...(fallback.widgets ?? [])] };
-    return { version: 2, widgets };
+    return { version: 2, widgets: normalizeWidgetsY(widgets) };
   } catch {
     return { version: 2, widgets: [...(fallback.widgets ?? [])] };
   }
@@ -196,11 +209,37 @@ function DashboardInner({ layoutId, defaultLayout = DEFAULT_LAYOUT, title = "Das
     if (!editing) return;
     const pos = new Map(items.map((it) => [it.i, it]));
     let changed = false;
-    const widgets = layout.widgets.map((w) => {
+    let widgets = layout.widgets.map((w) => {
       const p = pos.get(w.id);
       if (!p || (p.x === w.x && p.y === w.y && p.w === w.w && p.h === w.h)) return w;
       changed = true;
       return { ...w, x: p.x, y: p.y, w: p.w, h: p.h };
+    });
+    // Push-down (compactType=null) can leave empty rows at the top — re-anchor to y=0.
+    const normalized = normalizeWidgetsY(widgets);
+    if (normalized.some((w, i) => w.y !== widgets[i].y)) {
+      widgets = normalized;
+      changed = true;
+    }
+    if (changed) {
+      setLayout({ ...layout, widgets });
+      setDirty(true);
+    }
+  };
+
+  /** After drag/resize stop: apply positions then force top-anchor (curbs runaway empty top). */
+  const onLayoutStop = (items: Layout[]) => {
+    if (!editing) return;
+    const pos = new Map(items.map((it) => [it.i, it]));
+    let widgets = layout.widgets.map((w) => {
+      const p = pos.get(w.id);
+      if (!p) return w;
+      return { ...w, x: p.x, y: p.y, w: p.w, h: p.h };
+    });
+    widgets = normalizeWidgetsY(widgets);
+    const changed = widgets.some((w, i) => {
+      const o = layout.widgets[i];
+      return !o || w.x !== o.x || w.y !== o.y || w.w !== o.w || w.h !== o.h;
     });
     if (changed) {
       setLayout({ ...layout, widgets });
@@ -407,8 +446,8 @@ function DashboardInner({ layoutId, defaultLayout = DEFAULT_LAYOUT, title = "Das
         preventCollision={false}
         allowOverlap={false}
         onLayoutChange={onLayoutChange}
-        onDragStop={onLayoutChange}
-        onResizeStop={onLayoutChange}
+        onDragStop={onLayoutStop}
+        onResizeStop={onLayoutStop}
       >
         {layout.widgets.map((w) => (
           <div key={w.id}>

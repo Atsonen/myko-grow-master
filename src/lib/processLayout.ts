@@ -13,6 +13,15 @@ export const PROCESS_LAYOUT_ID = "plants_process";
 export type ProcessBox = { x: number; y: number; w: number; h: number };
 export type ProcessBoxMap = Record<string, ProcessBox>;
 
+/** Diagram zoom inside the widget. scale=null = fit-to-widget (default). 1 = 100%. */
+export type ProcessZoom = {
+  scale: number | null;
+  panX: number;
+  panY: number;
+};
+
+export const DEFAULT_PROCESS_ZOOM: ProcessZoom = { scale: null, panX: 0, panY: 0 };
+
 /** Default layout matching the hard-coded SVG positions (before user edits). */
 export const DEFAULT_PROCESS_BOXES: ProcessBoxMap = {
   "vb-fan": { x: 694, y: 108, w: 92, h: 40 },
@@ -40,8 +49,10 @@ export const DEFAULT_PROCESS_BOXES: ProcessBoxMap = {
 
 const MIN_W = 28;
 const MIN_H = 20;
-const VIEW_W = 960;
-const VIEW_H = 580;
+export const PROCESS_VIEW_W = 960;
+export const PROCESS_VIEW_H = 580;
+const VIEW_W = PROCESS_VIEW_W;
+const VIEW_H = PROCESS_VIEW_H;
 
 export function clampBox(b: ProcessBox): ProcessBox {
   const w = Math.max(MIN_W, Math.min(VIEW_W, Math.round(b.w)));
@@ -63,7 +74,27 @@ export function mergeProcessBoxes(saved: ProcessBoxMap | null | undefined): Proc
 type SavedLayout = {
   version?: number;
   widgets?: { id: string; type?: string; x?: number; y?: number; w?: number; h?: number }[];
+  /** Optional zoom/pan persisted with element boxes (plants_process). */
+  zoom?: { scale?: number | null; panX?: number; panY?: number };
 };
+
+
+export function clampProcessZoom(z: Partial<ProcessZoom> | null | undefined): ProcessZoom {
+  const panX = Number.isFinite(Number(z?.panX)) ? Number(z?.panX) : 0;
+  const panY = Number.isFinite(Number(z?.panY)) ? Number(z?.panY) : 0;
+  const raw = z?.scale;
+  if (raw === null || raw === undefined || raw === ("" as unknown)) {
+    return { scale: null, panX, panY };
+  }
+  const s = Number(raw);
+  if (!Number.isFinite(s) || s <= 0) return { scale: null, panX, panY };
+  // Keep a sane range so runaway values cannot blow the layout.
+  return { scale: Math.min(4, Math.max(0.15, Math.round(s * 1000) / 1000)), panX, panY };
+}
+
+export function zoomFromSaved(layout: SavedLayout | null): ProcessZoom {
+  return clampProcessZoom(layout?.zoom);
+}
 
 export function boxesFromSaved(layout: SavedLayout | null): ProcessBoxMap {
   const m: ProcessBoxMap = {};
@@ -80,7 +111,8 @@ export function boxesFromSaved(layout: SavedLayout | null): ProcessBoxMap {
   return mergeProcessBoxes(m);
 }
 
-export function boxesToSaved(boxes: ProcessBoxMap): SavedLayout {
+export function boxesToSaved(boxes: ProcessBoxMap, zoom: ProcessZoom = DEFAULT_PROCESS_ZOOM): SavedLayout {
+  const z = clampProcessZoom(zoom);
   return {
     version: 2,
     widgets: Object.entries(boxes).map(([id, b]) => ({
@@ -91,23 +123,42 @@ export function boxesToSaved(boxes: ProcessBoxMap): SavedLayout {
       w: b.w,
       h: b.h,
     })),
+    zoom: { scale: z.scale, panX: z.panX, panY: z.panY },
   };
 }
 
-export async function loadProcessBoxes(): Promise<ProcessBoxMap> {
+export type ProcessLayoutState = { boxes: ProcessBoxMap; zoom: ProcessZoom };
+
+export async function loadProcessLayout(): Promise<ProcessLayoutState> {
   const r = await getDashboardLayout<SavedLayout>(PROCESS_LAYOUT_ID);
-  return boxesFromSaved(r.layout);
+  return { boxes: boxesFromSaved(r.layout), zoom: zoomFromSaved(r.layout) };
 }
 
-export async function saveProcessBoxes(boxes: ProcessBoxMap): Promise<ProcessBoxMap> {
-  const payload = boxesToSaved(boxes);
+/** @deprecated Prefer loadProcessLayout (includes zoom). */
+export async function loadProcessBoxes(): Promise<ProcessBoxMap> {
+  return (await loadProcessLayout()).boxes;
+}
+
+export async function saveProcessLayout(boxes: ProcessBoxMap, zoom: ProcessZoom = DEFAULT_PROCESS_ZOOM): Promise<ProcessLayoutState> {
+  const payload = boxesToSaved(boxes, zoom);
   const r = await saveDashboardLayout(payload, PROCESS_LAYOUT_ID);
-  return boxesFromSaved(r.layout as SavedLayout);
+  const layout = r.layout as SavedLayout;
+  return { boxes: boxesFromSaved(layout), zoom: zoomFromSaved(layout) };
 }
 
-export async function resetProcessBoxes(): Promise<ProcessBoxMap> {
+/** @deprecated Prefer saveProcessLayout. */
+export async function saveProcessBoxes(boxes: ProcessBoxMap): Promise<ProcessBoxMap> {
+  return (await saveProcessLayout(boxes, DEFAULT_PROCESS_ZOOM)).boxes;
+}
+
+export async function resetProcessLayout(): Promise<ProcessLayoutState> {
   await resetDashboardLayout(PROCESS_LAYOUT_ID);
-  return mergeProcessBoxes(null);
+  return { boxes: mergeProcessBoxes(null), zoom: { ...DEFAULT_PROCESS_ZOOM } };
+}
+
+/** @deprecated Prefer resetProcessLayout. */
+export async function resetProcessBoxes(): Promise<ProcessBoxMap> {
+  return (await resetProcessLayout()).boxes;
 }
 
 /** Map pointer client coords → SVG viewBox coords. */

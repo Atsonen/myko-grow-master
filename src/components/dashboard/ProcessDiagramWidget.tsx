@@ -4,7 +4,7 @@
  */
 import { DisableDuration, untilLabel, useNow, reEnableAlarm } from "@/lib/alarmDisable";
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from "react";
-import { Pencil, RotateCcw, Save } from "lucide-react";
+import { Minus, Pencil, Plus, RotateCcw, Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { FertDosePanel, FertEcModal, useFertDose } from "@/components/FertDosePanel";
@@ -14,14 +14,19 @@ import { MeasurementPointWidget } from "@/components/dashboard/MeasurementPointW
 import { usePid, PID_STATE } from "@/components/dashboard/PidFaceplate";
 import {
   DEFAULT_PROCESS_BOXES,
+  DEFAULT_PROCESS_ZOOM,
+  PROCESS_VIEW_H,
+  PROCESS_VIEW_W,
   clientToSvg,
   clampBox,
-  loadProcessBoxes,
+  clampProcessZoom,
+  loadProcessLayout,
   mergeProcessBoxes,
-  resetProcessBoxes,
-  saveProcessBoxes,
+  resetProcessLayout,
+  saveProcessLayout,
   type ProcessBox,
   type ProcessBoxMap,
+  type ProcessZoom,
 } from "@/lib/processLayout";
 
 // Signals identified by matching HMI screenshot values (23.10.2026 ~14:05) to datalogger values.
@@ -384,12 +389,37 @@ function EditableBox({
 function useProcessBoxEdit() {
   const [boxes, setBoxes] = useState<ProcessBoxMap>(() => mergeProcessBoxes(null));
   const [saved, setSaved] = useState<ProcessBoxMap>(() => mergeProcessBoxes(null));
+  const [zoom, setZoom] = useState<ProcessZoom>(() => ({ ...DEFAULT_PROCESS_ZOOM }));
+  const [savedZoom, setSavedZoom] = useState<ProcessZoom>(() => ({ ...DEFAULT_PROCESS_ZOOM }));
   const [editing, setEditing] = useState(false);
   const [dirty, setDirty] = useState(false);
   const svgRef = useRef<SVGSVGElement | null>(null);
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const [fitScale, setFitScale] = useState(1);
 
   useEffect(() => {
-    loadProcessBoxes().then((b) => { setBoxes(b); setSaved(b); }).catch(() => undefined);
+    loadProcessLayout()
+      .then((s) => {
+        setBoxes(s.boxes); setSaved(s.boxes);
+        setZoom(s.zoom); setSavedZoom(s.zoom);
+      })
+      .catch(() => undefined);
+  }, []);
+
+  // Measure widget viewport → fit scale so 960×580 never clips by default.
+  useEffect(() => {
+    const el = viewportRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const measure = () => {
+      const w = el.clientWidth || 1;
+      const h = el.clientHeight || 1;
+      const s = Math.min(w / PROCESS_VIEW_W, h / PROCESS_VIEW_H);
+      setFitScale(Number.isFinite(s) && s > 0 ? Math.min(4, s) : 1);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
   }, []);
 
   const onChange = useCallback((id: string, next: ProcessBox) => {
@@ -397,26 +427,44 @@ function useProcessBoxEdit() {
     setDirty(true);
   }, []);
 
+  const setZoomUser = useCallback((next: ProcessZoom | ((z: ProcessZoom) => ProcessZoom)) => {
+    setZoom((prev) => clampProcessZoom(typeof next === "function" ? next(prev) : next));
+    setDirty(true);
+  }, []);
+
   const box = (id: string): ProcessBox => boxes[id] ?? DEFAULT_PROCESS_BOXES[id];
+
+  /** Effective CSS scale applied to the SVG. */
+  const effectiveScale = zoom.scale == null ? fitScale : zoom.scale;
 
   const save = async () => {
     try {
-      const b = await saveProcessBoxes(boxes);
-      setBoxes(b); setSaved(b); setDirty(false); setEditing(false);
+      const s = await saveProcessLayout(boxes, zoom);
+      setBoxes(s.boxes); setSaved(s.boxes);
+      setZoom(s.zoom); setSavedZoom(s.zoom);
+      setDirty(false); setEditing(false);
       toast.success("Elementtien asettelu tallennettu");
     } catch (e) { toast.error((e as Error).message); }
   };
-  const cancel = () => { setBoxes(saved); setDirty(false); setEditing(false); };
+  const cancel = () => {
+    setBoxes(saved); setZoom(savedZoom); setDirty(false); setEditing(false);
+  };
   const reset = async () => {
-    if (!confirm("Palautetaanko prosessikuvan elementtien oletuskoot ja -paikat?")) return;
+    if (!confirm("Palautetaanko prosessikuvan elementtien oletuskoot, -paikat ja zoom?")) return;
     try {
-      const b = await resetProcessBoxes();
-      setBoxes(b); setSaved(b); setDirty(false); setEditing(false);
+      const s = await resetProcessLayout();
+      setBoxes(s.boxes); setSaved(s.boxes);
+      setZoom(s.zoom); setSavedZoom(s.zoom);
+      setDirty(false); setEditing(false);
       toast.success("Oletusasettelu palautettu");
     } catch (e) { toast.error((e as Error).message); }
   };
 
-  return { boxes, box, editing, setEditing, dirty, svgRef, onChange, save, cancel, reset };
+  return {
+    boxes, box, editing, setEditing, dirty, svgRef, viewportRef,
+    onChange, save, cancel, reset,
+    zoom, setZoomUser, effectiveScale, fitScale,
+  };
 }
 
 
@@ -482,15 +530,49 @@ export function ProcessDiagramWidget() {
             </Button>
           ) : (
             <>
-              <span className="mr-auto text-[11px] font-mono text-sky-300">Vedä elementtiä · kokoa kulmasta</span>
+              <span className="mr-auto text-[11px] font-mono text-sky-300">Vedä · kokoa · zoom</span>
+              <div className="flex flex-wrap items-center gap-1 rounded border border-border/60 bg-secondary/30 px-1.5 py-0.5" data-testid="pd-zoom-controls" onMouseDown={(e) => e.stopPropagation()}>
+                <button type="button" className="p-1 text-muted-foreground hover:text-foreground" title="Pienennä" data-testid="pd-zoom-out"
+                  onClick={() => pe.setZoomUser((z) => ({ ...z, scale: Math.max(0.15, Math.round(((z.scale ?? pe.fitScale) * 0.9) * 100) / 100) }))}>
+                  <Minus className="h-3 w-3" />
+                </button>
+                <input
+                  type="range" min={15} max={250} step={1}
+                  aria-label="Zoom"
+                  data-testid="pd-zoom-slider"
+                  className="h-1.5 w-24 cursor-pointer accent-sky-400"
+                  value={Math.round((pe.zoom.scale ?? pe.fitScale) * 100)}
+                  onChange={(e) => pe.setZoomUser((z) => ({ ...z, scale: Math.max(0.15, Number(e.target.value) / 100) }))}
+                />
+                <button type="button" className="p-1 text-muted-foreground hover:text-foreground" title="Suurenna" data-testid="pd-zoom-in"
+                  onClick={() => pe.setZoomUser((z) => ({ ...z, scale: Math.min(4, Math.round(((z.scale ?? pe.fitScale) * 1.1) * 100) / 100) }))}>
+                  <Plus className="h-3 w-3" />
+                </button>
+                <span className="min-w-[2.75rem] text-center font-mono text-[10px] text-muted-foreground" data-testid="pd-zoom-pct">
+                  {pe.zoom.scale == null ? "Sovita" : `${Math.round(pe.zoom.scale * 100)}%`}
+                </span>
+                <Button size="sm" variant="ghost" className="h-7 px-2 text-[11px]" data-testid="pd-zoom-fit"
+                  onClick={() => pe.setZoomUser({ scale: null, panX: 0, panY: 0 })}>Sovita</Button>
+                <Button size="sm" variant="ghost" className="h-7 px-2 text-[11px]" data-testid="pd-zoom-100"
+                  onClick={() => pe.setZoomUser({ scale: 1, panX: 0, panY: 0 })}>100%</Button>
+              </div>
               <Button size="sm" variant="ghost" onClick={() => void pe.reset()} data-testid="pd-elem-default"><RotateCcw className="mr-1 h-3 w-3" /> Default</Button>
               <Button size="sm" variant="ghost" onClick={pe.cancel}>Cancel</Button>
               <Button size="sm" onClick={() => void pe.save()} disabled={!pe.dirty} data-testid="pd-elem-save"><Save className="mr-1 h-3 w-3" /> Save</Button>
             </>
           )}
         </div>
-        <div className="min-h-0 flex-1 overflow-auto">
-        <svg ref={pe.svgRef} viewBox="0 0 960 580" className="w-full min-w-[720px]" style={{ background: C.bg, borderRadius: 8 }}>
+        <div ref={pe.viewportRef} className="relative min-h-0 flex-1 overflow-hidden" data-testid="pd-viewport">
+        <div
+          className="origin-top-left"
+          style={{
+            width: PROCESS_VIEW_W,
+            height: PROCESS_VIEW_H,
+            transform: `translate(${pe.zoom.panX}px, ${pe.zoom.panY}px) scale(${pe.effectiveScale})`,
+          }}
+          data-testid="pd-zoom-layer"
+        >
+        <svg ref={pe.svgRef} viewBox={`0 0 ${PROCESS_VIEW_W} ${PROCESS_VIEW_H}`} width={PROCESS_VIEW_W} height={PROCESS_VIEW_H} style={{ background: C.bg, borderRadius: 8, display: "block" }}>
           {/* Air duct + fan */}
           <Pipe d="M 560 70 H 700" active={(fan ?? 0) > 0} />
           <Pipe d="M 780 70 H 870 Q 900 70 900 40" active={(fan ?? 0) > 0} />
@@ -636,6 +718,7 @@ export function ProcessDiagramWidget() {
           <Pump x={800} y={350} label="Täyttö" state={pu.b("Filling")} />
           <Tank x={840} y={420} w={90} h={100} label="" sub="Täyttövesi (Fill)" />
         </svg>
+        </div>
         </div>
       </div>
     </>

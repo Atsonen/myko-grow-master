@@ -378,14 +378,28 @@ app.put(
       };
     });
     const version = layout.version === 2 ? 2 : 1; // v2 = 24-column grid
-    const json = JSON.stringify({ version, widgets });
+    // Optional zoom/pan (Prosessikuva plants_process); ignore garbage.
+    let zoom;
+    if (layout.zoom && typeof layout.zoom === "object") {
+      const s = layout.zoom.scale;
+      const scale = s === null || s === undefined ? null : Number(s);
+      const panX = Number(layout.zoom.panX);
+      const panY = Number(layout.zoom.panY);
+      zoom = {
+        scale: scale === null || !Number.isFinite(scale) ? null : Math.min(4, Math.max(0.15, scale)),
+        panX: Number.isFinite(panX) ? panX : 0,
+        panY: Number.isFinite(panY) ? panY : 0,
+      };
+    }
+    const saved = zoom ? { version, widgets, zoom } : { version, widgets };
+    const json = JSON.stringify(saved);
     if (json.length > 200_000) return res.status(400).json({ error: "Layout too large" });
     await query(
       `INSERT INTO dashboard_layouts (id, layout_json) VALUES (?, ?)
        ON DUPLICATE KEY UPDATE layout_json = VALUES(layout_json)`,
       [id, json],
     );
-    res.json({ id, layout: { version, widgets } });
+    res.json({ id, layout: saved });
   }),
 );
 
