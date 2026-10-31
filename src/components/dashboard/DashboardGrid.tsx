@@ -145,7 +145,7 @@ function mobileHeight(w: DashboardWidget): number | undefined {
     case "spaceWeather":
       return 380;
     case "outdoorTemp":
-      return 150;
+      return 200;
     case "statusBits":
     case "measurementPoint":
     case "alarmList":

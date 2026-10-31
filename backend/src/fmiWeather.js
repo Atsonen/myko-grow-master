@@ -129,6 +129,88 @@ function isDark(d = new Date()) {
   return el < -6;
 }
 
+
+/** Europe/Helsinki Y/M/D/H/min from a Date. */
+function helParts(d = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/Helsinki", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hour12: false,
+  }).formatToParts(d);
+  const g = (type) => Number(parts.find((p) => p.type === type)?.value);
+  let h = g("hour");
+  if (h === 24) h = 0; // en-GB midnight quirk
+  return { y: g("year"), m: g("month"), d: g("day"), h, min: g("minute") };
+}
+
+/** Helsinki local civil time → UTC Date (iterative offset fix; DST-safe). */
+function helLocalToUtc(y, m, d, h = 0, min = 0) {
+  let utc = Date.UTC(y, m - 1, d, h, min);
+  for (let i = 0; i < 4; i++) {
+    const p = helParts(new Date(utc));
+    const got = Date.UTC(p.y, p.m - 1, p.d, p.h, p.min);
+    const want = Date.UTC(y, m - 1, d, h, min);
+    const delta = want - got;
+    if (delta === 0) break;
+    utc += delta;
+  }
+  return new Date(utc);
+}
+
+function addHelDays(y, m, d, deltaDays) {
+  const noon = helLocalToUtc(y, m, d, 12, 0);
+  return helParts(new Date(noon.getTime() + deltaDays * 86400_000));
+}
+
+function minMaxTemps(vals) {
+  const xs = vals.filter((v) => v != null && Number.isFinite(v));
+  if (!xs.length) return { min: null, max: null };
+  return { min: Math.round(Math.min(...xs) * 10) / 10, max: Math.round(Math.max(...xs) * 10) / 10 };
+}
+
+/**
+ * Today's calendar-day T min/max (obs past + forecast remaining) and upcoming night 22–07 T min/max.
+ * Night: if before 07 → current night (yesterday 22 → today 07); else tonight 22 → tomorrow 07.
+ */
+function dayNightTemps(obsRows, forecast, now = new Date()) {
+  const p = helParts(now);
+  const dayStart = helLocalToUtc(p.y, p.m, p.d, 0, 0);
+  const tomorrow = addHelDays(p.y, p.m, p.d, 1);
+  const dayEnd = helLocalToUtc(tomorrow.y, tomorrow.m, tomorrow.d, 0, 0);
+  let nightStart, nightEnd;
+  if (p.h < 7) {
+    const y = addHelDays(p.y, p.m, p.d, -1);
+    nightStart = helLocalToUtc(y.y, y.m, y.d, 22, 0);
+    nightEnd = helLocalToUtc(p.y, p.m, p.d, 7, 0);
+  } else {
+    nightStart = helLocalToUtc(p.y, p.m, p.d, 22, 0);
+    const tom = addHelDays(p.y, p.m, p.d, 1);
+    nightEnd = helLocalToUtc(tom.y, tom.m, tom.d, 7, 0);
+  }
+
+  // Prefer observations over forecast for the same hour bucket.
+  const byHour = new Map(); // key = floor hour UTC ms → { t, src }
+  const put = (time, t, src) => {
+    const ms = Date.parse(time instanceof Date ? time.toISOString() : time);
+    if (!Number.isFinite(ms) || t == null || !Number.isFinite(t)) return;
+    const key = Math.floor(ms / 3600_000) * 3600_000;
+    const prev = byHour.get(key);
+    if (!prev || src === "obs" || (src === "fc" && prev.src === "fc")) byHour.set(key, { t, src, ms });
+  };
+  for (const r of obsRows || []) put(r.obs_time ?? r.time, num(r.t2m ?? r.t), "obs");
+  for (const f of forecast || []) put(f.time, num(f.t), "fc");
+
+  const inRange = (a, b) => [...byHour.values()].filter((x) => x.ms >= a.getTime() && x.ms < b.getTime()).map((x) => x.t);
+  const day = minMaxTemps(inRange(dayStart, dayEnd));
+  const night = minMaxTemps(inRange(nightStart, nightEnd));
+  const usedFc = [...byHour.values()].some((x) => x.src === "fc" && x.ms >= now.getTime() - 3600_000);
+  return {
+    day: { ...day, start: dayStart.toISOString(), end: dayEnd.toISOString() },
+    night: { ...night, start: nightStart.toISOString(), end: nightEnd.toISOString(), label: "Yö 22–07" },
+    usedForecast: usedFc,
+  };
+}
+
+
 export function registerFmiWeather(app, { query, asyncRoute }) {
   const cache = { weather: null, wAt: 0, space: null, sAt: 0 };
   const TTL = 10 * 60_000;
@@ -203,18 +285,29 @@ export function registerFmiWeather(app, { query, asyncRoute }) {
   }
 
   app.get("/api/weather/fmi", asyncRoute(async (_req, res) => res.json(await getWeather())));
-  // Compact outdoor temp for dashboard "Sää" card (same FMI cache, ~10 min TTL).
+  // Compact outdoor summary for dashboard "Sää" card (same FMI cache, ~10 min TTL).
   app.get("/api/weather/outdoor", asyncRoute(async (_req, res) => {
     const w = await getWeather();
     const c = w.current;
     const fc0 = w.forecast?.[0];
+    // Re-read recent obs (full t2m) so day min/max use real hourly values, not the slim history map.
+    const obsRows = await query(
+      "SELECT obs_time, t2m, rh FROM fmi_weather_obs WHERE obs_time > UTC_TIMESTAMP() - INTERVAL 40 HOUR ORDER BY obs_time");
+    const ranges = dayNightTemps(obsRows, w.forecast || []);
+    const fcOk = Array.isArray(w.forecast) && w.forecast.length > 0;
     res.json({
       t: c?.t ?? null,
+      rh: c?.rh ?? (fc0?.rh != null ? Math.round(fc0.rh) : null),
       time: c?.time ?? null,
       symbol: fc0?.symbol ?? null,
       station: w.station?.name ?? "Nurmijärvi Röykkä",
       location: w.forecastLocation?.name ?? "Rajamäki",
       source: w.source,
+      day: { min: ranges.day.min, max: ranges.day.max },
+      night: { min: ranges.night.min, max: ranges.night.max, window: "22–07" },
+      forecastAvailable: fcOk,
+      forecastNote: fcOk ? null
+        : "Ennuste puuttuu juuri nyt. FMI-piste-ennuste: stored query fmi::forecast::edited::weather::scandinavia::point::simple (tai HARMONIE fmi::forecast::harmonie::surface::point::simple) osoitteessa https://opendata.fmi.fi — latlon Rajamäki 60.52,24.75.",
       fetchedAt: w.fetchedAt,
     });
   }));

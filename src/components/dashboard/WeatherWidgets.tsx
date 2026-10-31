@@ -107,25 +107,55 @@ const LEVEL_COLOR = ["text-muted-foreground", "text-lime-400", "text-yellow-400"
 const kpColor = (kp: number | null) => (kp == null ? "#64748b" : kp >= 6 ? "#ef4444" : kp >= 5 ? "#f97316" : kp >= 4 ? "#facc15" : "#22c55e");
 
 
-type OutdoorResp = { t: number | null; time: string | null; symbol: number | null; station: string; location: string; source: string; fetchedAt: string };
+type OutdoorResp = {
+  t: number | null;
+  rh: number | null;
+  time: string | null;
+  symbol: number | null;
+  station: string;
+  location: string;
+  source: string;
+  day: { min: number | null; max: number | null };
+  night: { min: number | null; max: number | null; window?: string };
+  forecastAvailable?: boolean;
+  forecastNote?: string | null;
+  fetchedAt: string;
+};
 
-/** Compact outdoor temperature card (Rajamäki / FMI Röykkä). */
+const outdoorDeg = (v: number | null | undefined) => (v == null || Number.isNaN(v) ? "—" : v.toFixed(1).replace(".", ","));
+
+/** Compact outdoor card (Rajamäki / FMI Röykkä): T, RH, päivän/yön alin–ylin. */
 export function OutdoorTempWidget() {
   const { data, err } = usePoll<OutdoorResp>("/api/weather/outdoor");
   if (err && !data) return <div className="text-xs text-destructive">{err}</div>;
   if (!data) return <div className="text-xs text-muted-foreground italic">Ladataan…</div>;
+  const when = data.time ? hhmm(typeof data.time === "string" ? data.time : new Date(data.time).toISOString()) : null;
+  const place = `${data.location} · ${data.station}${when ? ` · klo ${when}` : ""}`;
   return (
-    <div className="@container flex h-full min-h-0 flex-col justify-center overflow-hidden px-1" data-testid="outdoor-temp">
+    <div className="@container flex h-full min-h-0 flex-col justify-center gap-0.5 overflow-hidden px-1" data-testid="outdoor-temp">
       <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
         <span className="text-xl leading-none @[10rem]:text-2xl" aria-hidden>{sym(data.symbol)}</span>
-        <span className="text-3xl font-semibold tabular-nums text-foreground @[10rem]:text-4xl @[14rem]:text-5xl" data-testid="outdoor-t">
+        <span className="text-3xl font-semibold tabular-nums leading-none text-foreground @[10rem]:text-4xl @[14rem]:text-5xl" data-testid="outdoor-t">
           {data.t == null ? "—" : data.t.toFixed(1)}
         </span>
         <span className="text-sm text-muted-foreground @[10rem]:text-base">°C</span>
       </div>
-      <div className="mt-1 truncate text-[10px] text-muted-foreground @[10rem]:text-xs" title={`${data.location} · ${data.station}${data.time ? ` · klo ${hhmm(typeof data.time === "string" ? data.time : new Date(data.time).toISOString())}` : ""}`}>
-        {data.location} · {data.station}
-        {data.time ? ` · klo ${hhmm(typeof data.time === "string" ? data.time : new Date(data.time).toISOString())}` : ""}
+      <div className="mt-0.5 hidden text-xs tabular-nums text-muted-foreground @[7rem]:block" data-testid="outdoor-rh">
+        Kosteus {data.rh == null ? "—" : `${Math.round(data.rh)} %`}
+      </div>
+      <div className="mt-0.5 hidden grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-[11px] tabular-nums leading-tight text-muted-foreground @[9rem]:grid @[12rem]:text-xs" data-testid="outdoor-ranges">
+        <span className="text-muted-foreground/80">Päivä</span>
+        <span data-testid="outdoor-day">alin {outdoorDeg(data.day?.min)} · ylin {outdoorDeg(data.day?.max)}</span>
+        <span className="hidden text-muted-foreground/80 @[11rem]:inline">Yö 22–07</span>
+        <span className="hidden @[11rem]:inline" data-testid="outdoor-night">alin {outdoorDeg(data.night?.min)} · ylin {outdoorDeg(data.night?.max)}</span>
+      </div>
+      {!data.forecastAvailable && data.forecastNote ? (
+        <div className="mt-0.5 hidden truncate text-[9px] text-amber-400/90 @[12rem]:block" title={data.forecastNote} data-testid="outdoor-fc-note">
+          Ennuste puuttuu (FMI point/HARMONIE)
+        </div>
+      ) : null}
+      <div className="mt-0.5 truncate text-[10px] text-muted-foreground @[10rem]:text-xs" title={place}>
+        {place}
       </div>
     </div>
   );
