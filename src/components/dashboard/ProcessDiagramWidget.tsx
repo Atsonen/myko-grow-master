@@ -619,38 +619,12 @@ export function ProcessDiagramWidget() {
           <EditableBox id="vb-mid" box={pe.box("vb-mid")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
             <ValueBox {...pe.box("vb-mid")} label="Keskiosa" value={fmt(v("midTemp"), 1)} unit="°C" title={`${TAGS.midTemp} G Mid DS2`} onClick={pe.editing ? undefined : openFp} selected={pvDl === TAGS.midTemp} />
           </EditableBox>
-          <EditableBox id="btn-s-mid" box={pe.box("btn-s-mid")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
-            <Btn {...pe.box("btn-s-mid")} label="S" />
-          </EditableBox>
 
           {/* Top bar buttons (HMI) */}
-          <EditableBox id="btn-asetukset" box={pe.box("btn-asetukset")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
-            <Btn {...pe.box("btn-asetukset")} label="Asetukset" />
-          </EditableBox>
-          <EditableBox id="btn-ec" box={pe.box("btn-ec")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
-            <Btn {...pe.box("btn-ec")} label="EC" />
-          </EditableBox>
-          <EditableBox id="btn-ph" box={pe.box("btn-ph")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
-            <Btn {...pe.box("btn-ph")} label="PH" />
-          </EditableBox>
-          <EditableBox id="btn-s-top" box={pe.box("btn-s-top")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
-            <Btn {...pe.box("btn-s-top")} label="S" />
-          </EditableBox>
           <EditableBox id="btn-halytykset" box={pe.box("btn-halytykset")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
             <Btn {...pe.box("btn-halytykset")} label="Hälytykset" badge={pu.ok ? String(alarms.length) : "?"} badgeColor={pu.ok ? (alarms.length ? C.off : C.on) : undefined}
               title={pu.ok ? `Pumput_DB-hälytykset: ${alarms.length ? alarms.map((a) => a[1]).join(", ") : "ei aktiivisia"} (A_HumHH.Active, Tayttovesi.Active, EC_Below.Q)` : undefined} />
           </EditableBox>
-          <EditableBox id="btn-kuittaus" box={pe.box("btn-kuittaus")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
-            <Btn {...pe.box("btn-kuittaus")} label="Kuittaus" />
-          </EditableBox>
-          {/* yellow status bars */}
-          <g opacity={0.5}>
-            <title>Tilapalkki: ei kytketty</title>
-            <rect x={40} y={150} width={70} height={14} rx={3} fill={C.na} />
-            <rect x={770} y={196} width={70} height={14} rx={3} fill={C.na} />
-            <text x={75} y={180} textAnchor="middle" fontSize={9} fill={C.muted} fontFamily="monospace">ei kytketty</text>
-            <text x={805} y={224} textAnchor="middle" fontSize={9} fill={C.muted} fontFamily="monospace">ei kytketty</text>
-          </g>
 
           {/* Pipes */}
           <Pipe d="M 60 360 V 260 H 300 V 320" active={pu.b("Circulation_L")} />
@@ -681,9 +655,6 @@ export function ProcessDiagramWidget() {
           {/* G1 temp + timer */}
           <EditableBox id="vb-g1" box={pe.box("vb-g1")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
             <ValueBox {...pe.box("vb-g1")} label="G1 lämpötila" value={fmt(v("g1Temp"), 1)} unit="°C" title={`${TAGS.g1Temp} G1 temp TT`} />
-          </EditableBox>
-          <EditableBox id="btn-s-g1" box={pe.box("btn-s-g1")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
-            <Btn {...pe.box("btn-s-g1")} label="S" />
           </EditableBox>
           <EditableBox id="vb-ajastin" box={pe.box("vb-ajastin")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
             <ValueBox {...pe.box("vb-ajastin")} label="Ajastin" wired={!!tmr} value={tmr} title={`Pumput_DB FillingOnTime.ET / PT ${Math.round((pu.n("FillingOnTime_PT") ?? 0) / 1000)} s · kiertoajastin Työ ${pu.n("OnTime") ?? "—"} s / Tauko ${pu.n("OffTime") ?? "—"} s (${pu.b("Tyo_IN") ? "työ" : "tauko"} ${Math.round(((pu.b("Tyo_IN") ? pu.n("Tyo_ET") : pu.n("Tauko_ET")) ?? 0) / 1000)} s)`} />
