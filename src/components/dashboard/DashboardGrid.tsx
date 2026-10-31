@@ -28,7 +28,7 @@ import type { ReactNode } from "react";
 const ResponsiveGrid = WidthProvider(GridLayout);
 /** 24-column grid (layout v2). v1 layouts were 12 columns: x/w are doubled on load. WIDGET_META sizes are in 12-col units. */
 const COLS = 24;
-const MINW_24: Partial<Record<WidgetType, number>> = { measurementPoint: 2 };
+const MINW_24: Partial<Record<WidgetType, number>> = { measurementPoint: 2, outdoorTemp: 2 };
 const ROW_HEIGHT = 44;
 
 export type DashboardGridProps = {
@@ -420,7 +420,7 @@ function DashboardInner({ layoutId, defaultLayout = DEFAULT_LAYOUT, title = "Das
                     <h2 className="min-w-0 flex-1 text-base font-medium leading-6 text-foreground truncate">{w.title || defaultTitle(w, labelFor)}</h2>
                     {trendRangeSelect(w)}
                   </div>
-                  <div className={`min-h-0 flex-1 px-3 pb-3 text-sm ${h ? "overflow-auto" : ""}`}>
+                  <div className={`min-h-0 flex-1 overflow-hidden px-3 pb-3 text-sm`}>
                     <WidgetBody widget={w} />
                   </div>
                 </Card>
@@ -473,7 +473,7 @@ function DashboardInner({ layoutId, defaultLayout = DEFAULT_LAYOUT, title = "Das
                 )}
               </div>
               )}
-              <div className={`min-h-0 flex-1 overflow-auto ${w.type === "measurementPoint" || w.type === "processDiagram" || w.type === "alarmList" || w.type === "circSequence" || w.type === "fertDose" ? "px-1 pb-1" : "px-3 pb-3"}`}>
+              <div className={`min-h-0 flex-1 overflow-hidden ${w.type === "measurementPoint" || w.type === "processDiagram" || w.type === "alarmList" || w.type === "circSequence" || w.type === "fertDose" ? "px-1 pb-1" : "px-3 pb-3"}`}>
                 <WidgetBody widget={w} />
               </div>
             </Card>

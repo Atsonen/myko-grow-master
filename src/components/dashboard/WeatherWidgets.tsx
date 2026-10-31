@@ -115,15 +115,15 @@ export function OutdoorTempWidget() {
   if (err && !data) return <div className="text-xs text-destructive">{err}</div>;
   if (!data) return <div className="text-xs text-muted-foreground italic">Ladataan…</div>;
   return (
-    <div className="@container flex h-full min-h-0 flex-col justify-center px-1" data-testid="outdoor-temp">
-      <div className="flex items-baseline gap-2">
-        <span className="text-2xl leading-none" aria-hidden>{sym(data.symbol)}</span>
-        <span className="text-4xl font-semibold tabular-nums text-foreground @[11rem]:text-5xl" data-testid="outdoor-t">
+    <div className="@container flex h-full min-h-0 flex-col justify-center overflow-hidden px-1" data-testid="outdoor-temp">
+      <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+        <span className="text-xl leading-none @[10rem]:text-2xl" aria-hidden>{sym(data.symbol)}</span>
+        <span className="text-3xl font-semibold tabular-nums text-foreground @[10rem]:text-4xl @[14rem]:text-5xl" data-testid="outdoor-t">
           {data.t == null ? "—" : data.t.toFixed(1)}
         </span>
-        <span className="text-base text-muted-foreground">°C</span>
+        <span className="text-sm text-muted-foreground @[10rem]:text-base">°C</span>
       </div>
-      <div className="mt-1 text-xs text-muted-foreground">
+      <div className="mt-1 truncate text-[10px] text-muted-foreground @[10rem]:text-xs" title={`${data.location} · ${data.station}${data.time ? ` · klo ${hhmm(typeof data.time === "string" ? data.time : new Date(data.time).toISOString())}` : ""}`}>
         {data.location} · {data.station}
         {data.time ? ` · klo ${hhmm(typeof data.time === "string" ? data.time : new Date(data.time).toISOString())}` : ""}
       </div>

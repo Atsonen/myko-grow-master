@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Settings, X } from "lucide-react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import * as TabsPrimitive from "@radix-ui/react-tabs";
@@ -110,6 +110,27 @@ export function MeasurementPointWidget({ config, open: openProp, onOpenChange, d
   const pidKey = id ? PID_KEY_BY_POINT[id] : undefined;
   const pid = usePid(pidKey, open ? 2000 : 5000, open);
   const [aiNew, clearAiNew] = usePidAiBadge(pidKey);
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  const [gaugeSize, setGaugeSize] = useState(88);
+
+  // Size gauge from available card width/height so Mittauspiste fills the widget without overflow/scrollbar.
+  useLayoutEffect(() => {
+    const el = cardRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const measure = () => {
+      const w = el.clientWidth || 1;
+      const h = el.clientHeight || 1;
+      // Leave room for title + status rows; grow with the shorter side.
+      const byW = w >= 240 ? Math.min(140, w * 0.38) : Math.min(96, w * 0.55);
+      const byH = Math.max(52, Math.min(140, h * 0.42));
+      const next = Math.round(Math.max(52, Math.min(byW, byH)));
+      setGaugeSize((prev) => (prev === next ? prev : next));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const applyControls = async (patch: AlarmControlsPatch): Promise<boolean> => {
     if (!id) return false;
@@ -162,62 +183,69 @@ export function MeasurementPointWidget({ config, open: openProp, onOpenChange, d
 
   const TAB = "min-h-11 flex-1 whitespace-nowrap rounded-md px-1.5 text-[13px] min-[400px]:px-3 min-[400px]:text-sm font-semibold text-muted-foreground data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow";
   return (
-    <div className={`@container relative h-full px-3 py-2.5 ${dialogOnly ? "hidden" : ""} ${LEVEL_STYLE[level]} ${disabled && (level === "ok" || level === "unknown") && !modeInd ? LEVEL_STYLE.disabled : ""} ${modeInd?.outline ?? ""}`} data-testid="measurement-point" data-level={level}>
-      <PidModeBanner ind={modeInd} className="mb-1.5 mr-9 w-auto" />
-      <div className="w-full">
-        <div className="min-w-0 overflow-hidden">
-          <div className="truncate pr-9 text-[15px] font-medium leading-6 text-muted-foreground" data-testid="mp-name">{config.name || point.name}</div>
-          <div className="flex min-w-0 flex-col gap-1 @[15rem]:flex-row @[15rem]:items-center @[15rem]:gap-3">
-            <span className="flex min-w-0 items-baseline gap-1"><span className="text-3xl font-semibold tabular-nums text-foreground @[11rem]:text-4xl" data-testid="mp-value">
+    <div ref={cardRef} className={`@container relative flex h-full min-h-0 flex-col overflow-hidden px-3 py-2.5 ${dialogOnly ? "hidden" : ""} ${LEVEL_STYLE[level]} ${disabled && (level === "ok" || level === "unknown") && !modeInd ? LEVEL_STYLE.disabled : ""} ${modeInd?.outline ?? ""}`} data-testid="measurement-point" data-level={level}>
+      <PidModeBanner ind={modeInd} className="mb-1.5 mr-9 w-auto shrink-0" />
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col justify-evenly gap-1 overflow-hidden">
+        <div className="min-w-0 shrink-0 truncate pr-9 text-[15px] font-medium leading-6 text-muted-foreground" data-testid="mp-name">{config.name || point.name}</div>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col justify-center gap-1 @[15rem]:flex-row @[15rem]:items-center @[15rem]:gap-3">
+          <span className="flex min-w-0 items-baseline gap-1">
+            <span className="text-3xl font-semibold tabular-nums leading-none text-foreground @[10rem]:text-4xl @[16rem]:text-5xl" data-testid="mp-value">
               {value === null || value === undefined ? "—" : value.toFixed(1)}
             </span>
-            <span className="text-base text-muted-foreground">{point.unit}</span></span>
-            {pidKey && pid.v && <span className={`w-[min(5.5rem,100%)] max-w-[5.5rem] shrink-0 self-start @[15rem]:ml-auto ${pid.stale ? "opacity-60" : ""}`}><OutputGauge v={pid.v} size={88} /></span>}
-          </div>
-          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1" data-testid="mp-chips">
-            {active.length === 0 ? (
-              <span className={MUTED}>Normaali</span>
-            ) : (
-              active.map((k) => (
-                <span key={k} className={`inline-flex items-center gap-1.5 text-sm font-semibold ${CHIP[bitLevel(k)]}`}>
-                  <AlarmIndicator level={bitLevel(k)} />
-                  {k}
-                </span>
-              ))
-            )}
-          </div>
-          {pidKey && <PidCompact v={pid.v} stale={pid.stale} unit={point.unit} />}
-          {pidKey && aiNew && <div className="mt-1 inline-block rounded bg-amber-900/60 px-1.5 py-0.5 text-[11px] font-semibold text-amber-200" data-testid="pid-ai-badge">AI-ehdotus</div>}
-          {pidAbn.length > 0 && (
-            <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1" data-testid="pid-abn">
-              {pidAbn.map((a) => (
-                <span key={a.text} className={`inline-flex items-center gap-1.5 text-sm font-semibold ${CHIP[a.level]}`}><AlarmIndicator level={a.level} />{a.text}</span>
-              ))}
-            </div>
-          )}
-          {disabled && (
-            <div className={MUTED} data-testid="mp-disabled">WhatsApp-hälytykset pois {hm(point.controls!.alarmsDisabledUntil!)} asti</div>
-          )}
-          {point.controls && (
-            <div className={`mt-0.5 flex flex-wrap gap-x-3 ${MUTED}`} data-testid="mp-controls-compact">
-              <span className={point.controls.on ? CTRL_TINT.on : ""} data-testid="mp-on">{point.controls.on ? "ON" : "OFF"}</span>
-              {point.controls.heat && <span className={CTRL_TINT.heat}>HEAT</span>}
-              {point.controls.cool && <span className={CTRL_TINT.cool}>COOL</span>}
-              {!pidKey && <span>SP {point.controls.setpoint} {point.unit}</span>}
-              {checkedAgeMin > 5 && <span title="Alarm checker has not reported recently">checker {fmt(point.checked)}</span>}
-            </div>
+            <span className="text-sm text-muted-foreground @[10rem]:text-base @[16rem]:text-lg">{point.unit}</span>
+          </span>
+          {pidKey && pid.v && (
+            <span
+              className={`shrink-0 self-center @[15rem]:ml-auto ${pid.stale ? "opacity-60" : ""}`}
+              style={{ width: gaugeSize, maxWidth: "100%" }}
+            >
+              <OutputGauge v={pid.v} size={gaugeSize} />
+            </span>
           )}
         </div>
-        <button
-          type="button"
-          onClick={() => setOpen(true)}
-          aria-label={`${point.name}: asetukset`}
-          data-testid="mp-gear"
-          className="absolute right-1 top-1 flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-muted-foreground/70 hover:bg-secondary/60 hover:text-foreground"
-        >
-          <Settings className="h-[18px] w-[18px]" />
-        </button>
+        <div className="mt-0.5 flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1" data-testid="mp-chips">
+          {active.length === 0 ? (
+            <span className={MUTED}>Normaali</span>
+          ) : (
+            active.map((k) => (
+              <span key={k} className={`inline-flex items-center gap-1.5 text-sm font-semibold ${CHIP[bitLevel(k)]}`}>
+                <AlarmIndicator level={bitLevel(k)} />
+                {k}
+              </span>
+            ))
+          )}
+        </div>
+        {pidKey && <PidCompact v={pid.v} stale={pid.stale} unit={point.unit} />}
+        {pidKey && aiNew && <div className="mt-0.5 inline-block shrink-0 rounded bg-amber-900/60 px-1.5 py-0.5 text-[11px] font-semibold text-amber-200" data-testid="pid-ai-badge">AI-ehdotus</div>}
+        {pidAbn.length > 0 && (
+          <div className="mt-0.5 flex shrink-0 flex-wrap gap-x-3 gap-y-1" data-testid="pid-abn">
+            {pidAbn.map((a) => (
+              <span key={a.text} className={`inline-flex items-center gap-1.5 text-sm font-semibold ${CHIP[a.level]}`}><AlarmIndicator level={a.level} />{a.text}</span>
+            ))}
+          </div>
+        )}
+        {disabled && (
+          <div className={`${MUTED} shrink-0`} data-testid="mp-disabled">WhatsApp-hälytykset pois {hm(point.controls!.alarmsDisabledUntil!)} asti</div>
+        )}
+        {point.controls && (
+          <div className={`mt-0.5 flex shrink-0 flex-wrap gap-x-3 ${MUTED}`} data-testid="mp-controls-compact">
+            <span className={point.controls.on ? CTRL_TINT.on : ""} data-testid="mp-on">{point.controls.on ? "ON" : "OFF"}</span>
+            {point.controls.heat && <span className={CTRL_TINT.heat}>HEAT</span>}
+            {point.controls.cool && <span className={CTRL_TINT.cool}>COOL</span>}
+            {!pidKey && <span>SP {point.controls.setpoint} {point.unit}</span>}
+            {checkedAgeMin > 5 && <span title="Alarm checker has not reported recently">checker {fmt(point.checked)}</span>}
+          </div>
+        )}
       </div>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        aria-label={`${point.name}: asetukset`}
+        data-testid="mp-gear"
+        className="absolute right-1 top-1 flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-muted-foreground/70 hover:bg-secondary/60 hover:text-foreground"
+      >
+        <Settings className="h-[18px] w-[18px]" />
+      </button>
 
       <DialogPrimitive.Root open={open} onOpenChange={setOpen}>
         <DialogPrimitive.Portal>

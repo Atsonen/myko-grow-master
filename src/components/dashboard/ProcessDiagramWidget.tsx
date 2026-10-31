@@ -516,14 +516,14 @@ export function ProcessDiagramWidget() {
 
   return (
     <>
-      <div className="mb-1 text-[10px] font-mono text-muted-foreground" data-testid="pd-status">
-        {err ? `Virhe: ${err}` : ts ? `Päivitetty ${new Date(ts).toLocaleTimeString("fi-FI")}` : "Ladataan…"} · {POLL_MS / 1000} s · vain luku
-      </div>
       <AlarmDialog sig={alSig} data={ka.a} onClose={() => setAlSig(null)} onSaved={ka.setA} />
       <MeasurementPointWidget config={{ pointId: "GardenAir", name: "Kasvamo ilma · G_Air (PF-1)" }} open={fpOpen} onOpenChange={setFpOpen} dialogOnly />
       <FertEcModal open={ecDlg} d={fd.d} reload={fd.load} onClose={() => setEcDlg(false)} />
-<div className="flex h-full flex-col gap-1 overflow-hidden p-1" data-testid="pd-process">
-        <div className="flex flex-wrap items-center justify-end gap-2" data-testid="pd-elem-toolbar">
+      <div className="flex h-full min-h-0 flex-col gap-1 overflow-hidden p-1" data-testid="pd-process">
+        <div className="shrink-0 text-[10px] font-mono text-muted-foreground" data-testid="pd-status">
+          {err ? `Virhe: ${err}` : ts ? `Päivitetty ${new Date(ts).toLocaleTimeString("fi-FI")}` : "Ladataan…"} · {POLL_MS / 1000} s · vain luku
+        </div>
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2" data-testid="pd-elem-toolbar">
           {!pe.editing ? (
             <Button size="sm" variant="outline" onClick={() => pe.setEditing(true)} data-testid="pd-elem-edit">
               <Pencil className="mr-1 h-3 w-3" /> Muokkaa elementtejä
