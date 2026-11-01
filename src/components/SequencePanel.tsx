@@ -1,8 +1,8 @@
-// Kiertovesisekvenssi Pumput_DB.Static.Sequence + CircPump_L/R – tila (vain luku) + asetukset (myko_settings).
+// Kiertovesisekvenssi Pumput_DB.Static.Sequence + CircPump_L/R – tila + CircPump Enable + Sequence Käynnistä/Pysäytä.
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { getSequence, putSequence, setCircPumpEnable, type SequenceResponse } from "@/lib/apiClient";
+import { getSequence, putSequence, setCircPumpEnable, setSequenceEnable, type SequenceResponse } from "@/lib/apiClient";
 
 const STEPS: [number, string][] = [[0, "Seis"], [1, "Kierrätys"], [2, "Tasaantuminen"], [3, "Pinnan tallennus"], [4, "Täyttö"]];
 const mmss = (ms: number) => { const s = Math.max(0, Math.round(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
@@ -29,15 +29,23 @@ export function useSequence() {
 
 export function SequencePanel() {
   const { d, load } = useSequence();
-  const [f, setF] = useState<{ enable: boolean; t_circ_s: string; t_settle_s: string; t_fill_s: string } | null>(null);
+  const [f, setF] = useState<{ t_circ_s: string; t_settle_s: string; t_fill_s: string } | null>(null);
   const [saving, setSaving] = useState(false);
-  useEffect(() => { if (d && !f) setF({ enable: d.settings.enable, t_circ_s: String(d.settings.t_circ_s), t_settle_s: String(d.settings.t_settle_s), t_fill_s: String(d.settings.t_fill_s) }); }, [d, f]);
+  const [seqBusy, setSeqBusy] = useState(false);
+  useEffect(() => {
+    if (d && !f) setF({ t_circ_s: String(d.settings.t_circ_s), t_settle_s: String(d.settings.t_settle_s), t_fill_s: String(d.settings.t_fill_s) });
+  }, [d, f]);
   const p = (d?.plc ?? {}) as Record<string, unknown>;
   const live = !!d?.present;
   const step = live ? (p.Step as number | undefined) : undefined;
   const setMs = (s?: number) => s === 1 ? (p.T_Circ as number | undefined) : s === 2 ? (p.T_Settle as number | undefined) : s === 4 ? (p.T_Fill as number | undefined) : undefined;
   const rem = live && setMs(step) !== undefined && p.StepTime_ms !== undefined ? (setMs(step) as number) - (p.StepTime_ms as number) : undefined;
   const [pumpBusy, setPumpBusy] = useState<"L" | "R" | null>(null);
+  const plcEnable = live ? (p.Enable as boolean | undefined) : undefined;
+  const running = plcEnable === true && p.Stopped !== true;
+  const tankFromTank = live && typeof p.TankLevel === "number" ? (p.TankLevel as number) : undefined;
+  const snapLevel = live && typeof p.Level === "number" ? (p.Level as number) : undefined;
+
   const togglePump = async (sd: "L" | "R", en: boolean) => {
     const name = sd === "L" ? "vasen" : "oikea";
     if (!window.confirm(`Vahvista: kiertopumppu ${name} → ${en ? "KÄYTTÖÖN (Enable ON)" : "POIS KÄYTÖSTÄ (Enable OFF)"}?`)) return;
@@ -45,10 +53,25 @@ export function SequencePanel() {
     try { await setCircPumpEnable(sd, en); toast.success(`Kiertopumppu ${name}: ${en ? "käytössä" : "pois käytöstä"}`); load(); }
     catch (e) { toast.error((e as Error).message); } finally { setPumpBusy(null); }
   };
+  const toggleSeq = async (en: boolean) => {
+    const msg = en
+      ? "Vahvista: Käynnistä kiertovesisekvenssi (Sequence.Enable → TRUE)?"
+      : "Vahvista: Pysäytä kiertovesisekvenssi (Sequence.Enable → FALSE)?";
+    if (!window.confirm(msg)) return;
+    setSeqBusy(true);
+    try {
+      await setSequenceEnable(en);
+      toast.success(en ? "Sekvenssi käynnistetty" : "Sekvenssi pysäytetty");
+      load();
+    } catch (e) { toast.error((e as Error).message); }
+    finally { setSeqBusy(false); }
+  };
   const save = async () => {
     if (!f) return; setSaving(true);
-    try { await putSequence({ enable: f.enable, t_circ_s: Number(f.t_circ_s), t_settle_s: Number(f.t_settle_s), t_fill_s: Number(f.t_fill_s) }); toast.success("Tallennettu Mykoon (ei PLC:hen)"); load(); }
-    catch (e) { toast.error((e as Error).message); } finally { setSaving(false); }
+    try {
+      await putSequence({ t_circ_s: Number(f.t_circ_s), t_settle_s: Number(f.t_settle_s), t_fill_s: Number(f.t_fill_s) });
+      toast.success("Ajat tallennettu Mykoon (ei PLC:hen)"); load();
+    } catch (e) { toast.error((e as Error).message); } finally { setSaving(false); }
   };
   const b = (v: boolean | undefined, on: string, off: string, bad = false) => (
     <span className={`rounded px-1.5 py-0.5 ${v === undefined ? "bg-muted text-muted-foreground" : v !== bad ? "bg-emerald-600/20 text-emerald-400" : "bg-red-600/20 text-red-400"}`}>{v === undefined ? "–" : v ? on : off}</span>);
@@ -61,6 +84,25 @@ export function SequencePanel() {
       </div>
       {!live && <div className="rounded border border-amber-600/50 bg-amber-600/10 px-2 py-1 text-amber-400">
         {d && !d.stale ? "Sequence/CircPump ei löydy OPC UA:sta" : "Ei dataa bridgeltä (Sensors/PLC_2/Sequence)"} – näytetään vain Myko-asetukset.</div>}
+
+      <div className="flex flex-wrap items-center gap-2 rounded border border-border bg-secondary/20 px-2 py-1.5" data-testid="seq-run-bar">
+        <span className={`rounded px-2 py-0.5 font-semibold ${running ? "bg-emerald-600/25 text-emerald-300" : "bg-zinc-600/40 text-zinc-300"}`}>
+          {plcEnable === undefined ? "—" : running ? "Käynnissä" : "Pysäytetty"}
+        </span>
+        <span>Askel <b>{step ?? "–"}</b>{step !== undefined ? ` (${STEPS.find(([n]) => n === step)?.[1] ?? ""})` : ""}</span>
+        <span>HB {b(live ? p.HB_OK as boolean : undefined, "OK", "PUUTTUU", false)}</span>
+        <span>Vuoto {b(live ? !(p.LeakAlarm as boolean) : undefined, "ei", "HÄLYTYS")}</span>
+        <span title="Pumput_DB/Static/LVL (Float %)">Pinta <b>{tankFromTank !== undefined ? `${tankFromTank.toFixed(1)} %` : "–"}</b></span>
+        {snapLevel !== undefined && <span className="text-muted-foreground" title="Sequence/Level (tallenne askel 3)">tallenne {snapLevel.toFixed(1)}</span>}
+        <Button size="sm" variant={running ? "destructive" : "default"} className="ml-auto h-7 px-3"
+          disabled={!live || plcEnable === undefined || !d?.seq_enable_write_allowed || seqBusy}
+          title={d?.seq_enable_write_allowed ? "Kirjoittaa Sequence/Enable PLC:hen (vahvistus)" : "Kirjoitus ei käytössä"}
+          data-testid="seq-start-stop"
+          onClick={() => void toggleSeq(!plcEnable)}>
+          {seqBusy ? "…" : running || plcEnable ? "Pysäytä" : "Käynnistä"}
+        </Button>
+      </div>
+
       <div className="flex flex-wrap gap-1">
         {STEPS.map(([n, t]) => (
           <div key={n} className={`flex-1 min-w-[90px] rounded border px-2 py-1 ${step === n ? "border-sky-400 bg-sky-500/20 text-sky-200" : "border-border text-muted-foreground"}`}>
@@ -69,12 +111,10 @@ export function SequencePanel() {
           </div>))}
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        <span>HB {b(live ? p.HB_OK as boolean : undefined, "OK", "PUUTTUU", false)}</span>
         <span>Tila {b(live ? !(p.Stopped as boolean) : undefined, "käy", "PYSÄYTETTY")}</span>
-        <span>Vuoto {b(live ? !(p.LeakAlarm as boolean) : undefined, "ei", "HÄLYTYS")}</span>
         <span>Syklit <b>{live ? (p.CycleCount as number ?? "–") : "–"}</b></span>
-        <span>Taso <b>{live && typeof p.Level === "number" ? (p.Level as number).toFixed(2) : "–"}</b></span>
         <span>Askelaika <b>{live && p.StepTime_ms !== undefined ? mmss(p.StepTime_ms as number) : "–"}</b></span>
+        <span>Enable {b(plcEnable, "ON", "OFF")}</span>
       </div>
       <div className="grid grid-cols-2 gap-2" data-testid="circ-pumps">
         {(["L", "R"] as const).map((sd) => {
@@ -111,15 +151,11 @@ export function SequencePanel() {
             <input id={`seq-${k}`} type="number" min={1} className="h-7 rounded border border-border bg-background px-2" value={f[k]} onChange={(e) => setF({ ...f, [k]: e.target.value })} />
             <span className="text-muted-foreground">s · PLC {live && pv !== undefined ? `${Math.round(Number(pv) / 1000)} s` : "–"}</span>
           </div>))}
-        <label htmlFor="seq-en">Enable</label>
-        <input id="seq-en" type="checkbox" className="h-4 w-4 justify-self-start" checked={f.enable} onChange={(e) => setF({ ...f, enable: e.target.checked })} />
-        <span className="text-muted-foreground">PLC {live ? (p.Enable ? "päällä" : "pois") : "–"}</span>
       </div>}
       <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" onClick={() => void save()} disabled={saving || !f}>Tallenna asetukset</Button>
-        <span className="text-[11px] text-muted-foreground">CircPump Enable → PLC (vahvistus). Sequence-ajat vain Mykoon.</span>
+        <Button size="sm" onClick={() => void save()} disabled={saving || !f}>Tallenna ajat</Button>
+        <span className="text-[11px] text-muted-foreground">Käynnistä/Pysäytä → Sequence.Enable. CircPump On/Off → Enable. Ajat vain Mykoon. Ei Enable-synkkaa käynnistyksessä.</span>
       </div>
-      <div className="text-[10px] text-muted-foreground">Asetukset tallentuvat vain Mykoon. Luku: bridge Read-pollaus 2 s (Sequence, CircPump_L/R).</div>
     </div>
   );
 }

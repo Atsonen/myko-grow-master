@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { FertDosePanel, FertEcModal, useFertDose } from "@/components/FertDosePanel";
 import { useSequence } from "@/components/SequencePanel";
-import { getDataloggerLatest, getKasvamoAlarms, putKasvamoAlarms, type KasvamoAlarms, type KasLimit, getPumput, getPvFeed, type DataloggerLatest, type PumputResponse, setFertPumpEnable, setCircPumpEnable } from "@/lib/apiClient";
+import { getDataloggerLatest, getKasvamoAlarms, putKasvamoAlarms, type KasvamoAlarms, type KasLimit, getPumput, getPvFeed, type DataloggerLatest, type PumputResponse, setFertPumpEnable, setCircPumpEnable, setSequenceEnable } from "@/lib/apiClient";
 import { toast } from "sonner";
 import { MeasurementPointWidget } from "@/components/dashboard/MeasurementPointWidget";
 import { usePid, PID_STATE } from "@/components/dashboard/PidFaceplate";
@@ -508,6 +508,7 @@ export function ProcessDiagramWidget() {
   const ka = useKasAlarms(); const fd = useFertDose(); const [alSig, setAlSig] = useState<string | null>(null); const [ecDlg, setEcDlg] = useState(false);
   const [fertBusy, setFertBusy] = useState(false);
   const [circBusy, setCircBusy] = useState<"L" | "R" | null>(null);
+  const [seqBusy, setSeqBusy] = useState(false);
   const pe = useProcessBoxEdit();
   const toggleFert = async (en: boolean) => {
     if (!window.confirm(`Vahvista: lannoitepumppu Käyttö → ${en ? "ON" : "OFF"}?`)) return;
@@ -530,6 +531,18 @@ export function ProcessDiagramWidget() {
     } catch (e) { toast.error(e instanceof Error ? e.message : String(e)); }
     finally { setCircBusy(null); }
   };
+  const toggleSeq = async (en: boolean) => {
+    if (!window.confirm(en
+      ? "Vahvista: Käynnistä kiertovesisekvenssi (Sequence.Enable → TRUE)?"
+      : "Vahvista: Pysäytä kiertovesisekvenssi (Sequence.Enable → FALSE)?")) return;
+    setSeqBusy(true);
+    try {
+      await setSequenceEnable(en);
+      toast.success(en ? "Sekvenssi käynnistetty" : "Sekvenssi pysäytetty");
+      seq.load();
+    } catch (e) { toast.error(e instanceof Error ? e.message : String(e)); }
+    finally { setSeqBusy(false); }
+  };
   const fp = fd.d?.plc;
   const fertLive = !!(fp?.present && fp?.fresh !== false && (fp?.Pump !== undefined || fp?.Enable !== undefined));
   const sqLive = !!seq.d?.present;
@@ -551,7 +564,12 @@ export function ProcessDiagramWidget() {
   };
   const cL = circ("L"); const cR = circ("R");
   const seqStep = sqLive ? (sq.Step as number | undefined) : undefined;
-  const seqLevel = sqLive && typeof sq.Level === "number" ? (sq.Level as number) : undefined;
+  const tankLevel = sqLive && typeof sq.TankLevel === "number" ? (sq.TankLevel as number)
+    : (pu.n("LVL") ?? undefined);
+  const seqEnable = sqLive ? (sq.Enable as boolean | undefined) : undefined;
+  const seqRunning = seqEnable === true && sq.Stopped !== true;
+  const seqHb = sqLive ? (sq.HB_OK as boolean | undefined) : undefined;
+  const seqLeak = sqLive ? (sq.LeakAlarm as boolean | undefined) : undefined;
 
   const fertIlok = (fp as { Interlock?: boolean } | undefined)?.Interlock;
   const fertFault = fertLive && (fp!.HB_OK === false || fertIlok === false || (typeof fp!.Status === "number" && [4,5,6,7,8,9,10,11,13,14,15].includes(fp!.Status)));
@@ -571,9 +589,20 @@ export function ProcessDiagramWidget() {
       <FertEcModal open={ecDlg} d={fd.d} reload={fd.load} onClose={() => setEcDlg(false)} />
       <div className="flex h-full min-h-0 flex-col gap-1 overflow-hidden p-1" data-testid="pd-process">
         <div className="shrink-0 text-[10px] font-mono text-muted-foreground" data-testid="pd-status">
-          {err ? `Virhe: ${err}` : ts ? `Päivitetty ${new Date(ts).toLocaleTimeString("fi-FI")}` : "Ladataan…"} · {POLL_MS / 1000} s · vain luku{sqLive ? ` · Seq askel ${seqStep ?? "–"} · taso ${seqLevel != null ? seqLevel.toFixed(1) : "–"}` : ""}
+          {err ? `Virhe: ${err}` : ts ? `Päivitetty ${new Date(ts).toLocaleTimeString("fi-FI")}` : "Ladataan…"} · {POLL_MS / 1000} s
+          {sqLive ? ` · Seq ${seqRunning ? "Käynnissä" : "Pysäytetty"} · askel ${seqStep ?? "–"} · HB ${seqHb === true ? "OK" : seqHb === false ? "PUUTTUU" : "–"} · vuoto ${seqLeak === true ? "HÄLYTYS" : seqLeak === false ? "ei" : "–"} · pinta ${tankLevel != null ? `${Number(tankLevel).toFixed(1)} %` : "–"}` : ""}
         </div>
-        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2" data-testid="pd-elem-toolbar">
+        <div className="flex shrink-0 flex-wrap items-center gap-2" data-testid="pd-elem-toolbar">
+          {sqLive && (
+            <Button size="sm" variant={seqRunning ? "destructive" : "default"} className="h-7"
+              disabled={seqEnable === undefined || !seq.d?.seq_enable_write_allowed || seqBusy}
+              data-testid="pd-seq-start-stop"
+              title="Sequence.Enable PLC:hen (vahvistus)"
+              onClick={() => void toggleSeq(!seqEnable)}>
+              {seqBusy ? "…" : seqRunning || seqEnable ? "Pysäytä sekvenssi" : "Käynnistä sekvenssi"}
+            </Button>
+          )}
+          <div className="ml-auto flex flex-wrap items-center gap-2">
           {!pe.editing ? (
             <Button size="sm" variant="outline" onClick={() => pe.setEditing(true)} data-testid="pd-elem-edit">
               <Pencil className="mr-1 h-3 w-3" /> Muokkaa elementtejä
@@ -611,6 +640,7 @@ export function ProcessDiagramWidget() {
               <Button size="sm" onClick={() => void pe.save()} disabled={!pe.dirty} data-testid="pd-elem-save"><Save className="mr-1 h-3 w-3" /> Save</Button>
             </>
           )}
+          </div>
         </div>
         <div ref={pe.viewportRef} className="relative min-h-0 flex-1 overflow-hidden" data-testid="pd-viewport">
         <div
@@ -683,9 +713,9 @@ export function ProcessDiagramWidget() {
           <Pipe d="M 400 320 V 270 H 690 V 360" active={cR.run} />
 
           {/* Main tank */}
-          <Tank x={300} y={320} w={130} h={200} level={v("level")} label="Ravinnesäiliö" />
+          <Tank x={300} y={320} w={130} h={200} level={tankLevel ?? null} label="Ravinnesäiliö" />
           <EditableBox id="vb-pinta" box={pe.box("vb-pinta")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
-            <ValueBox {...pe.box("vb-pinta")} label="Pinta" value={fmt(v("level"), 1)} unit="%" title={`${TAGS.level} Level · PLC SP ${pu.n("LVL_SP") ?? "—"} %`} {...kp("pinta")} onClick={pe.editing ? undefined : kp("pinta").onClick} />
+            <ValueBox {...pe.box("vb-pinta")} label="Pinta" value={fmt(tankLevel ?? null, 1)} unit="%" title={`Pumput_DB/Static/LVL (Float %) · SP ${pu.n("LVL_SP") ?? "—"} % · ei Sequence/Level`} {...kp("pinta")} onClick={pe.editing ? undefined : kp("pinta").onClick} />
           </EditableBox>
           <EditableBox id="vb-vesi" box={pe.box("vb-vesi")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
             <ValueBox {...pe.box("vb-vesi")} label="Vesi" value={fmt(v("waterTemp"), 1)} unit="°C" title={`${TAGS.waterTemp} Water Temp`} {...kp("vesi")} onClick={pe.editing ? undefined : kp("vesi").onClick} />

@@ -393,9 +393,9 @@ export async function resetDashboardLayout(id?: string) {
 export type SequenceSettings = { enable: boolean; t_circ_s: number; t_settle_s: number; t_fill_s: number; plc_write: false; hb_enabled: false };
 export type SequenceResponse = {
   settings: SequenceSettings; present: boolean; stale: boolean; plc_at: string | null; steps: Record<string, string>;
-  write_allowed: boolean; write_note: string; pump_write_allowed?: boolean; write_nodes_pending?: string[];
+  write_allowed: boolean; write_note: string; pump_write_allowed?: boolean; seq_enable_write_allowed?: boolean; write_nodes_pending?: string[];
   plc: { present?: boolean; Step?: number; StepTime_ms?: number; HB_OK?: boolean; Stopped?: boolean; CycleCount?: number;
-    Enable?: boolean; LeakAlarm?: boolean; T_Circ?: number; T_Settle?: number; T_Fill?: number; Level?: number;
+    Enable?: boolean; LeakAlarm?: boolean; T_Circ?: number; T_Settle?: number; T_Fill?: number; Level?: number; TankLevel?: number;
     L_Pump?: boolean; L_Running?: boolean; L_Error?: boolean; L_Enable?: boolean; L_Done?: boolean; L_Status?: number;
     L_Waiting?: boolean; L_Skipped?: boolean; L_ErrCode?: number; L_RunTime_ms?: number; L_StartCount?: number; L_LastRun_ms?: number;
     R_Pump?: boolean; R_Running?: boolean; R_Error?: boolean; R_Enable?: boolean; R_Done?: boolean; R_Status?: number;
@@ -405,6 +405,12 @@ export async function getSequence() { return requestJson<SequenceResponse>("/api
 export async function setCircPumpEnable(side: "L" | "R", enable: boolean) {
   return requestJson<{ ok: boolean; key: string; value: boolean; read?: boolean }>("/api/sequence/pump", {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ side, enable }) });
+}
+/** Sequence Käynnistä/Pysäytä → Pumput_DB/Static/Sequence/Enable. Vaatii confirm: true. Ei taustasynkkaa. */
+export async function setSequenceEnable(enable: boolean) {
+  return requestJson<{ ok: boolean; enable: boolean; read?: boolean }>("/api/sequence/enable", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enable, confirm: true, by: "myko-ui" }) });
 }
 export async function putSequence(s: Partial<SequenceSettings>) {
   return requestJson<{ settings: SequenceSettings; written_to_plc: false }>("/api/sequence", {
