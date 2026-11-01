@@ -186,7 +186,7 @@ function reliability(c, now) {
 // ---------- Annos ----------
 async function dose(c, why, by) {
   const lastS = S.samples[S.samples.length - 1]; const ec = lastS?.v ?? null;
-  const ms = Math.round(Math.min(Math.max(Number(c.dose_s) || 0, 0), 5) * 1000); const fert = c.fert === "B" ? "B" : "A";
+  const ms = Math.round(Math.min(Math.max(Number(c.dose_s) || 0, 0.5), 10) * 1000); const fert = c.fert === "B" ? "B" : "A";
   if (ms <= 0) return { ok: false, error: "annoskoko 0" };
   if (alarmActive()) { await logRow(fert, 0, ec, S.sp, `ESTETTY (EC-hälytys): ${why}`, "blocked"); return { ok: false, error: "EC-hälytys aktiivinen – annostelu lukittu" }; }
   if (!c.live) { await logRow(fert, ms, ec, S.sp, `WOULD DOSE: ${why}`, "dry-run"); S.lastDoseAt = Date.now(); return { ok: true, mode: "dry-run" }; }
@@ -367,7 +367,13 @@ export function registerFertDoseRoutes(app) {
     try {
       const b = req.body ?? {}; const cur = await cfg(); const next = { ...cur, ec_alarm: { ...cur.ec_alarm } };
       if (b.fert !== undefined) { if (!["A", "B"].includes(b.fert)) return res.status(400).json({ error: "fert A/B" }); next.fert = b.fert; }
-      if (b.dose_s !== undefined) { const d = Number(b.dose_s); if (!(d > 0 && d <= 5)) return res.status(400).json({ error: "annos 0–5 s" }); next.dose_s = d; }
+      if (b.dose_s !== undefined) {
+        const d = Number(b.dose_s);
+        const steps = Math.round(d * 2);
+        if (!(Number.isFinite(d) && steps >= 1 && steps <= 20 && Math.abs(d - steps / 2) < 1e-9))
+          return res.status(400).json({ error: "annos 0.5–10 s, askel 0.5" });
+        next.dose_s = steps / 2;
+      }
       for (const k of ["live", "hb_enabled", "plc_enable", "auto"]) if (b[k] !== undefined) { if (typeof b[k] !== "boolean") return res.status(400).json({ error: `${k} bool` }); next[k] = b[k]; }
       for (const [k, lo, hi] of [["below_min", 1, 120], ["pause_min", 5, 240], ["spike_ppm", 10, 5000], ["min_uptime_min", 0, 120], ["stale_s", 20, 900], ["sp_manual", 100, 9000], ["ec_sp", 100, 9000]]) {
         if (b[k] !== undefined) { const v = Number(b[k]); if (!(v >= lo && v <= hi)) return res.status(400).json({ error: `${k} ${lo}–${hi}` }); next[k] = v; }

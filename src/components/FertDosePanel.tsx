@@ -87,6 +87,38 @@ function Trend({ d }: { d: FertDoseStatus }) {
   );
 }
 
+
+function DoseEditor({ d, reload }: { d: FertDoseStatus; reload: () => void }) {
+  const cur = Number(d.config.dose_s) || 1;
+  const [v, setV] = useState(String(cur)); const [msg, setMsg] = useState<string | null>(null); const [busy, setBusy] = useState(false);
+  const n = Number(String(v).replace(",", "."));
+  const steps = Math.round(n * 2); const ok = Number.isFinite(n) && steps >= 1 && steps <= 20 && Math.abs(n - steps / 2) < 1e-9;
+  const save = async () => {
+    setBusy(true); setMsg(null);
+    try { await putFertDoseSettings({ dose_s: steps / 2 }); setMsg("Tallennettu"); reload(); }
+    catch (e) { setMsg(errMsg(e)); } finally { setBusy(false); }
+  };
+  return (
+    <div className="mt-3 rounded-md border border-border/70 bg-black/20 p-2">
+      <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Annoskoko (pumpun ajoaika)</div>
+      <div className="mt-1 flex flex-wrap items-center gap-2">
+        <input data-testid="fd-dose-s" inputMode="decimal" step={0.5} min={0.5} max={10} value={v}
+          onChange={(e) => setV(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && ok && steps / 2 !== cur && save()}
+          className={`w-20 rounded-md border bg-background px-2 py-1 font-mono text-sm tabular-nums focus:outline-none ${ok ? "border-border focus:border-sky-500" : "border-red-500"}`} />
+        <span className="text-xs text-muted-foreground">s ≈ {ok ? n : "—"} ml</span>
+        <button type="button" data-testid="fd-dose-s-save" disabled={!ok || busy || (ok && steps / 2 === cur)} onClick={save}
+          className="rounded-md bg-sky-600 px-3 py-1 text-xs font-semibold text-white disabled:opacity-40">Tallenna</button>
+      </div>
+      <div className="mt-1 text-[11px] text-muted-foreground">
+        {!ok ? <span className="text-red-400">0.5–10 s, askel 0.5</span>
+          : msg ? <span className={msg === "Tallennettu" ? "text-emerald-400" : "text-red-400"}>{msg}</span>
+          : <>Myko lähettää DoseReq_ms PLC:lle. PLC MaxDose_ms = 5000 → yli 5 s leikataan kunnes MaxDose_ms nostetaan.</>}
+      </div>
+    </div>
+  );
+}
+
 function SpEditor({ d, reload }: { d: FertDoseStatus; reload: () => void }) {
   const cur = d.config.ec_sp ?? d.sp ?? 0;
   const [v, setV] = useState(String(cur)); const [msg, setMsg] = useState<string | null>(null); const [busy, setBusy] = useState(false);
@@ -237,8 +269,8 @@ export function FertEcModal({ open, d, reload, onClose }: { open: boolean; d: Fe
               <div className="inline-flex overflow-hidden rounded-md border border-border">{(["A", "B"] as const).map((f) => (
                 <button key={f} type="button" disabled={busy} onClick={() => set({ fert: f })} title="Sama pumppu – letku siirretään käsin (vain kirjanpito)"
                   className={`px-4 py-1 font-bold ${c.fert === f ? "bg-sky-600 text-white" : "text-muted-foreground hover:bg-muted/40"}`}>{f}</button>))}</div>
-              <span className="text-xs text-muted-foreground">annos {c.dose_s} s ≈ {c.dose_s} ml</span>
             </div>
+            <DoseEditor key={`dose-${c.dose_s}`} d={d} reload={reload} />
             <button type="button" data-testid="fd-dose" disabled={busy || d.interlock} onClick={() => setConfirm(true)}
               className="mt-3 w-full rounded-md bg-amber-500 py-2 text-sm font-bold text-zinc-900 hover:bg-amber-400 disabled:opacity-40">Annostele nyt…</button>
             <div className="mt-2 space-y-0.5 text-xs">
