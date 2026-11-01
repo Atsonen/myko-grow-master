@@ -19,6 +19,7 @@ import {
   PROCESS_VIEW_W,
   clientToSvg,
   clampBox,
+  PROCESS_GRID,
   clampProcessZoom,
   loadProcessLayout,
   mergeProcessBoxes,
@@ -67,7 +68,17 @@ function useKasAlarms() {
   useEffect(() => { load(); const t = setInterval(load, 15_000); return () => clearInterval(t); }, []);
   return { a, setA, load };
 }
-const limTxt = (L?: KasLimit) => (!L ? undefined : !L.enabled ? (L.disabled_until ? untilLabel(L.disabled_until).replace(/ \(.*\)$/, "") : "pois") : `${L.lo ?? ""}–${L.hi ?? ""}`);
+/** Compact limit/disable label for ValueBox (full untilLabel overflows 100 px tiles). */
+const limTxt = (L?: KasLimit) => {
+  if (!L) return undefined;
+  if (L.enabled === false) {
+    if (!L.disabled_until) return "pois";
+    const d = new Date(L.disabled_until);
+    const t = d.toLocaleTimeString("fi-FI", { hour: "2-digit", minute: "2-digit" });
+    return `pois ${t}`;
+  }
+  return `${L.lo ?? ""}–${L.hi ?? ""}`;
+};
 
 function AlarmDialog({ sig, data, onClose, onSaved }: { sig: string | null; data: KasvamoAlarms | null; onClose: () => void; onSaved: (d: KasvamoAlarms) => void }) {
   const L = sig && data ? data.config.limits[sig] : undefined; const S = sig && data ? data.signals[sig] : undefined;
@@ -187,7 +198,12 @@ function ValueBox({ x, y, w = 92, h = 40, label, value, unit, wired = true, titl
       data-testid={onClick ? `pd-click-${label}` : undefined}>
       <title>{(title ?? label) + (onClick ? (clickHint ?? " – avaa G_Air-säädin") : "")}</title>
       <rect width={w} height={H} rx={6} fill={fill} stroke={stroke} strokeWidth={selected || st ? 2.5 : 1} data-state={st ?? ""} strokeDasharray={wired ? undefined : "4 3"} />
-      {limits && <text x={w - 6} y={labelY} textAnchor="end" fontSize={8} fill={st === "alarm" ? "#fecaca" : C.muted} fontFamily="monospace">{limits}</text>}
+      {limits && (
+        <text x={w - 6} y={labelY} textAnchor="end" fontSize={8} fill={st === "alarm" ? "#fecaca" : C.muted} fontFamily="monospace">
+          <title>{limits}</title>
+          {limits.length > 12 ? `${limits.slice(0, 11)}…` : limits}
+        </text>
+      )}
       {selected && (
         <g transform={`translate(${w - 26},-7)`}>
           <rect width={26} height={14} rx={4} fill={ACCENT} />
@@ -239,7 +255,7 @@ function Pump({ x, y, label, state, color = C.pipe, status, enable, detail, writ
   );
 }
 
-/** P&ID centrifugal CircPump (L/R): circle + discharge triangle, green/red/grey, run info. */
+/** P&ID centrifugal CircPump (L/R): circle + discharge △ toward station; compact non-overlapping caption. */
 function CircPump({ x, y, side, run, err, wait, enable, errCode, runTimeMs, starts, writeAllowed, busy, onToggle, detail }: {
   x: number; y: number; side: "L" | "R";
   run?: boolean; err?: boolean; wait?: boolean; enable?: boolean;
@@ -248,53 +264,43 @@ function CircPump({ x, y, side, run, err, wait, enable, errCode, runTimeMs, star
 }) {
   const wired = run !== undefined || enable !== undefined;
   const running = !!run && !err;
-  // Status colour: error red, running green, else grey (stopped / OFF / unwired)
   const accent = !wired ? C.na : err ? "#ef4444" : running ? "#22c55e" : "#64748b";
   const fill = !wired ? C.panel : err ? "#3f1212" : running ? "#052e16" : C.panel;
   const canToggle = enable !== undefined && !!writeAllowed && !busy && !!onToggle;
   const statusTxt = !wired ? "–" : err ? "VIKA" : running ? "KÄY" : wait ? "odot" : enable === false ? "OFF" : "seis";
   const statusCol = err ? "#fca5a5" : running ? "#86efac" : wait ? "#fcd34d" : "#94a3b8";
   const rtS = runTimeMs != null ? Math.round(runTimeMs / 1000) : undefined;
-  // Discharge triangle: L → left station (W), R → right station (E)
-  const tri = side === "L" ? "M 2 -7 L -12 0 L 2 7 Z" : "M -2 -7 L 12 0 L -2 7 Z";
+  // Discharge toward station (tank → L/R): L left, R right. Triangle outside circle.
+  const tri = side === "L"
+    ? "M -14 -6 L -26 0 L -14 6 Z"
+    : "M 14 -6 L 26 0 L 14 6 Z";
   const label = side === "L" ? "Pumppu L" : "Pumppu R";
+  const info = `${statusTxt} · ${rtS !== undefined ? `${rtS}s` : "–"} · ${starts !== undefined ? starts : "–"}×`;
   return (
     <g transform={`translate(${x},${y})`} data-testid={`circ-pump-${side}`} opacity={wired ? 1 : 0.55}>
-      <title>{detail ?? `${label}: ${statusTxt}`}</title>
-      {/* body */}
-      <circle r={17} fill={fill} stroke={accent} strokeWidth={2.5} />
-      {/* impeller cross (spins when running) */}
+      <title>{detail ?? `${label}: ${statusTxt}, käynti ${rtS ?? "–"} s, ${starts ?? "–"}×, käyttö ${enable === undefined ? "—" : enable ? "ON" : "OFF"}`}</title>
+      <circle r={15} fill={fill} stroke={accent} strokeWidth={2.4} />
       <g>
         {running && <animateTransform attributeName="transform" type="rotate" from="0 0 0" to="360 0 0" dur="1.4s" repeatCount="indefinite" />}
-        <line x1={-7} y1={0} x2={7} y2={0} stroke={accent} strokeWidth={1.6} opacity={0.85} />
-        <line x1={0} y1={-7} x2={0} y2={7} stroke={accent} strokeWidth={1.6} opacity={0.85} />
+        <line x1={-6} y1={0} x2={6} y2={0} stroke={accent} strokeWidth={1.5} opacity={0.85} />
+        <line x1={0} y1={-6} x2={0} y2={6} stroke={accent} strokeWidth={1.5} opacity={0.85} />
       </g>
-      {/* discharge triangle (P&ID) */}
       <path d={tri} fill={accent} opacity={0.95} />
-      <text y={30} textAnchor="middle" fontSize={10} fill={C.text} fontFamily="monospace">{label}</text>
-      <text y={42} textAnchor="middle" fontSize={9} fill={statusCol} fontFamily="monospace" fontWeight={600}>{statusTxt}</text>
-      {/* run info like Plants / SequencePanel */}
-      <text y={54} textAnchor="middle" fontSize={8} fill={C.muted} fontFamily="monospace">
-        käynti {rtS !== undefined ? `${rtS} s` : "–"} · {starts !== undefined ? starts : "–"}×
-      </text>
-      {err && errCode !== undefined && (
-        <text y={66} textAnchor="middle" fontSize={8} fill="#fca5a5" fontFamily="monospace">Err {errCode}</text>
-      )}
-      <g transform={`translate(-22, ${err && errCode !== undefined ? 72 : 60})`}>
-        <text y={0} textAnchor="middle" x={22} fontSize={8} fill={C.muted} fontFamily="monospace">
-          Käyttö {enable === undefined ? "—" : enable ? "ON" : "OFF"}
-        </text>
-        <g transform="translate(0, 4)" style={canToggle ? { cursor: "pointer" } : undefined}
+      <text y={28} textAnchor="middle" fontSize={10} fill={C.text} fontFamily="monospace">{label}</text>
+      {/* One compact status line — no overlap with Off button */}
+      <text y={40} textAnchor="middle" fontSize={8} fill={statusCol} fontFamily="monospace">{info}{err && errCode !== undefined ? ` E${errCode}` : ""}</text>
+      {enable !== undefined && (
+        <g transform="translate(-20, 46)" style={canToggle ? { cursor: "pointer" } : undefined}
           opacity={canToggle ? 1 : 0.45}
           onClick={canToggle ? (e) => { e.stopPropagation(); onToggle!(!enable); } : undefined}
           role={canToggle ? "button" : undefined}
           data-testid={`circ-en-${side}`}>
-          <rect width={44} height={16} rx={8} fill={enable ? C.on : "#3f3f46"} stroke={C.stroke} />
-          <text x={22} y={12} textAnchor="middle" fontSize={9} fill="#fff" fontFamily="monospace" fontWeight={700}>
+          <rect width={40} height={14} rx={7} fill={enable ? C.on : "#3f3f46"} stroke={C.stroke} />
+          <text x={20} y={10.5} textAnchor="middle" fontSize={8} fill="#fff" fontFamily="monospace" fontWeight={700}>
             {busy ? "…" : enable ? "Off" : "On"}
           </text>
         </g>
-      </g>
+      )}
     </g>
   );
 }
@@ -702,7 +708,7 @@ export function ProcessDiagramWidget() {
             </Button>
           ) : (
             <>
-              <span className="mr-auto text-[11px] font-mono text-sky-300">Vedä · kokoa · zoom</span>
+              <span className="mr-auto text-[11px] font-mono text-sky-300">Vedä · kokoa · zoom · ruudukko {PROCESS_GRID} px (laatat 10×4)</span>
               <div className="flex flex-wrap items-center gap-1 rounded border border-border/60 bg-secondary/30 px-1.5 py-0.5" data-testid="pd-zoom-controls" onMouseDown={(e) => e.stopPropagation()}>
                 <button type="button" className="p-1 text-muted-foreground hover:text-foreground" title="Pienennä" data-testid="pd-zoom-out"
                   onClick={() => pe.setZoomUser((z) => ({ ...z, scale: Math.max(0.15, Math.round(((z.scale ?? pe.fitScale) * 0.9) * 100) / 100) }))}>
@@ -796,25 +802,25 @@ export function ProcessDiagramWidget() {
             clickHint=" – avaa kiertovesisekvenssi" />
           {/* Compact sequence status LEFT of tank (free space ~200–295) */}
           {sqLive && (
-            <g transform="translate(198, 355)" data-testid="pd-seq-status"
+            <g transform="translate(188, 350)" data-testid="pd-seq-status"
               onClick={pe.editing ? undefined : () => setSeqDlg(true)}
               style={pe.editing ? undefined : { cursor: "pointer" }}
               role={pe.editing ? undefined : "button"}>
-              <title>Kiertovesisekvenssi: askel {seqStep ?? "–"} · {seqStepName ?? ""}{seqEnable === false ? " · Pysäytetty" : ""} – avaa paneeli</title>
-              <rect width={98} height={(!seqRunning || seqRemMs !== undefined || (seqStep === 4 && fpRunS != null)) ? 54 : 40}
-                rx={5} fill="#0b1220" stroke="#334155" strokeWidth={1.2} opacity={0.92} />
-              <text x={6} y={13} fontSize={9} fill="#94a3b8" fontFamily="monospace">Sekvenssi</text>
-              <text x={6} y={28} fontSize={11} fill="#e2e8f0" fontFamily="monospace" fontWeight={600}>
-                {seqStep ?? "–"} · {seqStepName ?? "–"}
+              <title>Kiertovesisekvenssi: askel {seqStep ?? "–"} · {seqStepName ?? ""}{!seqRunning ? " · Pysäytetty" : ""} – avaa paneeli</title>
+              <rect width={108} height={48} rx={5} fill="#0b1220" stroke="#334155" strokeWidth={1.2} opacity={0.92} />
+              {/* step badge (small) so long Finnish names fit */}
+              <rect x={6} y={6} width={16} height={14} rx={3} fill="#1e293b" stroke="#475569" />
+              <text x={14} y={16} textAnchor="middle" fontSize={9} fill="#e2e8f0" fontFamily="monospace" fontWeight={700}>{seqStep ?? "–"}</text>
+              <text x={26} y={17} fontSize={9} fill="#94a3b8" fontFamily="monospace">Sekv.</text>
+              <text x={6} y={32} fontSize={10} fill="#e2e8f0" fontFamily="monospace" fontWeight={600}>
+                {(seqStepName ?? "–").length > 14 ? (seqStepName ?? "").slice(0, 13) + "…" : (seqStepName ?? "–")}
               </text>
               {!seqRunning ? (
-                <text x={6} y={44} fontSize={10} fill="#fbbf24" fontFamily="monospace">Pysäytetty</text>
+                <text x={6} y={44} fontSize={9} fill="#fbbf24" fontFamily="monospace">Pysäytetty</text>
               ) : seqRemMs !== undefined ? (
-                <text x={6} y={44} fontSize={10} fill="#7dd3fc" fontFamily="monospace">jäljellä {seqMmss(seqRemMs)}</text>
+                <text x={6} y={44} fontSize={9} fill="#7dd3fc" fontFamily="monospace">{seqMmss(seqRemMs)}</text>
               ) : seqStep === 4 && fpRunS != null ? (
-                <text x={6} y={44} fontSize={10} fill="#7dd3fc" fontFamily="monospace">
-                  {fpPumpOn ? `käynti ${fpRunS} s` : `täyttö ${fpRunS} s`}
-                </text>
+                <text x={6} y={44} fontSize={9} fill="#7dd3fc" fontFamily="monospace">{fpPumpOn ? `${fpRunS}s` : `${fpRunS}s`}</text>
               ) : null}
             </g>
           )}

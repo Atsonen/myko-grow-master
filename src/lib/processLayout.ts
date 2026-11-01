@@ -24,33 +24,47 @@ export const DEFAULT_PROCESS_ZOOM: ProcessZoom = { scale: null, panX: 0, panY: 0
 
 /** Default layout matching the hard-coded SVG positions (before user edits). */
 export const DEFAULT_PROCESS_BOXES: ProcessBoxMap = {
-  "vb-fan": { x: 694, y: 108, w: 92, h: 40 },
-  "vb-duct": { x: 560, y: 92, w: 92, h: 40 },
-  "vb-roof": { x: 400, y: 60, w: 92, h: 40 },
-  "vb-mid": { x: 400, y: 110, w: 92, h: 40 },
-  "btn-halytykset": { x: 840, y: 110, w: 90, h: 26 },
-  "vb-pinta": { x: 442, y: 330, w: 100, h: 40 },
-  "vb-vesi": { x: 442, y: 376, w: 100, h: 40 },
-  "vb-ec": { x: 442, y: 422, w: 100, h: 40 },
-  "vb-ph": { x: 442, y: 468, w: 100, h: 40 },
+  // Positions/sizes on PROCESS_GRID (10 px). Value tiles default 10×4 units (100×40).
+  "vb-fan": { x: 690, y: 110, w: 100, h: 40 },
+  "vb-duct": { x: 560, y: 90, w: 100, h: 40 },
+  "vb-roof": { x: 400, y: 60, w: 100, h: 40 },
+  "vb-mid": { x: 400, y: 110, w: 100, h: 40 },
+  "btn-halytykset": { x: 840, y: 110, w: 90, h: 30 },
+  "vb-pinta": { x: 440, y: 330, w: 100, h: 40 },
+  "vb-vesi": { x: 440, y: 380, w: 100, h: 40 },
+  "vb-ec": { x: 440, y: 430, w: 100, h: 40 },
+  "vb-ph": { x: 440, y: 480, w: 100, h: 40 },
   "vb-g1": { x: 560, y: 280, w: 100, h: 40 },
-  "vb-ajastin": { x: 560, y: 226, w: 100, h: 40 },
-  "vb-kosteus": { x: 120, y: 84, w: 100, h: 40 },
-  "vb-lammitin-t": { x: 200, y: 505, w: 92, h: 40 },
+  "vb-ajastin": { x: 560, y: 230, w: 100, h: 40 },
+  "vb-kosteus": { x: 120, y: 80, w: 100, h: 40 },
+  "vb-lammitin-t": { x: 200, y: 510, w: 100, h: 40 },
 };
 
-const MIN_W = 28;
-const MIN_H = 20;
+/** Snap grid in SVG viewBox px (≈ dashboard “units”: tile often 10×4 = 100×40). */
+export const PROCESS_GRID = 10;
+/** Default value-tile size in grid units (w×h): 10×4 → 100×40. */
+export const PROCESS_TILE_UNITS = { w: 10, h: 4 } as const;
+const MIN_W = PROCESS_GRID * 3; // 30
+const MIN_H = PROCESS_GRID * 2; // 20
 export const PROCESS_VIEW_W = 960;
 export const PROCESS_VIEW_H = 580;
 const VIEW_W = PROCESS_VIEW_W;
 const VIEW_H = PROCESS_VIEW_H;
 
+const snap = (n: number, g = PROCESS_GRID) => Math.round(n / g) * g;
+
+/** Clamp to view + snap x/y/w/h to PROCESS_GRID (keeps saved layouts, snaps to nearest). */
 export function clampBox(b: ProcessBox): ProcessBox {
-  const w = Math.max(MIN_W, Math.min(VIEW_W, Math.round(b.w)));
-  const h = Math.max(MIN_H, Math.min(VIEW_H, Math.round(b.h)));
-  const x = Math.max(0, Math.min(VIEW_W - w, Math.round(b.x)));
-  const y = Math.max(0, Math.min(VIEW_H - h, Math.round(b.y)));
+  let w = Math.max(MIN_W, Math.min(VIEW_W, snap(b.w)));
+  let h = Math.max(MIN_H, Math.min(VIEW_H, snap(b.h)));
+  let x = snap(b.x);
+  let y = snap(b.y);
+  x = Math.max(0, Math.min(VIEW_W - w, x));
+  y = Math.max(0, Math.min(VIEW_H - h, y));
+  // Re-snap after clamp so edges stay on grid
+  x = snap(x); y = snap(y);
+  if (x + w > VIEW_W) x = Math.max(0, VIEW_W - w);
+  if (y + h > VIEW_H) y = Math.max(0, VIEW_H - h);
   return { x, y, w, h };
 }
 
