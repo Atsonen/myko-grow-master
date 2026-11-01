@@ -4,7 +4,7 @@ import GridLayout, { WidthProvider, type Layout } from "react-grid-layout";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
 import { toast } from "sonner";
-import { GripVertical, Pencil, RotateCcw, Save } from "lucide-react";
+import { AlignVerticalJustifyStart, GripVertical, Pencil, RotateCcw, Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getDashboardLayout, resetDashboardLayout, saveDashboardLayout } from "@/lib/apiClient";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -12,6 +12,28 @@ import { useIsMobile } from "@/hooks/use-mobile";
 const Grid = WidthProvider(GridLayout);
 export type PanelDef = { id: string; title: string; node: ReactNode; x: number; y: number; w: number; h: number; minW?: number; minH?: number };
 type Saved = { version: 2; widgets: { id: string; type: string; x: number; y: number; w: number; h: number }[] };
+
+
+/** Move every panel up as far as possible without overlapping (RGL verticalCompact); keep x/w/h. */
+function compactPanelsVertical(items: Layout[]): Record<string, { x: number; y: number; w: number; h: number }> {
+  const sorted = [...items].sort((a, b) => a.y - b.y || a.x - b.x);
+  const placed: Layout[] = [];
+  const overlaps = (a: Layout, b: Layout) =>
+    a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+  for (const it of sorted) {
+    let y = 0;
+    for (;;) {
+      const cand = { ...it, y };
+      const hit = placed.find((p) => overlaps(cand, p));
+      if (!hit) break;
+      y = hit.y + hit.h;
+    }
+    placed.push({ ...it, y });
+  }
+  const m: Record<string, { x: number; y: number; w: number; h: number }> = {};
+  for (const it of placed) m[it.i] = { x: it.x, y: it.y, w: it.w, h: it.h };
+  return m;
+}
 
 export function PanelLayout({ layoutId, panels, rowHeight = 40, cols = 24 }: { layoutId: string; panels: PanelDef[]; rowHeight?: number; cols?: number }) {
   const isMobile = useIsMobile();
@@ -39,10 +61,22 @@ export function PanelLayout({ layoutId, panels, rowHeight = 40, cols = 24 }: { l
     if (!confirm("Palautetaanko oletusasettelu?")) return;
     try { await resetDashboardLayout(layoutId); setPos({}); setSaved({}); setDirty(false); setEditing(false); } catch (e) { toast.error((e as Error).message); }
   };
+  const compactVerticalGaps = () => {
+    if (!editing) return;
+    const next = compactPanelsVertical(items);
+    const changed = items.some((it) => {
+      const n = next[it.i];
+      return n && n.y !== it.y;
+    });
+    if (!changed) { toast.message("Ei tyhjiä pystysuuntaisia välejä"); return; }
+    setPos(next); setDirty(true);
+    toast.success("Tyhjät pystysuuntaiset välit poistettu — tallenna asettelu");
+  };
   const toolbar = !isMobile && (
     <div className="flex justify-end gap-2" data-testid="layout-toolbar">
       {!editing ? <Button size="sm" variant="outline" onClick={() => setEditing(true)}><Pencil className="h-3 w-3 mr-1" /> Edit layout</Button> : <>
         <Button size="sm" variant="ghost" onClick={() => void reset()}><RotateCcw className="h-3 w-3 mr-1" /> Default</Button>
+        <Button size="sm" variant="ghost" onClick={compactVerticalGaps} title="Siirtää paneelit ylös ilman päällekkäisyyttä (vaakasuunta ennallaan)"><AlignVerticalJustifyStart className="h-3 w-3 mr-1" /> Poista tyhjät välit (pystysuunta)</Button>
         <Button size="sm" variant="ghost" onClick={() => { setPos(saved); setDirty(false); setEditing(false); }}>Cancel</Button>
         <Button size="sm" onClick={() => void save()} disabled={!dirty}><Save className="h-3 w-3 mr-1" /> Save</Button>
       </>}

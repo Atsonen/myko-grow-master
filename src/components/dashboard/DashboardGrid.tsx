@@ -3,7 +3,7 @@ import GridLayout, { WidthProvider, type Layout } from "react-grid-layout";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
 import { toast } from "sonner";
-import { Gauge, GripVertical, LayoutGrid, Pencil, Plus, RefreshCw, RotateCcw, Save, Settings2, X } from "lucide-react";
+import { AlignVerticalJustifyStart, Gauge, GripVertical, LayoutGrid, Pencil, Plus, RefreshCw, RotateCcw, Save, Settings2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -56,6 +56,36 @@ function normalizeWidgetsY<T extends { y: number }>(widgets: T[]): T[] {
   }
   if (!Number.isFinite(minY) || minY <= 0) return widgets;
   return widgets.map((w) => ({ ...w, y: Number(w.y) - minY }));
+}
+
+/** Move every widget up as far as possible without overlapping (RGL verticalCompact); keep x/w/h. */
+function compactWidgetsVertical<T extends { x: number; y: number; w: number; h: number }>(widgets: T[]): T[] {
+  if (widgets.length <= 1) return normalizeWidgetsY(widgets);
+  const sorted = [...widgets].sort((a, b) => a.y - b.y || a.x - b.x);
+  const placed: T[] = [];
+  const overlaps = (a: T, b: T) =>
+    a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+  for (const w of sorted) {
+    let y = 0;
+    // Jump below colliding items until free (x/w/h unchanged).
+    for (;;) {
+      const cand = { ...w, y };
+      const hit = placed.find((p) => overlaps(cand, p));
+      if (!hit) break;
+      y = hit.y + hit.h;
+    }
+    placed.push({ ...w, y });
+  }
+  // Preserve original array order (ids), only y may change.
+  const byId = new Map(placed.map((w) => [(w as { id?: string }).id ?? "", w]));
+  // Fallback: if no id, rebuild from sorted placement via index key
+  if (widgets.every((w) => "id" in w && (w as { id: string }).id)) {
+    return widgets.map((w) => {
+      const n = byId.get((w as { id: string }).id);
+      return n ? { ...w, y: n.y } : w;
+    });
+  }
+  return normalizeWidgetsY(placed);
 }
 
 
@@ -247,6 +277,22 @@ function DashboardInner({ layoutId, defaultLayout = DEFAULT_LAYOUT, title = "Das
     }
   };
 
+  const compactVerticalGaps = () => {
+    if (!editing) return;
+    const next = compactWidgetsVertical(layout.widgets);
+    const changed = next.some((w, i) => {
+      const o = layout.widgets[i];
+      return !o || w.y !== o.y;
+    });
+    if (!changed) {
+      toast.message("Ei tyhjiä pystysuuntaisia välejä");
+      return;
+    }
+    setLayout({ ...layout, widgets: next });
+    setDirty(true);
+    toast.success("Tyhjät pystysuuntaiset välit poistettu — tallenna asettelu");
+  };
+
   const addWidget = (type: WidgetType) => {
     const meta = WIDGET_META[type];
     const maxY = layout.widgets.reduce((m, w) => Math.max(m, w.y + w.h), 0);
@@ -384,6 +430,9 @@ function DashboardInner({ layoutId, defaultLayout = DEFAULT_LAYOUT, title = "Das
               </Button>
               <Button size="sm" variant="ghost" onClick={() => void resetToDefault()}>
                 <RotateCcw className="h-3 w-3 mr-1" /> Default
+              </Button>
+              <Button size="sm" variant="ghost" onClick={compactVerticalGaps} title="Siirtää paneelit ylös ilman päällekkäisyyttä (vaakasuunta ennallaan)">
+                <AlignVerticalJustifyStart className="h-3 w-3 mr-1" /> Poista tyhjät välit (pystysuunta)
               </Button>
               <Button size="sm" variant="ghost" onClick={cancel}>
                 Cancel
