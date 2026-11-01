@@ -11,7 +11,7 @@ import { registerPumputRoutes } from "./pumput.js";
 import { startKasvamoAlarms, registerKasvamoAlarmRoutes, kasvamoAlarmRows, kasvamoAck, kasvamoDisabledRows } from "./kasvamoAlarms.js";
 import { startFertDose, registerFertDoseRoutes, fertAlarmRows, fertAck, fertDisabledRows } from "./fertDose.js";
 import { startSequence, registerSequenceRoutes } from "./sequence.js";
-import { startFillPump, registerFillPumpRoutes } from "./fillPump.js";
+import { startFillPump, registerFillPumpRoutes, fillPumpAlarmRows, fillPumpAck } from "./fillPump.js";
 import { startSensorBlock, registerSensorBlockRoutes } from "./sensorBlock.js";
 import { untilTxt } from "./alarmDisable.js";
 import { registerMykoDb } from "./mykoDb.js";
@@ -892,7 +892,7 @@ app.get(
         source: "LLM", desc: String(f.finding ?? ""), acked: true, ackedAt: null, ackedBy: null, ackRequired: false,
       });
     } catch (e) { console.error("[alarms] llm rows", e.message); }
-    try { rows.push(...(await fertAlarmRows(hours)), ...kasvamoAlarmRows()); } catch (e) { console.error("[alarms] kasvamo rows", e.message); }
+    try { rows.push(...(await fertAlarmRows(hours)), ...kasvamoAlarmRows(), ...fillPumpAlarmRows()); } catch (e) { console.error("[alarms] kasvamo/fillpump rows", e.message); }
     // Väliaikaisesti poiskytketyt hälytykset (aikaraja) näkyvät listassa aktiivisina info-riveinä
     for (const [i, d] of [...fertDisabledRows().map((d) => ({ ...d, kind: "fert" })), ...kasvamoDisabledRows().map((d) => ({ ...d, kind: "kasvamo" }))].entries()) rows.push({
       id: -(1_800_000_000 + i), pointId: d.kind === "fert" ? "Kasvamo_EC" : "Kasvamo", pointName: d.name, unit: "", alarm: "POIS_KAYTOSTA", bit: null, priority: 3,
@@ -903,7 +903,7 @@ app.get(
       .map((r) => ({ ...r, durationSec: Math.round(((r.end ? new Date(r.end).getTime() : now) - new Date(r.start).getTime()) / 1000) }))
       .sort((a, b) => b.start.localeCompare(a.start))
       .slice(0, limit);
-    res.json({ hours, generatedAt: new Date().toISOString(), points: [...points.map((p) => ({ id: p.id, name: p.name, source: PLC_POINT_IDS.has(p.id) ? "PLC" : "Myko" })), { id: "Kasvamo_EC", name: "Kasvamo · EC / lannoitus", source: "Kasvamo" }, { id: "Kasvamo", name: "Kasvamo", source: "Kasvamo" }], rows: out, plc: plcStatus() });
+    res.json({ hours, generatedAt: new Date().toISOString(), points: [...points.map((p) => ({ id: p.id, name: p.name, source: PLC_POINT_IDS.has(p.id) ? "PLC" : "Myko" })), { id: "Kasvamo_EC", name: "Kasvamo · EC / lannoitus", source: "Kasvamo" }, { id: "Kasvamo_FillPump", name: "Kasvamo · Täyttöpumppu", source: "Kasvamo" }, { id: "Kasvamo", name: "Kasvamo", source: "Kasvamo" }], rows: out, plc: plcStatus() });
   }),
 );
 
@@ -1052,9 +1052,19 @@ app.post(
     const ids = req.body?.ids;
     if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: "ids[] required" });
     const by = String(req.body?.by ?? "dashboard").slice(0, 80); const dry = Boolean(req.body?.dryRun);
-    const num = ids.map(Number); const fert = num.filter((x) => x <= -2_000_000_000).map((x) => -x - 2_000_000_000);
-    const kas = num.filter((x) => x <= -1_900_000_000 && x > -2_000_000_000); const rest = ids.filter((_, i) => num[i] > -1_900_000_000);
-    let extra = 0; if (!dry) { extra += await fertAck(fert, by); extra += kasvamoAck(kas, by); }
+    const num = ids.map(Number);
+    const fert = num.filter((x) => x <= -2_000_000_000).map((x) => -x - 2_000_000_000);
+    const kas = num.filter((x) => x <= -1_900_000_000 && x > -2_000_000_000);
+    const fp = num.filter((x) => x <= -1_850_000_000 && x > -1_900_000_000);
+    const rest = ids.filter((_, i) => {
+      const x = num[i];
+      if (!Number.isFinite(x)) return false;
+      if (x <= -2_000_000_000) return false; // fert
+      if (x <= -1_900_000_000) return false; // kasvamo
+      if (x <= -1_850_000_000 && x > -1_900_000_000) return false; // fillpump
+      return true; // DB ids + disabled info (-1.8e9) + other
+    });
+    let extra = 0; if (!dry) { extra += await fertAck(fert, by); extra += kasvamoAck(kas, by); extra += fillPumpAck(fp, by); }
     const r = rest.length ? await ackAlarms(rest, by, dry) : { acked: 0 };
     res.json({ ...r, kasvamoAcked: extra, ...(typeof r.acked === "number" ? { acked: r.acked + extra } : {}) });
   }),
