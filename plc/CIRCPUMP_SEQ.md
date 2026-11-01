@@ -13,7 +13,7 @@ Ei käännetty – tuo TIA:ssa *External source files → Generate blocks from s
 | HbTimeout | Time | T#45S | Ei muutosta tässä ajassa → HB_OK = FALSE |
 | T_Circ | Time | T#30S | Askel 1 kesto (S7_SetPoint, jätä kytkemättä) |
 | T_Settle | Time | T#10M | Askel 2 kesto (S7_SetPoint) |
-| T_Fill | Time | T#5S | Askel 4 kesto, paikkamerkki (S7_SetPoint) |
+| ~~T_Fill~~ | — | poistettu | Askel 4 etenee **FillPump.Done**:lla |
 
 | Lähtö | Tyyppi | Kuvaus |
 |---|---|---|
@@ -31,7 +31,7 @@ Ei käännetty – tuo TIA:ssa *External source files → Generate blocks from s
 | 1 | Kierrätys | T_Circ kulunut → 2 | CircPump1/2 Run |
 | 2 | Tasaantuminen | T_Settle kulunut → 3 | pumput pois |
 | 3 | Pinnan tallennus | yksi kierros → 4 | tallenna pinta |
-| 4 | Täyttö | T_Fill kulunut → 1, CycleCount + 1 | täyttöventtiili / -ehto |
+| 4 | Täyttö | FillPump.Done → 1, CycleCount + 1 | FB_FillPump |
 
 Yleinen pysäytys tarkistetaan ennen CASEa joka kierros → Step := 0. Tuntematon askel → 0.
 Jokaisella ajastetulla askeleella oma TON (IN := Step = n) → nollautuu varmasti askeleen vaihtuessa.

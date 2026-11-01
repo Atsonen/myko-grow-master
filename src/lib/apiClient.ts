@@ -390,7 +390,7 @@ export async function resetDashboardLayout(id?: string) {
   return requestJson<{ ok: boolean }>(`/api/dashboard/layout${id ? `?id=${encodeURIComponent(id)}` : ""}`, { method: "DELETE" });
 }
 
-export type SequenceSettings = { enable: boolean; t_circ_s: number; t_settle_s: number; t_fill_s: number; plc_write: false; hb_enabled: false };
+export type SequenceSettings = { enable: boolean; t_circ_s: number; t_settle_s: number; plc_write: false; hb_enabled: false };
 export type SequenceResponse = {
   settings: SequenceSettings; present: boolean; stale: boolean; plc_at: string | null; steps: Record<string, string>;
   write_allowed: boolean; write_note: string; pump_write_allowed?: boolean; seq_enable_write_allowed?: boolean; write_nodes_pending?: string[];
@@ -416,6 +416,28 @@ export async function putSequence(s: Partial<SequenceSettings>) {
   return requestJson<{ settings: SequenceSettings; written_to_plc: false }>("/api/sequence", {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(s) });
 }
+export type FillPumpPlc = {
+  present?: boolean; readable?: boolean; writable?: boolean; at?: number;
+  Run?: boolean; Level?: number; HbOk?: boolean; Pump?: boolean; Done?: boolean;
+  Cfg_Enable?: boolean; Cfg_LvlSP?: number; Cfg_Hyst?: number; Cfg_MaxRun_s?: number;
+  Cfg_LvlMin?: number; Cfg_LvlMax?: number; Cmd_Ack?: boolean;
+  St_Running?: boolean; St_Waiting?: boolean; St_Skipped?: boolean; St_Error?: boolean;
+  St_ErrCode?: number; St_Level?: number; St_HbOk?: boolean; St_RunTime_s?: number;
+  St_TotRun_ms?: number; St_Starts?: number; St_Status?: number;
+};
+export type FillPumpResponse = {
+  plc: FillPumpPlc; plc_at: string | null; stale: boolean; present: boolean;
+  write_allowed: boolean; write_note: string; err_codes: Record<string, string>; allowed_writes: string[];
+};
+export async function getFillPump() { return requestJson<FillPumpResponse>("/api/fillpump"); }
+/** FillPump Cfg_* and Cmd_Ack to PLC. Requires confirm: true. No startup sync. */
+export async function setFillPump(body: Record<string, unknown>) {
+  return requestJson<{ ok: boolean; results: Record<string, unknown> }>("/api/fillpump", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...body, confirm: true, by: "myko-ui" }),
+  });
+}
+
 
 export interface SeriesStyleDefault {
   name?: string;

@@ -14,8 +14,8 @@ const PUMP_ENABLE_WRITE_ALLOWED = true; // hyväksytty 1.11.2026 15:46 CircPump_
 const SEQ_ENABLE_WRITE_ALLOWED = true; // hyväksytty 1.11.2026 17:06 Sequence/Enable Bool
 const CMD_TOPIC = "Myko/Cmd/CircPump";
 let MQ = null; const PENDING = new Map();
-const DEF = { enable: false, t_circ_s: 30, t_settle_s: 600, t_fill_s: 5, plc_write: false, hb_enabled: false };
-const LIM = { t_circ_s: [1, 3600], t_settle_s: [1, 86400], t_fill_s: [1, 3600] };
+const DEF = { enable: false, t_circ_s: 30, t_settle_s: 600, plc_write: false, hb_enabled: false };
+const LIM = { t_circ_s: [1, 3600], t_settle_s: [1, 86400] }; // t_fill_s poistettu: askel 4 = FillPump.Done
 const STEPS = { 0: "Seis", 1: "Kierrätys", 2: "Tasaantuminen", 3: "Pinnan tallennus", 4: "Täyttö" };
 const S = { plc: { present: false }, at: 0 };
 
@@ -23,7 +23,9 @@ async function cfg() {
   const [r] = await query("SELECT v FROM myko_settings WHERE k = 'plc_sequence'");
   let c = {}; try { c = r ? (typeof r.v === "string" ? JSON.parse(r.v) : (r.v ?? {})) : {}; } catch { /* default */ }
   // plc_write/hb_enabled aina false – ei synkata Enableä PLC:hen taustalla
-  return { ...DEF, ...c, plc_write: false, hb_enabled: false };
+  const out = { ...DEF, ...c, plc_write: false, hb_enabled: false };
+  delete out.t_fill_s;
+  return out;
 }
 
 function cmd(body, timeoutMs = 5000) {
@@ -62,7 +64,7 @@ export function registerSequenceRoutes(app) {
         write_allowed: PLC_WRITE_ALLOWED,
         pump_write_allowed: PUMP_ENABLE_WRITE_ALLOWED,
         seq_enable_write_allowed: SEQ_ENABLE_WRITE_ALLOWED,
-        write_note: "CircPump Enable + Sequence Enable (Käynnistä/Pysäytä) hyväksytty; T_*/HB vain Mykoon. Ei Enable-synkkaa käynnistyksessä.",
+        write_note: "CircPump Enable + Sequence Enable hyväksytty; T_Circ/T_Settle vain Mykoon (T_Fill poistettu UI:sta, askel 4 = FillPump.Done). Ei Enable-synkkaa käynnistyksessä.",
         write_nodes_pending: [],
       });
     } catch (e) { res.status(500).json({ error: String(e?.message ?? e) }); }
@@ -108,6 +110,7 @@ export function registerSequenceRoutes(app) {
       }
       // settings.enable vain Myko-muistiin – EI kirjoiteta PLC:hen tästä
       if (b.enable !== undefined) next.enable = !!b.enable;
+      delete next.t_fill_s; // askel 4 ei enää ajan perusteella
       next.plc_write = false; next.hb_enabled = false;
       await query("INSERT INTO myko_settings (k, v, updated_by) VALUES ('plc_sequence', ?, 'ui') ON DUPLICATE KEY UPDATE v = VALUES(v), updated_by = VALUES(updated_by)", [JSON.stringify(next)]);
       res.json({ settings: next, written_to_plc: false });
