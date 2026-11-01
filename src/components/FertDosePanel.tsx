@@ -92,7 +92,7 @@ function DoseEditor({ d, reload }: { d: FertDoseStatus; reload: () => void }) {
   const cur = Number(d.config.dose_s) || 1;
   const [v, setV] = useState(String(cur)); const [msg, setMsg] = useState<string | null>(null); const [busy, setBusy] = useState(false);
   const n = Number(String(v).replace(",", "."));
-  const steps = Math.round(n * 2); const ok = Number.isFinite(n) && steps >= 1 && steps <= 20 && Math.abs(n - steps / 2) < 1e-9;
+  const steps = Math.round(n * 2); const ok = Number.isFinite(n) && steps >= 1 && steps <= 10 && Math.abs(n - steps / 2) < 1e-9; /* max 5.0 s */
   const save = async () => {
     setBusy(true); setMsg(null);
     try { await putFertDoseSettings({ dose_s: steps / 2 }); setMsg("Tallennettu"); reload(); }
@@ -102,7 +102,7 @@ function DoseEditor({ d, reload }: { d: FertDoseStatus; reload: () => void }) {
     <div className="mt-3 rounded-md border border-border/70 bg-black/20 p-2">
       <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Annoskoko (pumpun ajoaika)</div>
       <div className="mt-1 flex flex-wrap items-center gap-2">
-        <input data-testid="fd-dose-s" inputMode="decimal" step={0.5} min={0.5} max={10} value={v}
+        <input data-testid="fd-dose-s" inputMode="decimal" step={0.5} min={0.5} max={5} value={v}
           onChange={(e) => setV(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && ok && steps / 2 !== cur && save()}
           className={`w-20 rounded-md border bg-background px-2 py-1 font-mono text-sm tabular-nums focus:outline-none ${ok ? "border-border focus:border-sky-500" : "border-red-500"}`} />
@@ -111,9 +111,9 @@ function DoseEditor({ d, reload }: { d: FertDoseStatus; reload: () => void }) {
           className="rounded-md bg-sky-600 px-3 py-1 text-xs font-semibold text-white disabled:opacity-40">Tallenna</button>
       </div>
       <div className="mt-1 text-[11px] text-muted-foreground">
-        {!ok ? <span className="text-red-400">0.5–10 s, askel 0.5</span>
+        {!ok ? <span className="text-red-400">0.5–5 s, askel 0.5 (DoseReq 500–5000 ms)</span>
           : msg ? <span className={msg === "Tallennettu" ? "text-emerald-400" : "text-red-400"}>{msg}</span>
-          : <>Myko lähettää DoseReq_ms PLC:lle. PLC MaxDose_ms = 5000 → yli 5 s leikataan kunnes MaxDose_ms nostetaan.</>}
+          : <>Myko lähettää DoseReq_ms (500–5000) → Pumput.FertDose.</>}
       </div>
     </div>
   );
@@ -259,9 +259,9 @@ export function FertEcModal({ open, d, reload, onClose }: { open: boolean; d: Fe
 
           <Section title="Annostelun ohjaus">
             <div className="grid grid-cols-2 gap-2">
-              <Switch testid="fd-live" on={c.live} label="Live" disabled={busy} onClick={() => set({ live: !c.live })} title="Live-kirjoitukset odottavat lupaa (Pumput.FertDose)" />
+              <Switch testid="fd-live" on={c.live} label="Live" disabled={busy} onClick={() => set({ live: !c.live })} title="Live = kirjoitukset Pumput.FertDose (Enable/DoseReq/DoseTrig/Heartbeat)" />
               <Switch on={c.hb_enabled} label="Heartbeat" disabled={busy} onClick={() => set({ hb_enabled: !c.hb_enabled })} />
-              <Switch on={c.plc_enable} label="Enable" disabled={busy} onClick={() => set({ plc_enable: !c.plc_enable })} title="Pumput.FertDose.Enable (kirjoitus odottaa lupaa; EC-hälytys lukitsisi OFF)" />
+              <Switch on={c.plc_enable} label="Enable" disabled={busy} onClick={() => set({ plc_enable: !c.plc_enable })} title="Pumput.FertDose.Enable (EC-hälytys pakottaa OFF)" />
               <Switch on={c.auto} label="Automaatti" disabled={busy} onClick={() => set({ auto: !c.auto })} />
             </div>
             <div className="mt-3 flex items-center gap-2 text-sm">
@@ -295,7 +295,7 @@ export function FertEcModal({ open, d, reload, onClose }: { open: boolean; d: Fe
               <KV k="LastDose" v={p.LastDose_ms != null ? `${p.LastDose_ms} ms` : "—"} />
               <KV k="RunTime" v={p.RunTime_ms != null ? `${(p.RunTime_ms / 1000).toFixed(1)} s` : "—"} />
               <KV k="Heartbeat" v={`${d.heartbeat} (#${d.hbValue})`} cls={d.heartbeat === "ok" ? "text-emerald-400" : "text-amber-300"} />
-              {!d.plc_write_allowed && <div className="pt-1 text-[11px] text-amber-400">Kirjoitus PLC:hen pois (Enable/DoseTrig/Heartbeat odottaa lupaa)</div>}
+              {d.plc_write_allowed === false && <div className="pt-1 text-[11px] text-amber-400">Kirjoitus PLC:hen pois</div>}
             </div>
           </Section>
 

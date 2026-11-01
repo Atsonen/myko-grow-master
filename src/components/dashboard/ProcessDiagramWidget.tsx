@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { FertDosePanel, FertEcModal, useFertDose } from "@/components/FertDosePanel";
 import { useSequence } from "@/components/SequencePanel";
-import { getDataloggerLatest, getKasvamoAlarms, putKasvamoAlarms, type KasvamoAlarms, type KasLimit, getPumput, getPvFeed, type DataloggerLatest, type PumputResponse, setFertPumpEnable } from "@/lib/apiClient";
+import { getDataloggerLatest, getKasvamoAlarms, putKasvamoAlarms, type KasvamoAlarms, type KasLimit, getPumput, getPvFeed, type DataloggerLatest, type PumputResponse, setFertPumpEnable, setCircPumpEnable } from "@/lib/apiClient";
 import { toast } from "sonner";
 import { MeasurementPointWidget } from "@/components/dashboard/MeasurementPointWidget";
 import { usePid, PID_STATE } from "@/components/dashboard/PidFaceplate";
@@ -199,13 +199,15 @@ function ValueBox({ x, y, w = 92, h = 40, label, value, unit, wired = true, titl
 }
 
 // state: true/false = ON/OFF, undefined = unwired
-function Pump({ x, y, label, state, color = C.pipe, status, enable, detail }: {
+function Pump({ x, y, label, state, color = C.pipe, status, enable, detail, writeAllowed, busy, onToggle }: {
   x: number; y: number; label: string; state?: boolean; color?: string;
   status?: string; enable?: boolean; detail?: string;
+  writeAllowed?: boolean; busy?: boolean; onToggle?: (en: boolean) => void;
 }) {
-  const wired = state !== undefined;
+  const wired = state !== undefined || enable !== undefined;
   const on = state === true;
-  const stroke = !wired ? C.na : on ? color : C.pipeOff;
+  const stroke = state === undefined ? C.na : on ? color : C.pipeOff;
+  const canToggle = enable !== undefined && !!writeAllowed && !busy && !!onToggle;
   return (
     <g transform={`translate(${x} ${y})`} data-testid={`pump-${label}`}>
       <title>{detail ?? (wired ? `${label}: ${on ? "KÄY" : "seis"}` : `${label}: ei kytketty`)}</title>
@@ -213,6 +215,18 @@ function Pump({ x, y, label, state, color = C.pipe, status, enable, detail }: {
       <path d="M -6 0 L 6 -8 L 6 8 Z" fill={on ? color : C.na} opacity={0.9} />
       <text y={28} textAnchor="middle" fill={C.text} fontSize={10} fontFamily="ui-monospace, monospace">{label}</text>
       {status && <text y={40} textAnchor="middle" fill={status === "VIKA" ? "#f87171" : status === "KÄY" ? "#34d399" : "#94a3b8"} fontSize={9} fontFamily="ui-monospace, monospace">{status}{enable === false ? " · OFF" : enable === true ? " · ON" : ""}</text>}
+      {enable !== undefined && (
+        <g transform={`translate(-22, ${status ? 46 : 34})`} style={canToggle ? { cursor: "pointer" } : undefined}
+          opacity={canToggle ? 1 : 0.45}
+          onClick={canToggle ? (e) => { e.stopPropagation(); onToggle!(!enable); } : undefined}
+          role={canToggle ? "button" : undefined}
+          data-testid={`pump-en-${label}`}>
+          <rect width={44} height={16} rx={8} fill={enable ? C.on : "#3f3f46"} stroke={C.stroke} />
+          <text x={22} y={12} textAnchor="middle" fontSize={9} fill="#fff" fontFamily="monospace" fontWeight={700}>
+            {busy ? "…" : enable ? "Off" : "On"}
+          </text>
+        </g>
+      )}
     </g>
   );
 }
@@ -493,8 +507,10 @@ export function ProcessDiagramWidget() {
   const seq = useSequence();
   const ka = useKasAlarms(); const fd = useFertDose(); const [alSig, setAlSig] = useState<string | null>(null); const [ecDlg, setEcDlg] = useState(false);
   const [fertBusy, setFertBusy] = useState(false);
+  const [circBusy, setCircBusy] = useState<"L" | "R" | null>(null);
   const pe = useProcessBoxEdit();
   const toggleFert = async (en: boolean) => {
+    if (!window.confirm(`Vahvista: lannoitepumppu Käyttö → ${en ? "ON" : "OFF"}?`)) return;
     setFertBusy(true);
     try {
       const r = await setFertPumpEnable(en);
@@ -502,6 +518,17 @@ export function ProcessDiagramWidget() {
       fd.load();
     } catch (e) { toast.error(e instanceof Error ? e.message : String(e)); }
     finally { setFertBusy(false); }
+  };
+  const toggleCirc = async (sd: "L" | "R", en: boolean) => {
+    const name = sd === "L" ? "vasen" : "oikea";
+    if (!window.confirm(`Vahvista: kiertopumppu ${name} → ${en ? "KÄYTTÖÖN" : "POIS KÄYTÖSTÄ"}?`)) return;
+    setCircBusy(sd);
+    try {
+      await setCircPumpEnable(sd, en);
+      toast.success(`Kiertopumppu ${name}: ${en ? "käytössä" : "pois"}`);
+      seq.load();
+    } catch (e) { toast.error(e instanceof Error ? e.message : String(e)); }
+    finally { setCircBusy(null); }
   };
   const fp = fd.d?.plc;
   const fertLive = !!(fp?.present && fp?.fresh !== false && (fp?.Pump !== undefined || fp?.Enable !== undefined));
@@ -689,7 +716,8 @@ export function ProcessDiagramWidget() {
           {/* Left: water tank + pumps */}
           <Tank x={20} y={420} w={90} h={100} label="L" sub="pinta ei kytketty" />
           <Pump x={60} y={330} label="Pumppu L" state={cL.run} status={cL.wired ? cL.label : undefined} enable={cL.en}
-            detail={cL.wired ? `CircPump_L: ${cL.label}, Enable ${cL.en ?? "–"}, ErrCode ${cL.errCode ?? 0}, käynti ${cL.rt != null ? Math.round(cL.rt/1000)+" s" : "–"}, käynnistyksiä ${cL.starts ?? "–"} · On/Off odottaa lupaa` : "Pumppu L: ei CircPump-dataa"} />
+            writeAllowed={!!seq.d?.pump_write_allowed} busy={circBusy === "L"} onToggle={(en) => void toggleCirc("L", en)}
+            detail={cL.wired ? `CircPump_L: ${cL.label}, Enable ${cL.en ?? "–"}, ErrCode ${cL.errCode ?? 0}, käynti ${cL.rt != null ? Math.round(cL.rt/1000)+" s" : "–"}, käynnistyksiä ${cL.starts ?? "–"}` : "Pumppu L: ei CircPump-dataa"} />
           <FertPump x={160} y={410}
             pump={fertLive ? fp?.Pump : undefined}
             enable={fertLive ? fp?.Enable : undefined}
@@ -709,7 +737,8 @@ export function ProcessDiagramWidget() {
 
           {/* Right tanks */}
           <Pump x={690} y={350} label="Pumppu R" state={cR.run} status={cR.wired ? cR.label : undefined} enable={cR.en}
-            detail={cR.wired ? `CircPump_R: ${cR.label}, Enable ${cR.en ?? "–"}, ErrCode ${cR.errCode ?? 0}, käynti ${cR.rt != null ? Math.round(cR.rt/1000)+" s" : "–"}, käynnistyksiä ${cR.starts ?? "–"} · On/Off odottaa lupaa` : "Pumppu R: ei CircPump-dataa"} />
+            writeAllowed={!!seq.d?.pump_write_allowed} busy={circBusy === "R"} onToggle={(en) => void toggleCirc("R", en)}
+            detail={cR.wired ? `CircPump_R: ${cR.label}, Enable ${cR.en ?? "–"}, ErrCode ${cR.errCode ?? 0}, käynti ${cR.rt != null ? Math.round(cR.rt/1000)+" s" : "–"}, käynnistyksiä ${cR.starts ?? "–"}` : "Pumppu R: ei CircPump-dataa"} />
           <Tank x={730} y={420} w={90} h={100} label="" sub="R" />
           <Pump x={800} y={350} label="Täyttö" state={pu.b("Filling")} />
           <Tank x={840} y={420} w={90} h={100} label="" sub="Täyttövesi (Fill)" />

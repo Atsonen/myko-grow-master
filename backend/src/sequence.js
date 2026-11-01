@@ -8,7 +8,7 @@ const TOPIC = "Sensors/PLC_2/Sequence";
 const PLC_WRITE_ALLOWED = false; // kovakoodattu esto – muutos vaatii koodimuutoksen ja hyväksynnän
 // Poikkeus (käyttäjän hyväksymä 27.10.2026): VAIN kiertopumppujen Enable (FB_CircPump_Left/Right.Enable, Bool)
 // -> Myko/Cmd/CircPump {L_Enable|R_Enable: bool}. Bridge whitelistaa samat kaksi solmua.
-const PUMP_ENABLE_WRITE_ALLOWED = false; // 1.11.2026: CircPump_L/R.Enable odottaa lupaa
+const PUMP_ENABLE_WRITE_ALLOWED = true; // hyväksytty 1.11.2026 15:46 CircPump_L/R.Enable
 const CMD_TOPIC = "Myko/Cmd/CircPump";
 let MQ = null; const PENDING = new Map();
 const DEF = { enable: false, t_circ_s: 30, t_settle_s: 600, t_fill_s: 5, plc_write: false, hb_enabled: false };
@@ -43,7 +43,7 @@ export function registerSequenceRoutes(app) {
       const stale = !S.at || Date.now() - S.at > 30_000;
       res.json({ settings: c, plc: S.plc, plc_at: S.at ? new Date(S.at).toISOString() : null, stale,
         present: !!S.plc?.present && !stale, steps: STEPS, write_allowed: PLC_WRITE_ALLOWED, pump_write_allowed: PUMP_ENABLE_WRITE_ALLOWED,
-        write_note: "Kirjoitus PLC:hen ei käytössä – CircPump_L/R.Enable ja Sequence-asetukset odottavat lupaa", write_nodes_pending: ["CircPump_L/Enable", "CircPump_R/Enable"] });
+        write_note: "CircPump Enable hyväksytty; Sequence-asetukset (T_*/Enable/HB) edelleen vain Mykoon", write_nodes_pending: [] });
     } catch (e) { res.status(500).json({ error: String(e?.message ?? e) }); }
   });
   app.post("/api/sequence/pump", async (req, res) => {

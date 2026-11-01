@@ -39,8 +39,10 @@ export function SequencePanel() {
   const rem = live && setMs(step) !== undefined && p.StepTime_ms !== undefined ? (setMs(step) as number) - (p.StepTime_ms as number) : undefined;
   const [pumpBusy, setPumpBusy] = useState<"L" | "R" | null>(null);
   const togglePump = async (sd: "L" | "R", en: boolean) => {
+    const name = sd === "L" ? "vasen" : "oikea";
+    if (!window.confirm(`Vahvista: kiertopumppu ${name} → ${en ? "KÄYTTÖÖN (Enable ON)" : "POIS KÄYTÖSTÄ (Enable OFF)"}?`)) return;
     setPumpBusy(sd);
-    try { await setCircPumpEnable(sd, en); toast.success(`Kiertopumppu ${sd === "L" ? "vasen" : "oikea"}: ${en ? "käytössä" : "pois käytöstä"}`); load(); }
+    try { await setCircPumpEnable(sd, en); toast.success(`Kiertopumppu ${name}: ${en ? "käytössä" : "pois käytöstä"}`); load(); }
     catch (e) { toast.error((e as Error).message); } finally { setPumpBusy(null); }
   };
   const save = async () => {
@@ -96,7 +98,7 @@ export function SequencePanel() {
                 <span>Käynnistyksiä <b>{starts ?? "–"}</b></span>
                 <Button size="sm" variant={en ? "outline" : "default"} className="ml-auto h-6 px-2 text-[11px]"
                   disabled={!live || en === undefined || !d?.pump_write_allowed || pumpBusy === sd}
-                  title={!d?.pump_write_allowed ? "Kirjoitus odottaa lupaa (CircPump_L/R.Enable)" : undefined}
+                  title={d?.pump_write_allowed ? "Kirjoittaa CircPump Enable PLC:hen (vahvistus)" : "Kirjoitus ei käytössä"}
                   onClick={() => void togglePump(sd, !en)}>{en ? "Off" : "On"}</Button>
               </div>
             </div>);
@@ -115,7 +117,7 @@ export function SequencePanel() {
       </div>}
       <div className="flex flex-wrap items-center gap-2">
         <Button size="sm" onClick={() => void save()} disabled={saving || !f}>Tallenna asetukset</Button>
-        <span className="text-[11px] text-amber-400">Kirjoitus PLC:hen ei käytössä – odottaa lupaa</span>
+        <span className="text-[11px] text-muted-foreground">CircPump Enable → PLC (vahvistus). Sequence-ajat vain Mykoon.</span>
       </div>
       <div className="text-[10px] text-muted-foreground">Asetukset tallentuvat vain Mykoon. Luku: bridge Read-pollaus 2 s (Sequence, CircPump_L/R).</div>
     </div>

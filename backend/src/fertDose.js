@@ -1,6 +1,6 @@
 // Lannoiteannostelu – Valvomon päätöslogiikka + ohjaus (PLC: Pumput_DB.Static.FertDose, ks. plc/FERTDOSE.md).
-// 1.11.2026: lukupolku uudelleenosoitettu multi-instanceen. Kirjoitukset (Enable/DoseReq/DoseTrig/Heartbeat) POIS – odottaa lupaa.
-// Vanha FB_FertDose_DB yhä OPC UA -puussa (Outputit None); ei enää kirjoituskohde.
+// 1.11.2026: Pumput_DB.Static.FertDose. Kirjoitukset hyväksytty 15:46 (Enable, DoseReq_ms, DoseTrig, Heartbeat Int32).
+// Vanha FB_FertDose_DB ei enää kirjoituskohde.
 // Asetukset: myko_settings k='fert_dose'. Loki: fert_dose_log. Hälytykset/varoitukset: fert_events.
 // Lannoite A/B = sama pumppu, letku siirretään käsin: fert on vain Myko-asetus, kirjataan jokaiselle annokselle.
 // EC-hälytys/-varoitus = ± poikkeama TDS_SP:stä. EC_ALARM_HI -> Telegram + LUKITUS (Enable=false).
@@ -28,8 +28,8 @@ const STATUS_TXT = {
 };
 
 // 1.11.2026: FertDose siirretty Pumput_DB.Static.FertDose – kirjoitukset POIS kunnes uudet solmut hyväksytään.
-const PLC_WRITE_ALLOWED = false;
-const PUMP_ENABLE_WRITE_ALLOWED = false;
+const PLC_WRITE_ALLOWED = true; // hyväksytty 1.11.2026 15:46 → Pumput.FertDose
+const PUMP_ENABLE_WRITE_ALLOWED = true;
 const S = { samples: [], validSince: null, belowSince: null, lastDoseAt: null, reason: "init", sp: null,
   plc: { present: false }, plcAt: 0, hb: 0, hbErr: null, lastAck: null, pending: new Map(),
   ev: {}, evSince: {}, lastDoseCount: null };
@@ -198,8 +198,10 @@ function reliability(c, now) {
 // ---------- Annos ----------
 async function dose(c, why, by) {
   const lastS = S.samples[S.samples.length - 1]; const ec = lastS?.v ?? null;
-  const ms = Math.round(Math.min(Math.max(Number(c.dose_s) || 0, 0.5), 10) * 1000); const fert = c.fert === "B" ? "B" : "A";
-  if (ms <= 0) return { ok: false, error: "annoskoko 0" };
+  // DoseReq_ms clamp 500–5000 (hyväksytty whitelist); UI dose_s max 5 s.
+  let ms = Math.round(Math.min(Math.max(Number(c.dose_s) || 0, 0.5), 5) * 1000);
+  ms = Math.min(Math.max(ms, 500), 5000); const fert = c.fert === "B" ? "B" : "A";
+  if (ms < 500) return { ok: false, error: "annoskoko alle 500 ms" };
   if (alarmActive()) { await logRow(fert, 0, ec, S.sp, `ESTETTY (EC-hälytys): ${why}`, "blocked"); return { ok: false, error: "EC-hälytys aktiivinen – annostelu lukittu" }; }
   if (!c.live) { await logRow(fert, ms, ec, S.sp, `WOULD DOSE: ${why}`, "dry-run"); S.lastDoseAt = Date.now(); return { ok: true, mode: "dry-run" }; }
   const pre = !S.plc.present ? "FertDose_DB puuttuu" : !plcFresh() ? "PLC-tila vanha" : S.plc.HB_OK !== true ? "PLC HB_OK = FALSE" : S.plc.Enable !== true ? "PLC Enable = FALSE" : S.plc.DoseActive ? "annos jo käynnissä" : null;
@@ -355,7 +357,7 @@ export function registerFertDoseRoutes(app) {
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
-  // Prosessinäkymä: lannoitepumpun Käyttö (Enable). Kirjoitus POIS (1.11.2026) – odottaa lupaa Pumput_DB/Static/FertDose.Enable.
+  // Prosessinäkymä: lannoitepumpun Käyttö → Pumput_DB/Static/FertDose.Enable (hyväksytty 1.11.2026).
   app.post("/api/fertdose/pump", async (req, res) => {
     try {
       const en = req.body?.enable;
@@ -381,8 +383,8 @@ export function registerFertDoseRoutes(app) {
       if (b.dose_s !== undefined) {
         const d = Number(b.dose_s);
         const steps = Math.round(d * 2);
-        if (!(Number.isFinite(d) && steps >= 1 && steps <= 20 && Math.abs(d - steps / 2) < 1e-9))
-          return res.status(400).json({ error: "annos 0.5–10 s, askel 0.5" });
+        if (!(Number.isFinite(d) && steps >= 1 && steps <= 10 && Math.abs(d - steps / 2) < 1e-9)) /* max 5.0 s → 5000 ms */
+          return res.status(400).json({ error: "annos 0.5–5 s, askel 0.5" });
         next.dose_s = steps / 2;
       }
       for (const k of ["live", "hb_enabled", "plc_enable", "auto"]) if (b[k] !== undefined) { if (typeof b[k] !== "boolean") return res.status(400).json({ error: `${k} bool` }); next[k] = b[k]; }
