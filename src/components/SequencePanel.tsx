@@ -7,8 +7,10 @@ import {
   type FillPumpResponse, type SequenceResponse,
 } from "@/lib/apiClient";
 
-const STEPS: [number, string][] = [[0, "Seis"], [1, "Kierrätys"], [2, "Tasaantuminen"], [3, "Pinnan tallennus"], [4, "Täyttö"]];
-const mmss = (ms: number) => { const s = Math.max(0, Math.round(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
+export const SEQ_STEPS: [number, string][] = [[0, "Seis"], [1, "Kierrätys"], [2, "Tasaantuminen"], [3, "Pinnan tallennus"], [4, "Täyttö"]];
+export const seqMmss = (ms: number) => { const s = Math.max(0, Math.round(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
+const STEPS = SEQ_STEPS;
+const mmss = seqMmss;
 const ERR = { 0: "ok", 1: "MaxRun ylitetty", 2: "käyntitieto puuttuu" } as Record<number, string>;
 const FP_ERR = { 0: "ok", 1: "Maksimitäyttöaika ylittyi", 2: "Pinta-anturivika" } as Record<number, string>;
 

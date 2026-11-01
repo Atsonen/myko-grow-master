@@ -26,7 +26,6 @@ export const DEFAULT_PROCESS_ZOOM: ProcessZoom = { scale: null, panX: 0, panY: 0
 export const DEFAULT_PROCESS_BOXES: ProcessBoxMap = {
   "vb-fan": { x: 694, y: 108, w: 92, h: 40 },
   "vb-duct": { x: 560, y: 92, w: 92, h: 40 },
-  "pid-gair": { x: 560, y: 160, w: 226, h: 44 },
   "vb-roof": { x: 400, y: 60, w: 92, h: 40 },
   "vb-mid": { x: 400, y: 110, w: 92, h: 40 },
   "btn-halytykset": { x: 840, y: 110, w: 90, h: 26 },

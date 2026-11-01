@@ -8,11 +8,10 @@ import { Minus, Pencil, Plus, RotateCcw, Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { FertDosePanel, FertEcModal, useFertDose } from "@/components/FertDosePanel";
-import { useSequence } from "@/components/SequencePanel";
+import { SequencePanel, useSequence, useFillPump, SEQ_STEPS, seqMmss } from "@/components/SequencePanel";
 import { getDataloggerLatest, getKasvamoAlarms, putKasvamoAlarms, type KasvamoAlarms, type KasLimit, getPumput, getPvFeed, type DataloggerLatest, type PumputResponse, setFertPumpEnable, setCircPumpEnable, setSequenceEnable } from "@/lib/apiClient";
 import { toast } from "sonner";
 import { MeasurementPointWidget } from "@/components/dashboard/MeasurementPointWidget";
-import { usePid, PID_STATE } from "@/components/dashboard/PidFaceplate";
 import {
   DEFAULT_PROCESS_BOXES,
   DEFAULT_PROCESS_ZOOM,
@@ -207,6 +206,7 @@ function ValueBox({ x, y, w = 92, h = 40, label, value, unit, wired = true, titl
 }
 
 // state: true/false = ON/OFF, undefined = unwired
+/** Generic pump (pH / täyttö tms.) – yksinkertainen ympyrä + kolmio. */
 function Pump({ x, y, label, state, color = C.pipe, status, enable, detail, writeAllowed, busy, onToggle }: {
   x: number; y: number; label: string; state?: boolean; color?: string;
   status?: string; enable?: boolean; detail?: string;
@@ -235,6 +235,66 @@ function Pump({ x, y, label, state, color = C.pipe, status, enable, detail, writ
           </text>
         </g>
       )}
+    </g>
+  );
+}
+
+/** P&ID centrifugal CircPump (L/R): circle + discharge triangle, green/red/grey, run info. */
+function CircPump({ x, y, side, run, err, wait, enable, errCode, runTimeMs, starts, writeAllowed, busy, onToggle, detail }: {
+  x: number; y: number; side: "L" | "R";
+  run?: boolean; err?: boolean; wait?: boolean; enable?: boolean;
+  errCode?: number; runTimeMs?: number; starts?: number;
+  writeAllowed?: boolean; busy?: boolean; onToggle?: (en: boolean) => void; detail?: string;
+}) {
+  const wired = run !== undefined || enable !== undefined;
+  const running = !!run && !err;
+  // Status colour: error red, running green, else grey (stopped / OFF / unwired)
+  const accent = !wired ? C.na : err ? "#ef4444" : running ? "#22c55e" : "#64748b";
+  const fill = !wired ? C.panel : err ? "#3f1212" : running ? "#052e16" : C.panel;
+  const canToggle = enable !== undefined && !!writeAllowed && !busy && !!onToggle;
+  const statusTxt = !wired ? "–" : err ? "VIKA" : running ? "KÄY" : wait ? "odot" : enable === false ? "OFF" : "seis";
+  const statusCol = err ? "#fca5a5" : running ? "#86efac" : wait ? "#fcd34d" : "#94a3b8";
+  const rtS = runTimeMs != null ? Math.round(runTimeMs / 1000) : undefined;
+  // Discharge triangle: L → left station (W), R → right station (E)
+  const tri = side === "L" ? "M 2 -7 L -12 0 L 2 7 Z" : "M -2 -7 L 12 0 L -2 7 Z";
+  const label = side === "L" ? "Pumppu L" : "Pumppu R";
+  return (
+    <g transform={`translate(${x},${y})`} data-testid={`circ-pump-${side}`} opacity={wired ? 1 : 0.55}>
+      <title>{detail ?? `${label}: ${statusTxt}`}</title>
+      {/* body */}
+      <circle r={17} fill={fill} stroke={accent} strokeWidth={2.5} />
+      {/* impeller cross (spins when running) */}
+      <g>
+        {running && <animateTransform attributeName="transform" type="rotate" from="0 0 0" to="360 0 0" dur="1.4s" repeatCount="indefinite" />}
+        <line x1={-7} y1={0} x2={7} y2={0} stroke={accent} strokeWidth={1.6} opacity={0.85} />
+        <line x1={0} y1={-7} x2={0} y2={7} stroke={accent} strokeWidth={1.6} opacity={0.85} />
+      </g>
+      {/* discharge triangle (P&ID) */}
+      <path d={tri} fill={accent} opacity={0.95} />
+      <text y={30} textAnchor="middle" fontSize={10} fill={C.text} fontFamily="monospace">{label}</text>
+      <text y={42} textAnchor="middle" fontSize={9} fill={statusCol} fontFamily="monospace" fontWeight={600}>{statusTxt}</text>
+      {/* run info like Plants / SequencePanel */}
+      <text y={54} textAnchor="middle" fontSize={8} fill={C.muted} fontFamily="monospace">
+        käynti {rtS !== undefined ? `${rtS} s` : "–"} · {starts !== undefined ? starts : "–"}×
+      </text>
+      {err && errCode !== undefined && (
+        <text y={66} textAnchor="middle" fontSize={8} fill="#fca5a5" fontFamily="monospace">Err {errCode}</text>
+      )}
+      <g transform={`translate(-22, ${err && errCode !== undefined ? 72 : 60})`}>
+        <text y={0} textAnchor="middle" x={22} fontSize={8} fill={C.muted} fontFamily="monospace">
+          Käyttö {enable === undefined ? "—" : enable ? "ON" : "OFF"}
+        </text>
+        <g transform="translate(0, 4)" style={canToggle ? { cursor: "pointer" } : undefined}
+          opacity={canToggle ? 1 : 0.45}
+          onClick={canToggle ? (e) => { e.stopPropagation(); onToggle!(!enable); } : undefined}
+          role={canToggle ? "button" : undefined}
+          data-testid={`circ-en-${side}`}>
+          <rect width={44} height={16} rx={8} fill={enable ? C.on : "#3f3f46"} stroke={C.stroke} />
+          <text x={22} y={12} textAnchor="middle" fontSize={9} fill="#fff" fontFamily="monospace" fontWeight={700}>
+            {busy ? "…" : enable ? "Off" : "On"}
+          </text>
+        </g>
+      </g>
     </g>
   );
 }
@@ -288,13 +348,20 @@ function FertPump({ x, y, pump, enable, fault, faultText, writeAllowed, busy, on
   );
 }
 
-function Tank({ x, y, w, h, level, label, sub }: { x: number; y: number; w: number; h: number; level?: number | null; label: string; sub?: string }) {
+function Tank({ x, y, w, h, level, label, sub, onClick, clickHint }: {
+  x: number; y: number; w: number; h: number; level?: number | null; label: string; sub?: string;
+  onClick?: () => void; clickHint?: string;
+}) {
   const wired = level !== undefined;
   const pct = Math.max(0, Math.min(100, Number(level ?? 0)));
   const lh = (h * pct) / 100;
-  const id = `clip-${label.replace(/\W/g, "")}`;
+  const id = `clip-${label.replace(/\W/g, "") || "tank"}`;
   return (
-    <g transform={`translate(${x},${y})`}>
+    <g transform={`translate(${x},${y})`} onClick={onClick}
+      style={onClick ? { cursor: "pointer" } : undefined}
+      role={onClick ? "button" : undefined}
+      data-testid={onClick ? "pd-tank-ravinne" : undefined}>
+      {onClick && <title>{(label || "Säiliö") + (clickHint ?? " – avaa kiertovesisekvenssi")}</title>}
       <defs>
         <clipPath id={id}><rect width={w} height={h} rx={10} /></clipPath>
         <linearGradient id={`${id}-g`} x1="0" x2="0" y1="0" y2="1">
@@ -334,13 +401,16 @@ function Btn({ x, y, w, h = 26, label, badge, badgeColor, title }: { x: number; 
   );
 }
 
-function Pipe({ d, active = false }: { d: string; active?: boolean }) {
+/** Process pipe. flow=+1 dashes follow path direction; flow=-1 reverse (tank→station when path was drawn station→tank). */
+function Pipe({ d, active = false, flow = 1 }: { d: string; active?: boolean; flow?: 1 | -1 }) {
+  const from = flow >= 0 ? "32" : "0";
+  const to = flow >= 0 ? "0" : "32";
   return (
     <g>
       <path d={d} fill="none" stroke={active ? C.pipe : C.pipeOff} strokeWidth={8} strokeLinecap="round" strokeLinejoin="round" opacity={0.85} />
       {active && (
-        <path d={d} fill="none" stroke="#bfdbfe" strokeWidth={2} strokeDasharray="6 10" strokeLinecap="round">
-          <animate attributeName="stroke-dashoffset" from="32" to="0" dur="1.2s" repeatCount="indefinite" />
+        <path d={d} fill="none" stroke="#bfdbfe" strokeWidth={2.5} strokeDasharray="8 12" strokeLinecap="round">
+          <animate attributeName="stroke-dashoffset" from={from} to={to} dur="1.0s" repeatCount="indefinite" />
         </path>
       )}
     </g>
@@ -493,7 +563,6 @@ function useProcessBoxEdit() {
 export function ProcessDiagramWidget() {
   const { vals, err } = useLive();
   const [fpOpen, setFpOpen] = useState(false);
-  const pid = usePid("G_Air", fpOpen ? 2000 : 5000);
   const [pvDl, setPvDl] = useState<string | null>(null);
   useEffect(() => {
     let alive = true;
@@ -507,7 +576,6 @@ export function ProcessDiagramWidget() {
     return () => { alive = false; clearInterval(t); };
   }, [fpOpen]);
   const openFp = () => setFpOpen(true);
-  const pv = pid.v;
   const v = (k: TagName) => vals[k]?.value ?? null;
   const ts = vals.level?.timestamp ?? vals.ec?.timestamp;
   const fan = v("fan");
@@ -517,6 +585,8 @@ export function ProcessDiagramWidget() {
   const [fertBusy, setFertBusy] = useState(false);
   const [circBusy, setCircBusy] = useState<"L" | "R" | null>(null);
   const [seqBusy, setSeqBusy] = useState(false);
+  const [seqDlg, setSeqDlg] = useState(false);
+  const fillPump = useFillPump();
   const pe = useProcessBoxEdit();
   const toggleFert = async (en: boolean) => {
     if (!window.confirm(`Vahvista: lannoitepumppu Käyttö → ${en ? "ON" : "OFF"}?`)) return;
@@ -581,6 +651,12 @@ export function ProcessDiagramWidget() {
   const seqRunning = seqEnable === true && sq.Stopped !== true;
   const seqHb = sqLive ? (sq.HB_OK as boolean | undefined) : undefined;
   const seqLeak = sqLive ? (sq.LeakAlarm as boolean | undefined) : undefined;
+  const seqStepName = seqStep !== undefined ? (SEQ_STEPS.find(([n]) => n === seqStep)?.[1] ?? `Askel ${seqStep}`) : undefined;
+  const seqSetMs = seqStep === 1 ? (sq.T_Circ as number | undefined) : seqStep === 2 ? (sq.T_Settle as number | undefined) : undefined;
+  const seqRemMs = sqLive && seqSetMs !== undefined && typeof sq.StepTime_ms === "number" ? seqSetMs - (sq.StepTime_ms as number) : undefined;
+  const fpPlc = fillPump.d?.plc as Record<string, unknown> | undefined;
+  const fpRunS = typeof fpPlc?.St_RunTime_s === "number" ? (fpPlc.St_RunTime_s as number) : undefined;
+  const fpPumpOn = fpPlc?.Pump === true || fpPlc?.St_Running === true;
 
   const fertIlok = (fp as { Interlock?: boolean } | undefined)?.Interlock;
   const fertFault = fertLive && (fp!.HB_OK === false || fertIlok === false || (typeof fp!.Status === "number" && [4,5,6,7,8,9,10,11,13,14,15].includes(fp!.Status)));
@@ -598,6 +674,12 @@ export function ProcessDiagramWidget() {
       <AlarmDialog sig={alSig} data={ka.a} onClose={() => setAlSig(null)} onSaved={ka.setA} />
       <MeasurementPointWidget config={{ pointId: "GardenAir", name: "Kasvamo ilma · G_Air (PF-1)" }} open={fpOpen} onOpenChange={setFpOpen} dialogOnly />
       <FertEcModal open={ecDlg} d={fd.d} reload={fd.load} onClose={() => setEcDlg(false)} />
+      <Dialog open={seqDlg} onOpenChange={(o) => !o && setSeqDlg(false)}>
+        <DialogContent className="max-h-[92vh] w-[min(96vw,960px)] max-w-none overflow-y-auto border-zinc-700 bg-zinc-950 p-4 font-mono" data-testid="pd-seq-modal">
+          <DialogHeader className="sr-only"><DialogTitle>Kiertovesisekvenssi</DialogTitle></DialogHeader>
+          <SequencePanel />
+        </DialogContent>
+      </Dialog>
       <div className="flex h-full min-h-0 flex-col gap-1 overflow-hidden p-1" data-testid="pd-process">
         <div className="shrink-0 text-[10px] font-mono text-muted-foreground" data-testid="pd-status">
           {err ? `Virhe: ${err}` : ts ? `Päivitetty ${new Date(ts).toLocaleTimeString("fi-FI")}` : "Ladataan…"} · {POLL_MS / 1000} s
@@ -687,21 +769,6 @@ export function ProcessDiagramWidget() {
             <ValueBox {...pe.box("vb-duct")} label="Poistoilma" value={fmt(v("ductTemp"), 1)} unit="°C" title={`${TAGS.ductTemp} G Poistoilma DS4`} onClick={pe.editing ? undefined : openFp} selected={pvDl === TAGS.ductTemp} />
           </EditableBox>
 
-          {/* G_Air PID summary (click -> faceplate) */}
-          <EditableBox id="pid-gair" box={pe.box("pid-gair")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
-            <g transform={`translate(${pe.box("pid-gair").x},${pe.box("pid-gair").y})`} onClick={pe.editing ? undefined : openFp} style={{ cursor: pe.editing ? "move" : "pointer" }} data-testid="pd-gair">
-              <title>G_Air PID (PF-1) – avaa säädin</title>
-              <rect width={pe.box("pid-gair").w} height={pe.box("pid-gair").h} rx={6} fill={C.panel} stroke={ACCENT} strokeWidth={1.5} />
-              <rect x={6} y={6} width={30} height={14} rx={4} fill={ACCENT} />
-              <text x={21} y={16.5} textAnchor="middle" fontSize={9} fontWeight={700} fill="#111" fontFamily="monospace">PID</text>
-              <text x={42} y={17} fontSize={9} fill={C.muted} fontFamily="monospace">
-                G_Air · {pid.stale ? "ei dataa" : (PID_STATE?.[pv?.State ?? -1] ?? `State ${pv?.State ?? "—"}`)}{pv?.ErrBits ? ` · ErrBits 16#${pv.ErrBits.toString(16).toUpperCase().padStart(4, "0")}` : ""}
-              </text>
-              <text x={8} y={Math.max(28, pe.box("pid-gair").h - 8)} fontSize={13} fontWeight={600} fill={C.text} fontFamily="monospace">
-                PV {fmt(pv?.PV, 1)} · SP {fmt(pv?.SP, 1)} °C · {fmt(pv?.OutSum, 0)} %
-              </text>
-            </g>
-          </EditableBox>
 
           {/* Air temps */}
           <EditableBox id="vb-roof" box={pe.box("vb-roof")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
@@ -717,14 +784,40 @@ export function ProcessDiagramWidget() {
               title={pu.ok ? `Pumput_DB-hälytykset: ${alarms.length ? alarms.map((a) => a[1]).join(", ") : "ei aktiivisia"} (A_HumHH.Active, Tayttovesi.Active, EC_Below.Q)` : undefined} />
           </EditableBox>
 
-          {/* Pipes */}
-          <Pipe d="M 60 360 V 260 H 300 V 320" active={cL.run} />
+          {/* Pipes: Circ L/R flow tank → station (L path drawn station→tank ⇒ flow=-1) */}
+          <Pipe d="M 60 360 V 260 H 300 V 320" active={cL.run && !cL.err} flow={-1} />
           <Pipe d="M 160 420 V 350 H 330" active={fertLive && fp?.Pump === true} />
           <Pipe d="M 360 320 V 230 H 800 V 360" active={pu.b("Filling")} />
-          <Pipe d="M 400 320 V 270 H 690 V 360" active={cR.run} />
+          <Pipe d="M 400 320 V 270 H 690 V 360" active={cR.run && !cR.err} flow={1} />
 
-          {/* Main tank */}
-          <Tank x={300} y={320} w={130} h={200} level={tankLevel ?? null} label="Ravinnesäiliö" />
+          {/* Main tank – click opens Sequence panel (same Dialog pattern as EC / G_Air) */}
+          <Tank x={300} y={320} w={130} h={200} level={tankLevel ?? null} label="Ravinnesäiliö"
+            onClick={pe.editing ? undefined : () => setSeqDlg(true)}
+            clickHint=" – avaa kiertovesisekvenssi" />
+          {/* Compact sequence status LEFT of tank (free space ~200–295) */}
+          {sqLive && (
+            <g transform="translate(198, 355)" data-testid="pd-seq-status"
+              onClick={pe.editing ? undefined : () => setSeqDlg(true)}
+              style={pe.editing ? undefined : { cursor: "pointer" }}
+              role={pe.editing ? undefined : "button"}>
+              <title>Kiertovesisekvenssi: askel {seqStep ?? "–"} · {seqStepName ?? ""}{seqEnable === false ? " · Pysäytetty" : ""} – avaa paneeli</title>
+              <rect width={98} height={(!seqRunning || seqRemMs !== undefined || (seqStep === 4 && fpRunS != null)) ? 54 : 40}
+                rx={5} fill="#0b1220" stroke="#334155" strokeWidth={1.2} opacity={0.92} />
+              <text x={6} y={13} fontSize={9} fill="#94a3b8" fontFamily="monospace">Sekvenssi</text>
+              <text x={6} y={28} fontSize={11} fill="#e2e8f0" fontFamily="monospace" fontWeight={600}>
+                {seqStep ?? "–"} · {seqStepName ?? "–"}
+              </text>
+              {!seqRunning ? (
+                <text x={6} y={44} fontSize={10} fill="#fbbf24" fontFamily="monospace">Pysäytetty</text>
+              ) : seqRemMs !== undefined ? (
+                <text x={6} y={44} fontSize={10} fill="#7dd3fc" fontFamily="monospace">jäljellä {seqMmss(seqRemMs)}</text>
+              ) : seqStep === 4 && fpRunS != null ? (
+                <text x={6} y={44} fontSize={10} fill="#7dd3fc" fontFamily="monospace">
+                  {fpPumpOn ? `käynti ${fpRunS} s` : `täyttö ${fpRunS} s`}
+                </text>
+              ) : null}
+            </g>
+          )}
           <EditableBox id="vb-pinta" box={pe.box("vb-pinta")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
             <ValueBox {...pe.box("vb-pinta")} label="Pinta" value={fmt(tankLevel ?? null, 1)} unit="%"
               sub={lvlSnap !== undefined ? `Snapshot ${fmt(lvlSnap, 1)} %` : undefined}
@@ -760,7 +853,8 @@ export function ProcessDiagramWidget() {
 
           {/* Left: water tank + pumps */}
           <Tank x={20} y={420} w={90} h={100} label="L" sub="pinta ei kytketty" />
-          <Pump x={60} y={330} label="Pumppu L" state={cL.run} status={cL.wired ? cL.label : undefined} enable={cL.en}
+          <CircPump x={60} y={330} side="L" run={cL.run} err={cL.err} wait={cL.wait} enable={cL.en}
+            errCode={cL.errCode} runTimeMs={cL.rt} starts={cL.starts}
             writeAllowed={!!seq.d?.pump_write_allowed} busy={circBusy === "L"} onToggle={(en) => void toggleCirc("L", en)}
             detail={cL.wired ? `CircPump_L: ${cL.label}, Enable ${cL.en ?? "–"}, ErrCode ${cL.errCode ?? 0}, käynti ${cL.rt != null ? Math.round(cL.rt/1000)+" s" : "–"}, käynnistyksiä ${cL.starts ?? "–"}` : "Pumppu L: ei CircPump-dataa"} />
           <FertPump x={160} y={410}
@@ -781,7 +875,8 @@ export function ProcessDiagramWidget() {
           <Pump x={670} y={430} label="pH−" color="#f43f5e" />
 
           {/* Right tanks */}
-          <Pump x={690} y={350} label="Pumppu R" state={cR.run} status={cR.wired ? cR.label : undefined} enable={cR.en}
+          <CircPump x={690} y={350} side="R" run={cR.run} err={cR.err} wait={cR.wait} enable={cR.en}
+            errCode={cR.errCode} runTimeMs={cR.rt} starts={cR.starts}
             writeAllowed={!!seq.d?.pump_write_allowed} busy={circBusy === "R"} onToggle={(en) => void toggleCirc("R", en)}
             detail={cR.wired ? `CircPump_R: ${cR.label}, Enable ${cR.en ?? "–"}, ErrCode ${cR.errCode ?? 0}, käynti ${cR.rt != null ? Math.round(cR.rt/1000)+" s" : "–"}, käynnistyksiä ${cR.starts ?? "–"}` : "Pumppu R: ei CircPump-dataa"} />
           <Tank x={730} y={420} w={90} h={100} label="" sub="R" />
