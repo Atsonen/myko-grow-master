@@ -85,6 +85,9 @@ export const WIDGET_META: Record<
 };
 
 export const TREND_RANGES = [
+  { h: 0.5, label: "30 min" },
+  { h: 1, label: "1 h" },
+  { h: 3, label: "3 h" },
   { h: 6, label: "6 h" },
   { h: 24, label: "24 h" },
   { h: 72, label: "3 d" },

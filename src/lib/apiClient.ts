@@ -54,7 +54,7 @@ export interface TrendWidgetConfig {
   title: string;
   variableId?: string;
   variableIds?: string[];
-  range: "1h" | "6h" | "24h" | "7d" | "30d" | "custom";
+  range: "30m" | "1h" | "3h" | "6h" | "24h" | "7d" | "30d" | "custom";
   from?: string;
   to?: string;
   bucket: TrendBucket;

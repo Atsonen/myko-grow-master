@@ -28,7 +28,8 @@ export const BUCKET_OPTIONS: { value: TrendBucket; label: string }[] = [
   { value: "day", label: "1 day" },
 ];
 
-/** Resolution that keeps roughly ≤ 1500 points per series; 24 h → 10 min. */
+/** Resolution that keeps roughly ≤ 1500 points per series; 24 h → 10 min.
+ * Short ranges (≤6 h) use raw so the UI gets the finest samples the DB has (~1 min today). */
 export function autoBucket(rangeHours: number): TrendBucket {
   if (rangeHours <= 6) return "raw";
   if (rangeHours <= 12) return "5m";
@@ -37,6 +38,12 @@ export function autoBucket(rangeHours: number): TrendBucket {
   if (rangeHours <= 24 * 45) return "hour";
   if (rangeHours <= 24 * 200) return "6h";
   return "day";
+}
+
+/** Prefer autoBucket for unset/auto; for ≤3 h always use finest (raw) even if a coarser bucket was saved. */
+export function resolveTrendBucket(rangeHours: number, bucket?: TrendBucket | "auto" | null): TrendBucket {
+  if (!bucket || bucket === "auto" || rangeHours <= 3) return autoBucket(rangeHours);
+  return bucket;
 }
 
 /* ---- global defaults (shared module cache) ---- */

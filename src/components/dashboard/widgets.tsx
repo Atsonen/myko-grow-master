@@ -17,7 +17,7 @@ import { getTrendSeries, getUnitEnvironment, type TrendBucket, type UnitEnvironm
 import { PumpRunLegend, renderPumpRunAreas, usePumpRuns, pumpRunsAt, DEFAULT_PUMP_META } from "@/components/trends/PumpRunOverlay";
 import { formatDateTime, relativeTime } from "@/lib/format";
 import { useDashboardData } from "./DashboardData";
-import { AXIS_TICK, autoBucket, LEGEND_PROPS, resolveSeries, timeTickLabel, timeTicks, useSeriesDefaults } from "@/lib/seriesStyle";
+import { AXIS_TICK, autoBucket, LEGEND_PROPS, resolveSeries, resolveTrendBucket, timeTickLabel, timeTicks, useSeriesDefaults } from "@/lib/seriesStyle";
 import { useWidth } from "@/lib/useWidth";
 import { StatusBitsWidget } from "./StatusBitsWidget";
 import { AlarmListWidget } from "./AlarmListWidget";
@@ -151,7 +151,7 @@ export function TrendWidget({
     let cancelled = false;
     const to = new Date();
     const from = new Date(to.getTime() - rangeHours * 3600_000);
-    const bucket = !config.bucket || config.bucket === "auto" ? autoBucket(rangeHours) : config.bucket;
+    const bucket = resolveTrendBucket(rangeHours, config.bucket);
     Promise.all(
       ids.map((id) =>
         getTrendSeries({ variableId: id, from: from.toISOString(), to: to.toISOString(), bucket }).then(
@@ -185,7 +185,7 @@ export function TrendWidget({
 
   if (ids.length === 0) return <Muted>Pick variables in widget settings.</Muted>;
   if (err) return <div className="text-xs text-destructive">{err}</div>;
-  if (data.length === 0) return <Muted>No data for the last {rangeHours} h.</Muted>;
+  if (data.length === 0) return <Muted>No data for the last {trendRangeLabel(rangeHours)}.</Muted>;
   const axisWidth = yAxisWidthFor(data, ids);
   const ticks = timeTicks(data[0].ts, data[data.length - 1].ts, Math.max(40, boxWidth - axisWidth - 24));
   const xMin = data[0].ts;

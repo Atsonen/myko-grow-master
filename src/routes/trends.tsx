@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AXIS_TICK, BUCKET_OPTIONS, LEGEND_PROPS, resolveSeries, timeTickLabel, timeTicks, useSeriesDefaults } from "@/lib/seriesStyle";
+import { AXIS_TICK, BUCKET_OPTIONS, LEGEND_PROPS, resolveSeries, resolveTrendBucket, timeTickLabel, timeTicks, useSeriesDefaults } from "@/lib/seriesStyle";
 import { useWidth } from "@/lib/useWidth";
 import { renderSeriesChildren, SeriesStyleEditor } from "@/components/trends/SeriesStyleEditor";
 import { AreaChart, CartesianGrid, Legend, LineChart, ResponsiveContainer, Tooltip, XAxis } from "recharts";
@@ -50,7 +50,9 @@ const workspaceLabels: Record<WorkspaceKey, string> = {
 };
 
 const rangeOptions = [
+  { value: "30m", label: "30 min" },
   { value: "1h", label: "1 h" },
+  { value: "3h", label: "3 h" },
   { value: "6h", label: "6 h" },
   { value: "24h", label: "24 h" },
   { value: "7d", label: "7 d" },
@@ -547,7 +549,7 @@ function TrendWidget({
               variableId: variable.id,
               from: range.from,
               to: range.to,
-              bucket: widget.bucket,
+              bucket: resolveTrendBucket(rangeHoursOf(widget.range), widget.bucket),
             }),
           })),
         );
@@ -604,9 +606,11 @@ function TrendWidget({
         <Field label="Range">
           <select
             value={widget.range}
-            onChange={(event) =>
-              onChange({ range: event.target.value as TrendWidgetConfig["range"] })
-            }
+            onChange={(event) => {
+              const range = event.target.value as TrendWidgetConfig["range"];
+              const bucket = resolveTrendBucket(rangeHoursOf(range), widget.bucket);
+              onChange({ range, bucket });
+            }}
             className={selectCls}
           >
             {rangeOptions.map((option) => (
@@ -874,11 +878,17 @@ function resolveRange(range: TrendWidgetConfig["range"], customFrom?: string, cu
 }
 
 function rangeMs(range: TrendWidgetConfig["range"]) {
+  if (range === "30m") return 30 * 60 * 1000;
   if (range === "1h") return 60 * 60 * 1000;
+  if (range === "3h") return 3 * 60 * 60 * 1000;
   if (range === "6h") return 6 * 60 * 60 * 1000;
   if (range === "7d") return 7 * 24 * 60 * 60 * 1000;
   if (range === "30d") return 30 * 24 * 60 * 60 * 1000;
   return 24 * 60 * 60 * 1000;
+}
+
+function rangeHoursOf(range: TrendWidgetConfig["range"]) {
+  return rangeMs(range) / 3_600_000;
 }
 
 function formatTick(iso: string, range: TrendWidgetConfig["range"]) {

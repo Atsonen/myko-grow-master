@@ -320,7 +320,15 @@ function DashboardInner({ layoutId, defaultLayout = DEFAULT_LAYOUT, title = "Das
       ...layout,
       widgets: layout.widgets.map((w) =>
         w.id === widgetId && w.type === "trend"
-          ? { ...w, config: { ...(w.config as WidgetConfigMap["trend"]), rangeHours } }
+          ? {
+              ...w,
+              config: {
+                ...(w.config as WidgetConfigMap["trend"]),
+                rangeHours,
+                // Short ranges: drop saved coarse bucket so resolveTrendBucket → raw
+                ...(rangeHours <= 3 ? { bucket: undefined } : {}),
+              },
+            }
           : w,
       ),
     };
