@@ -1,9 +1,6 @@
-// Kiertovesisekvenssi – FB_Sequence / FB_Sequence_DB (ks. plc/CIRCPUMP_SEQ.md). 27.10.2026.
-// LUKU: opcua-bridge pollaa (Read-palvelu, ei subscriptioneita) -> MQTT Sensors/PLC_2/Sequence.
-// KIRJOITUS: EI KÄYTÖSSÄ. Asetukset (T_Circ, T_Settle, T_Fill, Enable) tallennetaan vain myko_settings k='plc_sequence'.
-// Feature flagit plc_write ja hb_enabled ovat aina false: niitä ei voi kytkeä UI:sta/API:sta päälle ennen
-// käyttäjän hyväksyntää + DB:n latausta. Tuleva polku: Myko/Cmd/Sequence -> suoraan FB_Sequence_DB.Input
-// (whitelist kuten FertDose), heartbeat kuten fertDose.js (5 s, vain kun live && hb_enabled && present).
+// Kiertovesisekvenssi – Pumput_DB.Static.Sequence + CircPump_L/R (ks. plc/CIRCPUMP_SEQ.md). 1.11.2026.
+// LUKU: opcua-bridge pollaa -> MQTT Sensors/PLC_2/Sequence.
+// KIRJOITUS: EI KÄYTÖSSÄ (CircPump Enable whitelist tyhjä bridgessä). Asetukset vain myko_settings k='plc_sequence'.
 import mqtt from "mqtt";
 import { query } from "./db.js";
 
@@ -11,7 +8,7 @@ const TOPIC = "Sensors/PLC_2/Sequence";
 const PLC_WRITE_ALLOWED = false; // kovakoodattu esto – muutos vaatii koodimuutoksen ja hyväksynnän
 // Poikkeus (käyttäjän hyväksymä 27.10.2026): VAIN kiertopumppujen Enable (FB_CircPump_Left/Right.Enable, Bool)
 // -> Myko/Cmd/CircPump {L_Enable|R_Enable: bool}. Bridge whitelistaa samat kaksi solmua.
-const PUMP_ENABLE_WRITE_ALLOWED = true;
+const PUMP_ENABLE_WRITE_ALLOWED = false; // 1.11.2026: CircPump_L/R.Enable odottaa lupaa
 const CMD_TOPIC = "Myko/Cmd/CircPump";
 let MQ = null; const PENDING = new Map();
 const DEF = { enable: false, t_circ_s: 30, t_settle_s: 600, t_fill_s: 5, plc_write: false, hb_enabled: false };
@@ -46,7 +43,7 @@ export function registerSequenceRoutes(app) {
       const stale = !S.at || Date.now() - S.at > 30_000;
       res.json({ settings: c, plc: S.plc, plc_at: S.at ? new Date(S.at).toISOString() : null, stale,
         present: !!S.plc?.present && !stale, steps: STEPS, write_allowed: PLC_WRITE_ALLOWED, pump_write_allowed: PUMP_ENABLE_WRITE_ALLOWED,
-        write_note: "Kirjoitus PLC:hen ei käytössä – odottaa latausta/hyväksyntää" });
+        write_note: "Kirjoitus PLC:hen ei käytössä – CircPump_L/R.Enable ja Sequence-asetukset odottavat lupaa", write_nodes_pending: ["CircPump_L/Enable", "CircPump_R/Enable"] });
     } catch (e) { res.status(500).json({ error: String(e?.message ?? e) }); }
   });
   app.post("/api/sequence/pump", async (req, res) => {

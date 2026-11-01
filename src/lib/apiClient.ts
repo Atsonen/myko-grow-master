@@ -393,11 +393,13 @@ export async function resetDashboardLayout(id?: string) {
 export type SequenceSettings = { enable: boolean; t_circ_s: number; t_settle_s: number; t_fill_s: number; plc_write: false; hb_enabled: false };
 export type SequenceResponse = {
   settings: SequenceSettings; present: boolean; stale: boolean; plc_at: string | null; steps: Record<string, string>;
-  write_allowed: boolean; write_note: string; pump_write_allowed?: boolean;
+  write_allowed: boolean; write_note: string; pump_write_allowed?: boolean; write_nodes_pending?: string[];
   plc: { present?: boolean; Step?: number; StepTime_ms?: number; HB_OK?: boolean; Stopped?: boolean; CycleCount?: number;
     Enable?: boolean; LeakAlarm?: boolean; T_Circ?: number; T_Settle?: number; T_Fill?: number; Level?: number;
     L_Pump?: boolean; L_Running?: boolean; L_Error?: boolean; L_Enable?: boolean; L_Done?: boolean; L_Status?: number;
-    R_Pump?: boolean; R_Running?: boolean; R_Error?: boolean; R_Enable?: boolean; R_Done?: boolean; R_Status?: number };
+    L_Waiting?: boolean; L_Skipped?: boolean; L_ErrCode?: number; L_RunTime_ms?: number; L_StartCount?: number; L_LastRun_ms?: number;
+    R_Pump?: boolean; R_Running?: boolean; R_Error?: boolean; R_Enable?: boolean; R_Done?: boolean; R_Status?: number;
+    R_Waiting?: boolean; R_Skipped?: boolean; R_ErrCode?: number; R_RunTime_ms?: number; R_StartCount?: number; R_LastRun_ms?: number };
 };
 export async function getSequence() { return requestJson<SequenceResponse>("/api/sequence"); }
 export async function setCircPumpEnable(side: "L" | "R", enable: boolean) {
@@ -653,7 +655,7 @@ export const startPidParamsApply = (key: string, params: Record<string, number>,
   requestJson<PidAiJob>(aiUrl(key, "params-apply"), post({ params, confirmLarge }));
 export type FertEcAlarm = { disabled_until?: string; enabled: boolean; lo_off: number; hi_off: number; warn_lo_off: number; warn_hi_off: number; hyst: number; delay_min: number };
 export type FertEvent = { id?: number; code?: string; level: "alarm" | "warning"; text: string; ts?: string; since?: string; cleared_ts?: string | null; active?: boolean; acked?: boolean; acked_ts?: string | null; acked_by?: string | null };
-export type FertDoseStatus = { mode: string; heartbeat: string; hbValue: number; interlock: boolean; pump_write_allowed?: boolean;
+export type FertDoseStatus = { mode: string; heartbeat: string; hbValue: number; interlock: boolean; pump_write_allowed?: boolean; plc_write_allowed?: boolean;
   config: { live: boolean; hb_enabled: boolean; plc_enable: boolean; auto: boolean; fert: string; dose_s: number; ec_sp?: number; below_min: number; pause_min: number; ec_alarm: FertEcAlarm };
   plc: { present: boolean; fresh: boolean; statusText: string | null; Status?: number; Enable?: boolean; HB_OK?: boolean; DoseActive?: boolean; DoseCount?: number; LastDose_ms?: number; RunTime_ms?: number; Heartbeat?: number; Pump?: boolean };
   ec: { value: number; at: string } | null; sp: number | null; belowSince: string | null; lastDoseAt: string | null; nextAllowedAt: string | null; reason: string;

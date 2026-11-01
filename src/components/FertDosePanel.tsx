@@ -259,9 +259,9 @@ export function FertEcModal({ open, d, reload, onClose }: { open: boolean; d: Fe
 
           <Section title="Annostelun ohjaus">
             <div className="grid grid-cols-2 gap-2">
-              <Switch testid="fd-live" on={c.live} label="Live" disabled={busy} onClick={() => set({ live: !c.live })} title="Live = kirjoitukset PLC:lle (FertDose_DB) bridgen kautta" />
+              <Switch testid="fd-live" on={c.live} label="Live" disabled={busy} onClick={() => set({ live: !c.live })} title="Live-kirjoitukset odottavat lupaa (Pumput.FertDose)" />
               <Switch on={c.hb_enabled} label="Heartbeat" disabled={busy} onClick={() => set({ hb_enabled: !c.hb_enabled })} />
-              <Switch on={c.plc_enable} label="Enable" disabled={busy} onClick={() => set({ plc_enable: !c.plc_enable })} title="FertDose_DB.Enable (EC-hälytys pakottaa OFF)" />
+              <Switch on={c.plc_enable} label="Enable" disabled={busy} onClick={() => set({ plc_enable: !c.plc_enable })} title="Pumput.FertDose.Enable (kirjoitus odottaa lupaa; EC-hälytys lukitsisi OFF)" />
               <Switch on={c.auto} label="Automaatti" disabled={busy} onClick={() => set({ auto: !c.auto })} />
             </div>
             <div className="mt-3 flex items-center gap-2 text-sm">
@@ -284,9 +284,10 @@ export function FertEcModal({ open, d, reload, onClose }: { open: boolean; d: Fe
             {msg && <div className="mt-2 rounded border border-amber-500/50 bg-amber-500/10 px-2 py-1 text-xs text-amber-200">{msg}</div>}
           </Section>
 
-          <Section title="PLC FertDose_DB" right={!p.present ? <Badge kind="alarm">DB puuttuu</Badge> : p.fresh ? <Badge kind="ok">Yhteys</Badge> : <Badge kind="warning">Vanha data</Badge>}>
+          <Section title="PLC Pumput.FertDose" right={!p.present ? <Badge kind="alarm">DB puuttuu</Badge> : p.fresh ? <Badge kind="ok">Yhteys</Badge> : <Badge kind="warning">Vanha data</Badge>}>
             <div className="space-y-0.5 text-xs">
               <KV k="Status" v={`${p.Status ?? "—"}${p.statusText ? ` · ${p.statusText}` : ""}`} />
+              <KV k="Interlock" v={yn((p as { Interlock?: boolean }).Interlock)} cls={(p as { Interlock?: boolean }).Interlock ? "text-emerald-400" : "text-amber-300"} />
               <KV k="HB_OK" v={yn(p.HB_OK)} cls={p.HB_OK ? "text-emerald-400" : ""} />
               <KV k="Enable" v={yn(p.Enable)} />
               <KV k="DoseActive" v={yn(p.DoseActive)} cls={p.DoseActive ? "text-amber-300" : ""} />
@@ -294,6 +295,7 @@ export function FertEcModal({ open, d, reload, onClose }: { open: boolean; d: Fe
               <KV k="LastDose" v={p.LastDose_ms != null ? `${p.LastDose_ms} ms` : "—"} />
               <KV k="RunTime" v={p.RunTime_ms != null ? `${(p.RunTime_ms / 1000).toFixed(1)} s` : "—"} />
               <KV k="Heartbeat" v={`${d.heartbeat} (#${d.hbValue})`} cls={d.heartbeat === "ok" ? "text-emerald-400" : "text-amber-300"} />
+              {!d.plc_write_allowed && <div className="pt-1 text-[11px] text-amber-400">Kirjoitus PLC:hen pois (Enable/DoseTrig/Heartbeat odottaa lupaa)</div>}
             </div>
           </Section>
 

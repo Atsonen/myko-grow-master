@@ -1,6 +1,6 @@
-// Lannoiteannostelu – Valvomon päätöslogiikka + ohjaus (PLC: FB_FertDose / FertDose_DB, ks. plc/FERTDOSE.md).
-// Käyttäjä hyväksyi live-ohjauksen 27.10.2026 11:20 (fyysinen lähtö forsattu 0 PLC:ssä testivaiheessa).
-// Kirjoitukset vain bridgen kautta: MQTT Myko/Cmd/FertDose (whitelist Enable, DoseReq_ms, DoseTrig pulse, Heartbeat).
+// Lannoiteannostelu – Valvomon päätöslogiikka + ohjaus (PLC: Pumput_DB.Static.FertDose, ks. plc/FERTDOSE.md).
+// 1.11.2026: lukupolku uudelleenosoitettu multi-instanceen. Kirjoitukset (Enable/DoseReq/DoseTrig/Heartbeat) POIS – odottaa lupaa.
+// Vanha FB_FertDose_DB yhä OPC UA -puussa (Outputit None); ei enää kirjoituskohde.
 // Asetukset: myko_settings k='fert_dose'. Loki: fert_dose_log. Hälytykset/varoitukset: fert_events.
 // Lannoite A/B = sama pumppu, letku siirretään käsin: fert on vain Myko-asetus, kirjataan jokaiselle annokselle.
 // EC-hälytys/-varoitus = ± poikkeama TDS_SP:stä. EC_ALARM_HI -> Telegram + LUKITUS (Enable=false).
@@ -18,10 +18,18 @@ const DEF = {
   range: [100, 9000], spike_ppm: 400, n_samples: 6, poll_s: 10,
   ec_alarm: { enabled: true, lo_off: -1500, hi_off: 1500, warn_lo_off: -700, warn_hi_off: 700, hyst: 100, delay_min: 5, clear_min: 3 },
 };
-const STATUS_TXT = { 0: "valmis", 1: "annostelee", 2: "annos valmis", 3: "annos valmis (rajattu 5 s)", 10: "hylätty: Enable pois", 11: "heartbeat puuttuu", 13: "hylätty: virheellinen pyyntö", 14: "katkaistu: Enable pudotettu", 15: "katkaistu: turvakatkaisu" };
+// Status-tekstit: uusi Pumput.FertDose (0–10 + Interlock) + vanhan FB_FertDose_DB koodit (10–15) yhteensopivuuteen.
+const STATUS_TXT = {
+  0: "valmis", 1: "annostelee", 2: "annos valmis", 3: "annos valmis (rajattu)",
+  4: "ei käytössä (Enable pois)", 5: "heartbeat puuttuu", 6: "virheellinen pyyntö",
+  7: "interlock estää", 8: "katkaistu: interlock", 9: "katkaistu: Enable pudotettu", 10: "katkaistu: turvakatkaisu",
+  // vanha FB_FertDose_DB (jos joskus vielä näkyy):
+  11: "heartbeat puuttuu (vanha koodi)", 13: "virheellinen pyyntö (vanha)", 14: "katkaistu: Enable pudotettu (vanha)", 15: "katkaistu: turvakatkaisu (vanha)",
+};
 
-// Käyttäjän hyväksymä (28.10.2026): VAIN FB_FertDose_DB.Input.Enable (Bool) prosessinäkymän Käyttö-kytkimestä.
-const PUMP_ENABLE_WRITE_ALLOWED = true;
+// 1.11.2026: FertDose siirretty Pumput_DB.Static.FertDose – kirjoitukset POIS kunnes uudet solmut hyväksytään.
+const PLC_WRITE_ALLOWED = false;
+const PUMP_ENABLE_WRITE_ALLOWED = false;
 const S = { samples: [], validSince: null, belowSince: null, lastDoseAt: null, reason: "init", sp: null,
   plc: { present: false }, plcAt: 0, hb: 0, hbErr: null, lastAck: null, pending: new Map(),
   ev: {}, evSince: {}, lastDoseCount: null };
@@ -67,6 +75,10 @@ async function notify(text) {
 // ---------- MQTT / bridge ----------
 function cmd(body, timeoutMs = 6000) {
   return new Promise((resolve) => {
+    if (!PLC_WRITE_ALLOWED) {
+      const keys = Object.keys(body).filter((k) => k !== "id" && k !== "by");
+      return resolve({ error: "PLC-kirjoitus ei käytössä (Pumput.FertDose odottaa lupaa)", results: Object.fromEntries(keys.map((k) => [k, "rejected: writes disabled"])) });
+    }
     if (!mq?.connected) return resolve({ error: "MQTT ei yhteyttä" });
     const id = `fd${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
     const t = setTimeout(() => { S.pending.delete(id); resolve({ error: "bridge ei kuitannut (timeout)" }); }, timeoutMs);
@@ -164,7 +176,7 @@ async function evalAlarms(c, ec, sp, reliable) {
   await setEvent("ec_warn_lo", "warning", on && ec < lim.wlo + h("ec_warn_lo") && ec < sp && !(ec < lim.alo), t("varoitus", "lo", lim.wlo), c);
   await setEvent("ec_warn_hi", "warning", on && ec > lim.whi - h("ec_warn_hi") && ec > sp && !(ec > lim.ahi), t("varoitus", "hi", lim.whi), c);
   // järjestelmävaroitukset (vain UI)
-  await setEvent("plc_db", "warning", c.live && !S.plc.present, "FertDose_DB puuttuu OPC UA:sta (ei ladattu PLC:lle?) – ohjaus ei käytössä", c);
+  await setEvent("plc_db", "warning", c.live && !S.plc.present, "Pumput.FertDose puuttuu OPC UA:sta – luku/ohjaus ei käytössä", c);
   await setEvent("plc_hb", "warning", c.live && c.hb_enabled && plcFresh() && S.plc.HB_OK === false, "PLC: heartbeat ei kunnossa (HB_OK = FALSE)", c);
   await setEvent("ec_unrel", "warning", !reliable, `EC-mittaus epäluotettava: ${S.relWhy ?? ""}`, c);
 }
@@ -221,7 +233,7 @@ async function tick(port) {
     await evalAlarms(c, lastS?.v ?? null, S.sp, ok);
 
     // Enable-synkronointi (lukitus pakottaa FALSE)
-    if (c.live && plcFresh()) {
+    if (PLC_WRITE_ALLOWED && c.live && plcFresh()) {
       const want = !!c.plc_enable && !alarmActive();
       if (S.plc.Enable !== want && !S.enablePending) {
         S.enablePending = true; const a = await cmd({ Enable: want }); S.enablePending = false;
@@ -298,7 +310,7 @@ export function startFertDose({ port, mqttUrl }) {
   // Älä pinoudu: jos edellinen vielä auki, jätä tämä kerta väliin. Timeout 8 s (sillan pollauskuorma).
   let hbBusy = false;
   setInterval(async () => {
-    if (!CFG.live || !CFG.hb_enabled || !S.plc.present || hbBusy) return;
+    if (!PLC_WRITE_ALLOWED || !CFG.live || !CFG.hb_enabled || !S.plc.present || hbBusy) return;
     hbBusy = true;
     try {
       S.hb = (S.hb + 1) % 65536; const a = await cmd({ Heartbeat: S.hb }, 8000);
@@ -321,8 +333,8 @@ export function registerFertDoseRoutes(app) {
       const recent = await query("SELECT DATE_FORMAT(ts, '%Y-%m-%dT%H:%i:%sZ') ts, fert, requested_ms, actual_ms, ec_before, ec_sp, reason, mode FROM fert_dose_log ORDER BY id DESC LIMIT 200");
       const events = await query("SELECT id, DATE_FORMAT(ts, '%Y-%m-%dT%H:%i:%sZ') ts, DATE_FORMAT(cleared_ts, '%Y-%m-%dT%H:%i:%sZ') cleared_ts, level, code, text, DATE_FORMAT(acked_ts, '%Y-%m-%dT%H:%i:%sZ') acked_ts, acked_by FROM fert_events ORDER BY id DESC LIMIT 200");
       const lastS = S.samples[S.samples.length - 1];
-      res.json({ config: c, mode: c.live ? "live" : "dry-run", heartbeat: !c.hb_enabled ? "off" : !S.plc.present ? "odottaa DB:tä" : S.hbErr ? `virhe: ${S.hbErr}` : "ok",
-        hbValue: S.hb, pump_write_allowed: PUMP_ENABLE_WRITE_ALLOWED,
+      res.json({ config: c, mode: c.live ? "live" : "dry-run", heartbeat: !PLC_WRITE_ALLOWED ? "kirjoitus estetty" : !c.hb_enabled ? "off" : !S.plc.present ? "odottaa DB:tä" : S.hbErr ? `virhe: ${S.hbErr}` : "ok",
+        hbValue: S.hb, pump_write_allowed: PUMP_ENABLE_WRITE_ALLOWED, plc_write_allowed: PLC_WRITE_ALLOWED,
         plc: { ...S.plc, fresh: plcFresh(), statusText: STATUS_TXT[S.plc.Status] ?? (S.plc.Status != null ? `koodi ${S.plc.Status}` : null) },
         interlock: alarmActive(), ec: lastS ? { value: lastS.v, at: new Date(lastS.t).toISOString() } : null, sp: S.sp,
         belowSince: S.belowSince ? new Date(S.belowSince).toISOString() : null, lastDoseAt: S.lastDoseAt ? new Date(S.lastDoseAt).toISOString() : null,
@@ -343,8 +355,7 @@ export function registerFertDoseRoutes(app) {
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
-  // Prosessinäkymä: lannoitepumpun Käyttö (Enable). Kaksi fyysistä pumppua saman lähdön takana → yksi symboli.
-  // Kirjoitus: FB_FertDose_DB/Input/Enable (hyväksytty). Päivittää myös fert_dose.plc_enable ettei tick ylikirjoita.
+  // Prosessinäkymä: lannoitepumpun Käyttö (Enable). Kirjoitus POIS (1.11.2026) – odottaa lupaa Pumput_DB/Static/FertDose.Enable.
   app.post("/api/fertdose/pump", async (req, res) => {
     try {
       const en = req.body?.enable;
