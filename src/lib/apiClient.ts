@@ -59,6 +59,8 @@ export interface TrendWidgetConfig {
   to?: string;
   bucket: TrendBucket;
   chartType: "line" | "area";
+  /** Show pump run lanes (Circ L/R, Fill, FertDose) under/behind the series. Default on for Vesi. */
+  showPumpRuns?: boolean;
   /** Widget overrides: per-series display name/color/axis, per-axis min/max. */
   series?: Record<string, { name?: string; color?: string; axis?: "auto" | "left" | "right" }>;
   axes?: { left?: { min?: number | null; max?: number | null }; right?: { min?: number | null; max?: number | null } };
@@ -207,6 +209,21 @@ export async function getLatestEnvironmentReadings() {
 
 export async function getTrendVariables() {
   return requestJson<TrendVariable[]>("/api/trends/variables");
+}
+
+
+export type PumpRunMeta = { id: string; label: string; color: string };
+export type PumpRunInterval = {
+  pump: string; start: string; end: string | null;
+  startMs: number; endMs: number; duration_s: number; open?: boolean;
+};
+export type PumpRunsResponse = {
+  from: string; to: string; pumps: PumpRunMeta[]; intervals: PumpRunInterval[];
+  counts: Record<string, number>;
+};
+export async function getPumpRuns(from: string, to: string) {
+  const q = new URLSearchParams({ from, to });
+  return requestJson<PumpRunsResponse>(`/api/pump-runs?${q}`);
 }
 
 export async function getTrendSeries(params: {

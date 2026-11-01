@@ -80,6 +80,14 @@ export function WidgetSettingsDialog({
                     {TREND_RANGES.map((r) => <option key={r.h} value={r.h}>{r.label}</option>)}
                   </select>
                 </Field>
+                <label className="flex items-center gap-2 text-xs">
+                  <input
+                    type="checkbox"
+                    checked={c.showPumpRuns === true || (c.showPumpRuns !== false && /vesi/i.test(draft.title ?? ""))}
+                    onChange={(e) => setCfg({ showPumpRuns: e.target.checked })}
+                  />
+                  <span>Pump run lanes (default on for title “Vesi”)</span>
+                </label>
                 <Field label="Resolution">
                   <select value={c.bucket ?? "auto"} onChange={(e) => setCfg({ bucket: e.target.value === "auto" ? undefined : e.target.value })} className={selectCls}>
                     <option value="auto">Auto ({BUCKET_OPTIONS.find((b) => b.value === autoBucket(c.rangeHours ?? 24))?.label})</option>

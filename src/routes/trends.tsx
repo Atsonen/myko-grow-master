@@ -4,6 +4,7 @@ import { AXIS_TICK, BUCKET_OPTIONS, LEGEND_PROPS, resolveSeries, timeTickLabel, 
 import { useWidth } from "@/lib/useWidth";
 import { renderSeriesChildren, SeriesStyleEditor } from "@/components/trends/SeriesStyleEditor";
 import { AreaChart, CartesianGrid, Legend, LineChart, ResponsiveContainer, Tooltip, XAxis } from "recharts";
+import { PumpRunLegend, renderPumpRunAreas, usePumpRuns, pumpRunsAt, DEFAULT_PUMP_META } from "@/components/trends/PumpRunOverlay";
 import {
   BarChart3,
   CopyPlus,
@@ -512,6 +513,18 @@ function TrendWidget({
     [widget.range, widget.from, widget.to],
   );
 
+  const showPumpRuns = widget.showPumpRuns === true || (widget.showPumpRuns !== false && /vesi/i.test(widget.title ?? ""));
+  const { pumps: pumpMeta, intervals: pumpIntervals } = usePumpRuns(showPumpRuns, range.from, range.to);
+  const [pumpVisible, setPumpVisible] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries(DEFAULT_PUMP_META.map((p) => [p.id, true])),
+  );
+  const togglePump = (id: string) => setPumpVisible((v) => ({ ...v, [id]: v[id] === false }));
+  const pumpCounts = useMemo(() => {
+    const c: Record<string, number> = {};
+    for (const iv of pumpIntervals) c[iv.pump] = (c[iv.pump] ?? 0) + 1;
+    return c;
+  }, [pumpIntervals]);
+
   useEffect(() => {
     let cancelled = false;
     const loadSeries = async () => {
@@ -560,6 +573,11 @@ function TrendWidget({
   const resolved = resolveSeries(series.map((x) => x.variable.id), variableMap, widget, defaults);
   const selectedResolved = resolveSeries(selectedVariableIds, variableMap, widget, defaults);
   const [chartRef, chartWidth] = useWidth<HTMLDivElement>();
+  const xMin = chartData.length ? Number(chartData[0].ts) : Date.parse(range.from);
+  const xMax = chartData.length ? Number(chartData[chartData.length - 1].ts) : Date.parse(range.to);
+  const pumpAreas = showPumpRuns && chartData.length > 0
+    ? renderPumpRunAreas(pumpIntervals, pumpMeta, pumpVisible, xMin, xMax, chartWidth)
+    : [];
   const ticks =
     chartData.length > 1
       ? timeTicks(Number(chartData[0].ts), Number(chartData[chartData.length - 1].ts), chartWidth - 110)
@@ -700,6 +718,15 @@ function TrendWidget({
         </span>
       </div>
 
+      <PumpRunLegend
+        pumps={pumpMeta}
+        visible={pumpVisible}
+        onToggle={togglePump}
+        counts={pumpCounts}
+        master={showPumpRuns}
+        onMaster={(on) => onChange({ showPumpRuns: on })}
+      />
+
       <div ref={chartRef} className="h-[300px] w-full min-w-0">
         {chartData.length > 0 ? (
           <ResponsiveContainer width="100%" height="100%">
@@ -707,8 +734,24 @@ function TrendWidget({
               <AreaChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
                 <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" />
                 <XAxis dataKey="ts" type="number" scale="time" domain={["dataMin", "dataMax"]} ticks={ticks} tickFormatter={(ts: number) => timeTickLabel(ts, ticks)} stroke="var(--muted-foreground)" tick={AXIS_TICK} />
-                <Tooltip contentStyle={tooltipStyle} labelStyle={{ color: "var(--foreground)" }} labelFormatter={(ts) => new Date(Number(ts)).toLocaleString("fi-FI", { weekday: "short", day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" })} />
+                <Tooltip contentStyle={tooltipStyle} labelStyle={{ color: "var(--foreground)" }}
+                  labelFormatter={(ts) => new Date(Number(ts)).toLocaleString("fi-FI", { weekday: "short", day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" })}
+                  content={({ active, label, payload }) => {
+                    if (!active) return null;
+                    const tips = showPumpRuns ? pumpRunsAt(Number(label), pumpIntervals.filter((iv) => pumpVisible[iv.pump] !== false), pumpMeta) : [];
+                    return (
+                      <div style={tooltipStyle} className="rounded border border-border bg-card px-2 py-1.5 text-xs shadow">
+                        <div className="mb-1 font-mono text-muted-foreground">{new Date(Number(label)).toLocaleString("fi-FI", { weekday: "short", day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" })}</div>
+                        {(payload ?? []).map((row: any) => (
+                          <div key={String(row.dataKey)} style={{ color: row.color }}>{row.name}: <b>{row.value}</b>{row.unit ?? ""}</div>
+                        ))}
+                        {tips.map((t) => <div key={t} className="mt-0.5 text-[11px] text-amber-200/90">{t}</div>)}
+                      </div>
+                    );
+                  }}
+                />
                 <Legend {...LEGEND_PROPS} />
+                {pumpAreas}
                 {renderSeriesChildren(resolved, widget, (_id, i) => seriesKey(i), {
                   kind: "area", strokeWidth: 2, axisStroke: "var(--muted-foreground)",
                   dots: (i) => (series[i]?.points.length ?? 0) <= 24,
@@ -718,8 +761,24 @@ function TrendWidget({
               <LineChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
                 <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" />
                 <XAxis dataKey="ts" type="number" scale="time" domain={["dataMin", "dataMax"]} ticks={ticks} tickFormatter={(ts: number) => timeTickLabel(ts, ticks)} stroke="var(--muted-foreground)" tick={AXIS_TICK} />
-                <Tooltip contentStyle={tooltipStyle} labelStyle={{ color: "var(--foreground)" }} labelFormatter={(ts) => new Date(Number(ts)).toLocaleString("fi-FI", { weekday: "short", day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" })} />
+                <Tooltip contentStyle={tooltipStyle} labelStyle={{ color: "var(--foreground)" }}
+                  labelFormatter={(ts) => new Date(Number(ts)).toLocaleString("fi-FI", { weekday: "short", day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" })}
+                  content={({ active, label, payload }) => {
+                    if (!active) return null;
+                    const tips = showPumpRuns ? pumpRunsAt(Number(label), pumpIntervals.filter((iv) => pumpVisible[iv.pump] !== false), pumpMeta) : [];
+                    return (
+                      <div style={tooltipStyle} className="rounded border border-border bg-card px-2 py-1.5 text-xs shadow">
+                        <div className="mb-1 font-mono text-muted-foreground">{new Date(Number(label)).toLocaleString("fi-FI", { weekday: "short", day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" })}</div>
+                        {(payload ?? []).map((row: any) => (
+                          <div key={String(row.dataKey)} style={{ color: row.color }}>{row.name}: <b>{row.value}</b>{row.unit ?? ""}</div>
+                        ))}
+                        {tips.map((t) => <div key={t} className="mt-0.5 text-[11px] text-amber-200/90">{t}</div>)}
+                      </div>
+                    );
+                  }}
+                />
                 <Legend {...LEGEND_PROPS} />
+                {pumpAreas}
                 {renderSeriesChildren(resolved, widget, (_id, i) => seriesKey(i), {
                   strokeWidth: 2, axisStroke: "var(--muted-foreground)",
                   dots: (i) => (series[i]?.points.length ?? 0) <= 24,
@@ -759,10 +818,13 @@ function normalizeWidget(widget: TrendWidgetConfig, fallbackVariableId = ""): Tr
   const variableIds = getWidgetVariableIds(widget);
   const nextVariableIds =
     variableIds.length > 0 ? variableIds : fallbackVariableId ? [fallbackVariableId] : [];
+  const showPumpRuns =
+    widget.showPumpRuns ?? (/vesi/i.test(widget.title ?? "") ? true : undefined);
   return {
     ...widget,
     variableId: nextVariableIds[0],
     variableIds: nextVariableIds,
+    ...(showPumpRuns !== undefined ? { showPumpRuns } : {}),
   };
 }
 

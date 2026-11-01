@@ -12,6 +12,7 @@ import { startKasvamoAlarms, registerKasvamoAlarmRoutes, kasvamoAlarmRows, kasva
 import { startFertDose, registerFertDoseRoutes, fertAlarmRows, fertAck, fertDisabledRows } from "./fertDose.js";
 import { startSequence, registerSequenceRoutes } from "./sequence.js";
 import { startFillPump, registerFillPumpRoutes, fillPumpAlarmRows, fillPumpAck } from "./fillPump.js";
+import { startPumpRuns, registerPumpRunsRoutes } from "./pumpRuns.js";
 import { startSensorBlock, registerSensorBlockRoutes } from "./sensorBlock.js";
 import { untilTxt } from "./alarmDisable.js";
 import { registerMykoDb } from "./mykoDb.js";
@@ -1153,6 +1154,7 @@ startKasvamoAlarms({ port: PORT }); registerKasvamoAlarmRoutes(app); // Kasvamo 
 startFertDose({ port: PORT, mqttUrl: process.env.MQTT_URL || "mqtt://192.168.1.51:1883" }); registerFertDoseRoutes(app); // lannoiteannostelu: live-ohjaus bridgen kautta (hyväksytty 27.10.2026)
 startSequence({ mqttUrl: process.env.MQTT_URL || "mqtt://192.168.1.51:1883" }); registerSequenceRoutes(app); // kiertovesisekvenssi
 startFillPump({ mqttUrl: process.env.MQTT_URL || "mqtt://192.168.1.51:1883" }); registerFillPumpRoutes(app); // FillPump faceplate (Cfg_*/Cmd_Ack, ei startup-synkkaa)
+startPumpRuns({ mqttUrl: process.env.MQTT_URL || "mqtt://192.168.1.51:1883" }); registerPumpRunsRoutes(app); // pump run intervals for trend overlays
 startSensorBlock({ mqttUrl: process.env.MQTT_URL || "mqtt://192.168.1.51:1883" }); registerSensorBlockRoutes(app); // SensorBlock faceplate (Sensors/CommandAck/Commands)
 // kunnossapito: log a manual PID command (UI / Kuittaa PLC-viat) as an action, linked to the PID's open auto-incident
 async function kpLogPidCommand({ key, cmd, result, actor = "myko-ui", label }) {

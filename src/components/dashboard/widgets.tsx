@@ -14,6 +14,7 @@ import {
 import { StatusBadge } from "@/components/common/StatusBadge";
 import { FunctionBadge } from "@/components/common/FunctionBadge";
 import { getTrendSeries, getUnitEnvironment, type TrendBucket, type UnitEnvironment } from "@/lib/apiClient";
+import { PumpRunLegend, renderPumpRunAreas, usePumpRuns, pumpRunsAt, DEFAULT_PUMP_META } from "@/components/trends/PumpRunOverlay";
 import { formatDateTime, relativeTime } from "@/lib/format";
 import { useDashboardData } from "./DashboardData";
 import { AXIS_TICK, autoBucket, LEGEND_PROPS, resolveSeries, timeTickLabel, timeTicks, useSeriesDefaults } from "@/lib/seriesStyle";
@@ -111,7 +112,13 @@ export function SensorLatestWidget({ config }: { config: WidgetConfigMap["sensor
 }
 
 /* ---------------- Trend chart ---------------- */
-export function TrendWidget({ config }: { config: WidgetConfigMap["trend"] }) {
+export function TrendWidget({
+  config,
+  title,
+}: {
+  config: WidgetConfigMap["trend"];
+  title?: string;
+}) {
   const { variables, tick } = useDashboardData();
   const ids = config.variableIds ?? [];
   const rangeHours = config.rangeHours ?? 24;
@@ -121,6 +128,23 @@ export function TrendWidget({ config }: { config: WidgetConfigMap["trend"] }) {
   const isMobile = useIsMobile();
   const [series, setSeries] = useState<Record<string, { ts: number; value: number }[]>>({});
   const [err, setErr] = useState("");
+
+  const toIso = useMemo(() => new Date().toISOString(), [tick, rangeHours, ids.join("|")]);
+  const fromIso = useMemo(() => new Date(Date.parse(toIso) - rangeHours * 3600_000).toISOString(), [toIso, rangeHours]);
+  const autoPumpRuns =
+    config.showPumpRuns === true || (config.showPumpRuns !== false && /vesi/i.test(title ?? ""));
+  const [pumpMaster, setPumpMaster] = useState<boolean | null>(null);
+  const showPumpRuns = pumpMaster ?? autoPumpRuns;
+  const { pumps: pumpMeta, intervals: pumpIntervals } = usePumpRuns(showPumpRuns, fromIso, toIso);
+  const [pumpVisible, setPumpVisible] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries(DEFAULT_PUMP_META.map((p) => [p.id, true])),
+  );
+  const togglePump = (id: string) => setPumpVisible((v) => ({ ...v, [id]: v[id] === false }));
+  const pumpCounts = useMemo(() => {
+    const c: Record<string, number> = {};
+    for (const iv of pumpIntervals) c[iv.pump] = (c[iv.pump] ?? 0) + 1;
+    return c;
+  }, [pumpIntervals]);
 
   useEffect(() => {
     if (ids.length === 0) return;
@@ -164,20 +188,67 @@ export function TrendWidget({ config }: { config: WidgetConfigMap["trend"] }) {
   if (data.length === 0) return <Muted>No data for the last {rangeHours} h.</Muted>;
   const axisWidth = yAxisWidthFor(data, ids);
   const ticks = timeTicks(data[0].ts, data[data.length - 1].ts, Math.max(40, boxWidth - axisWidth - 24));
+  const xMin = data[0].ts;
+  const xMax = data[data.length - 1].ts;
+  const pumpAreas = showPumpRuns
+    ? renderPumpRunAreas(pumpIntervals, pumpMeta, pumpVisible, xMin, xMax, boxWidth)
+    : [];
   return (
-    <div ref={boxRef} className="h-full w-full min-w-0 overflow-visible">
-    <ResponsiveContainer width="100%" height="100%">
-      <LineChart data={data} margin={{ top: 4, right: 8, left: 8, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-        <XAxis dataKey="ts" type="number" scale="time" domain={["dataMin", "dataMax"]} ticks={ticks} tickFormatter={(ts: number) => timeTickLabel(ts, ticks)} tick={AXIS_TICK} interval="preserveStartEnd" />
-        <Tooltip trigger={isMobile ? "click" : "hover"} labelFormatter={(ts) => formatDateTime(new Date(Number(ts)).toISOString())} contentStyle={{ fontSize: 11 }} />
-        <Legend {...LEGEND_PROPS} />
-        {renderSeriesChildren(resolveSeries(ids, variables, config, defaults), config, (id) => id, { axisWidth, tickFormatter: formatYTick })}
-      </LineChart>
-    </ResponsiveContainer>
+    <div ref={boxRef} className="flex h-full w-full min-w-0 flex-col overflow-visible">
+      {showPumpRuns && (
+        <div className="shrink-0 px-1 pb-0.5">
+          <PumpRunLegend
+            pumps={pumpMeta}
+            visible={pumpVisible}
+            onToggle={togglePump}
+            counts={pumpCounts}
+            master={showPumpRuns}
+            onMaster={(on) => setPumpMaster(on)}
+          />
+        </div>
+      )}
+      <div className="min-h-0 flex-1 w-full">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={data} margin={{ top: 4, right: 8, left: 8, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+            <XAxis dataKey="ts" type="number" scale="time" domain={["dataMin", "dataMax"]} ticks={ticks} tickFormatter={(ts: number) => timeTickLabel(ts, ticks)} tick={AXIS_TICK} interval="preserveStartEnd" />
+            <Tooltip
+              trigger={isMobile ? "click" : "hover"}
+              contentStyle={{ fontSize: 11 }}
+              content={({ active, label, payload }) => {
+                if (!active) return null;
+                const tips = showPumpRuns
+                  ? pumpRunsAt(Number(label), pumpIntervals.filter((iv) => pumpVisible[iv.pump] !== false), pumpMeta)
+                  : [];
+                return (
+                  <div className="rounded border border-border bg-card px-2 py-1.5 text-xs shadow" style={{ fontSize: 11 }}>
+                    <div className="mb-1 font-mono text-muted-foreground">
+                      {formatDateTime(new Date(Number(label)).toISOString())}
+                    </div>
+                    {(payload ?? []).map((row: { dataKey?: string | number; color?: string; name?: string; value?: unknown }) => (
+                      <div key={String(row.dataKey)} style={{ color: row.color }}>
+                        {row.name}: <b>{String(row.value)}</b>
+                      </div>
+                    ))}
+                    {tips.map((t) => (
+                      <div key={t} className="mt-0.5 text-[11px] text-amber-200/90">
+                        {t}
+                      </div>
+                    ))}
+                  </div>
+                );
+              }}
+            />
+            <Legend {...LEGEND_PROPS} />
+            {pumpAreas}
+            {renderSeriesChildren(resolveSeries(ids, variables, config, defaults), config, (id) => id, { axisWidth, tickFormatter: formatYTick })}
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
     </div>
   );
 }
+
 
 /* ---------------- Units by status ---------------- */
 export function UnitsByStatusWidget({ config }: { config: WidgetConfigMap["unitsByStatus"] }) {
@@ -354,7 +425,7 @@ export function WidgetBody({ widget }: { widget: DashboardWidget }) {
     case "sensorLatest":
       return <SensorLatestWidget config={widget.config as WidgetConfigMap["sensorLatest"]} />;
     case "trend":
-      return <TrendWidget config={widget.config as WidgetConfigMap["trend"]} />;
+      return <TrendWidget config={widget.config as WidgetConfigMap["trend"]} title={widget.title} />;
     case "unitsByStatus":
       return <UnitsByStatusWidget config={widget.config as WidgetConfigMap["unitsByStatus"]} />;
     case "recentEvents":

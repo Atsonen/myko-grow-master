@@ -24,7 +24,7 @@ export type WidgetType =
 export interface WidgetConfigMap {
   sensorLatest: { variableId?: string };
   /** bucket unset = auto by range (24 h → 10 min). series/axes = widget overrides. */
-  trend: { variableIds?: string[]; rangeHours?: number; bucket?: TrendBucket | "auto" } & TrendStyling;
+  trend: { variableIds?: string[]; rangeHours?: number; bucket?: TrendBucket | "auto"; showPumpRuns?: boolean } & TrendStyling;
   unitsByStatus: { mode?: "count" | "list"; status?: UnitStatus };
   recentEvents: { limit?: number; functionCode?: string };
   locationSummary: Record<string, never>;
