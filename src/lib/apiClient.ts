@@ -425,9 +425,13 @@ export type FillPumpPlc = {
   St_ErrCode?: number; St_Level?: number; St_HbOk?: boolean; St_RunTime_s?: number;
   St_TotRun_ms?: number; St_Starts?: number; St_Status?: number;
 };
+export type FillPumpEvent = { ts: string; kind: string; text: string; code?: string };
 export type FillPumpResponse = {
   plc: FillPumpPlc; plc_at: string | null; stale: boolean; present: boolean;
   write_allowed: boolean; write_note: string; err_codes: Record<string, string>; allowed_writes: string[];
+  trend?: [number, number][];
+  events?: FillPumpEvent[];
+  alarms?: { active: Record<string, boolean>; texts: Record<string, string>; hb_delay_s?: number; err_delay_s?: number };
 };
 export async function getFillPump() { return requestJson<FillPumpResponse>("/api/fillpump"); }
 /** FillPump Cfg_* and Cmd_Ack to PLC. Requires confirm: true. No startup sync. */

@@ -259,10 +259,9 @@ export function FertEcModal({ open, d, reload, onClose }: { open: boolean; d: Fe
 
           <Section title="Annostelun ohjaus">
             <div className="grid grid-cols-2 gap-2">
-              <Switch testid="fd-live" on={c.live} label="Live" disabled={busy} onClick={() => set({ live: !c.live })} title="Live = kirjoitukset Pumput.FertDose (Enable/DoseReq/DoseTrig/Heartbeat)" />
+              {/* Live + Automaatti toggles removed from UI (1.11.2026): Live=true → real PLC writes; Automaatti=auto dosing. Keep state; badge still shows Live/Dry-run. */}
               <Switch on={c.hb_enabled} label="Heartbeat" disabled={busy} onClick={() => set({ hb_enabled: !c.hb_enabled })} />
               <Switch on={c.plc_enable} label="Enable" disabled={busy} onClick={() => set({ plc_enable: !c.plc_enable })} title="Pumput.FertDose.Enable (EC-hälytys pakottaa OFF)" />
-              <Switch on={c.auto} label="Automaatti" disabled={busy} onClick={() => set({ auto: !c.auto })} />
             </div>
             <div className="mt-3 flex items-center gap-2 text-sm">
               <span className="text-muted-foreground">Letku säiliössä</span>

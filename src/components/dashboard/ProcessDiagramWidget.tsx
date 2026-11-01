@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { FertDosePanel, FertEcModal, useFertDose } from "@/components/FertDosePanel";
 import { SequencePanel, useSequence, useFillPump, SEQ_STEPS, seqMmss } from "@/components/SequencePanel";
+import { FillPumpModal, fillPumpStatus } from "@/components/FillPumpModal";
 import { getDataloggerLatest, getKasvamoAlarms, putKasvamoAlarms, type KasvamoAlarms, type KasLimit, getPumput, getPvFeed, type DataloggerLatest, type PumputResponse, setFertPumpEnable, setCircPumpEnable, setSequenceEnable } from "@/lib/apiClient";
 import { toast } from "sonner";
 import { MeasurementPointWidget } from "@/components/dashboard/MeasurementPointWidget";
@@ -223,18 +224,21 @@ function ValueBox({ x, y, w = 92, h = 40, label, value, unit, wired = true, titl
 
 // state: true/false = ON/OFF, undefined = unwired
 /** Generic pump (pH / täyttö tms.) – yksinkertainen ympyrä + kolmio. */
-function Pump({ x, y, label, state, color = C.pipe, status, enable, detail, writeAllowed, busy, onToggle }: {
+function Pump({ x, y, label, state, color = C.pipe, status, enable, detail, writeAllowed, busy, onToggle, onClick, clickHint }: {
   x: number; y: number; label: string; state?: boolean; color?: string;
   status?: string; enable?: boolean; detail?: string;
   writeAllowed?: boolean; busy?: boolean; onToggle?: (en: boolean) => void;
+  onClick?: () => void; clickHint?: string;
 }) {
   const wired = state !== undefined || enable !== undefined;
   const on = state === true;
   const stroke = state === undefined ? C.na : on ? color : C.pipeOff;
   const canToggle = enable !== undefined && !!writeAllowed && !busy && !!onToggle;
   return (
-    <g transform={`translate(${x} ${y})`} data-testid={`pump-${label}`}>
-      <title>{detail ?? (wired ? `${label}: ${on ? "KÄY" : "seis"}` : `${label}: ei kytketty`)}</title>
+    <g transform={`translate(${x} ${y})`} data-testid={`pump-${label}`}
+      onClick={onClick} style={onClick ? { cursor: "pointer" } : undefined}
+      role={onClick ? "button" : undefined}>
+      <title>{(detail ?? (wired ? `${label}: ${on ? "KÄY" : "seis"}` : `${label}: ei kytketty`)) + (onClick ? (clickHint ?? " – avaa tiedot") : "")}</title>
       <circle r={16} fill={C.panel} stroke={stroke} strokeWidth={3} />
       <path d="M -6 0 L 6 -8 L 6 8 Z" fill={on ? color : C.na} opacity={0.9} />
       <text y={28} textAnchor="middle" fill={C.text} fontSize={10} fontFamily="ui-monospace, monospace">{label}</text>
@@ -587,7 +591,7 @@ export function ProcessDiagramWidget() {
   const fan = v("fan");
   const pu = usePumput();
   const seq = useSequence();
-  const ka = useKasAlarms(); const fd = useFertDose(); const [alSig, setAlSig] = useState<string | null>(null); const [ecDlg, setEcDlg] = useState(false);
+  const ka = useKasAlarms(); const fd = useFertDose(); const [alSig, setAlSig] = useState<string | null>(null); const [ecDlg, setEcDlg] = useState(false); const [fpDlg, setFpDlg] = useState(false);
   const [fertBusy, setFertBusy] = useState(false);
   const [circBusy, setCircBusy] = useState<"L" | "R" | null>(null);
   const [seqBusy, setSeqBusy] = useState(false);
@@ -663,6 +667,9 @@ export function ProcessDiagramWidget() {
   const fpPlc = fillPump.d?.plc as Record<string, unknown> | undefined;
   const fpRunS = typeof fpPlc?.St_RunTime_s === "number" ? (fpPlc.St_RunTime_s as number) : undefined;
   const fpPumpOn = fpPlc?.Pump === true || fpPlc?.St_Running === true;
+  const fpLive = !!fillPump.d?.present;
+  const fpSt = fillPumpStatus(fillPump.d?.plc, fpLive);
+  const fpStatusTxt = !fpLive ? undefined : fpSt.label === "Käy" ? "KÄY" : fpSt.label === "Vika" || fpSt.label.startsWith("Vika") ? "VIKA" : fpSt.label;
 
   const fertIlok = (fp as { Interlock?: boolean } | undefined)?.Interlock;
   const fertFault = fertLive && (fp!.HB_OK === false || fertIlok === false || (typeof fp!.Status === "number" && [4,5,6,7,8,9,10,11,13,14,15].includes(fp!.Status)));
@@ -680,6 +687,7 @@ export function ProcessDiagramWidget() {
       <AlarmDialog sig={alSig} data={ka.a} onClose={() => setAlSig(null)} onSaved={ka.setA} />
       <MeasurementPointWidget config={{ pointId: "GardenAir", name: "Kasvamo ilma · G_Air (PF-1)" }} open={fpOpen} onOpenChange={setFpOpen} dialogOnly />
       <FertEcModal open={ecDlg} d={fd.d} reload={fd.load} onClose={() => setEcDlg(false)} />
+      <FillPumpModal open={fpDlg} d={fillPump.d} reload={fillPump.load} onClose={() => setFpDlg(false)} />
       <Dialog open={seqDlg} onOpenChange={(o) => !o && setSeqDlg(false)}>
         <DialogContent className="max-h-[92vh] w-[min(96vw,960px)] max-w-none overflow-y-auto border-zinc-700 bg-zinc-950 p-4 font-mono" data-testid="pd-seq-modal">
           <DialogHeader className="sr-only"><DialogTitle>Kiertovesisekvenssi</DialogTitle></DialogHeader>
@@ -886,7 +894,15 @@ export function ProcessDiagramWidget() {
             writeAllowed={!!seq.d?.pump_write_allowed} busy={circBusy === "R"} onToggle={(en) => void toggleCirc("R", en)}
             detail={cR.wired ? `CircPump_R: ${cR.label}, Enable ${cR.en ?? "–"}, ErrCode ${cR.errCode ?? 0}, käynti ${cR.rt != null ? Math.round(cR.rt/1000)+" s" : "–"}, käynnistyksiä ${cR.starts ?? "–"}` : "Pumppu R: ei CircPump-dataa"} />
           <Tank x={730} y={420} w={90} h={100} label="" sub="R" />
-          <Pump x={800} y={350} label="Täyttö" state={pu.b("Filling")} />
+          <Pump x={800} y={350} label="Täyttö"
+            state={fpLive ? fpPumpOn : pu.b("Filling")}
+            status={fpStatusTxt}
+            enable={fpLive ? (fillPump.d?.plc?.Cfg_Enable as boolean | undefined) : undefined}
+            detail={fpLive
+              ? `Täyttöpumppu: ${fpSt.label}, Level ${typeof fillPump.d?.plc?.Level === "number" ? fillPump.d.plc.Level.toFixed(1) + " %" : "–"}, SP ${fillPump.d?.plc?.Cfg_LvlSP ?? "–"}, Enable ${fillPump.d?.plc?.Cfg_Enable ?? "–"} · Pumput.FillPump`
+              : "Täyttöpumppu (Pumput.FillPump): ei dataa"}
+            onClick={pe.editing ? undefined : () => setFpDlg(true)}
+            clickHint=" – avaa Täyttöpumppu-tiedot" />
           <Tank x={840} y={420} w={90} h={100} label="" sub="Täyttövesi (Fill)" />
         </svg>
         </div>

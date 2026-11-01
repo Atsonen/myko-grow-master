@@ -18,8 +18,12 @@ const CMD_TOPIC = "Myko/Cmd/FillPump";
 const WRITE_ALLOWED = true; // hyväksytty 1.11.2026
 const ERR = { 0: "ok", 1: "Maksimitäyttöaika ylittyi", 2: "Pinta-anturivika" };
 const STATE_PATH = "/home/atte/.config/myko/fillpump_alarm_state.json";
+const HIST_PATH = "/home/atte/.config/myko/fillpump_level_hist.json";
+const EVENTS_PATH = "/home/atte/.config/myko/fillpump_events.json";
 const HB_DELAY_MS = 45_000; // debounce heartbeat (30–60 s)
 const ERR_DELAY_MS = 10_000; // St_Error on jo PLC:n päättämä vika – lyhyt varmistus
+const HIST_KEEP_MS = 24 * 3600_000; // ~24 h minute buckets
+const EVENTS_KEEP = 80;
 const ALLOWED = {
   Cfg_Enable: { type: "bool" },
   Cfg_LvlSP: { type: "float", min: 0, max: 100 },
@@ -53,6 +57,54 @@ const saveSt = () => {
     fs.renameSync(STATE_PATH + ".tmp", STATE_PATH);
   } catch (e) { console.warn("[fillpump] state", e.message); }
 };
+
+/** @type {{ t: number, v: number }[]} minute-bucket level history (~24 h) */
+let hist = [];
+try {
+  const j = JSON.parse(fs.readFileSync(HIST_PATH, "utf8"));
+  if (Array.isArray(j)) hist = j.filter((p) => p && Number.isFinite(p.t) && Number.isFinite(p.v));
+} catch { /* first run */ }
+
+/** @type {{ ts: string, kind: string, text: string, code?: string }[]} */
+let events = [];
+try {
+  const j = JSON.parse(fs.readFileSync(EVENTS_PATH, "utf8"));
+  if (Array.isArray(j)) events = j.slice(-EVENTS_KEEP);
+} catch { /* first run */ }
+
+const saveHist = () => {
+  try {
+    fs.mkdirSync("/home/atte/.config/myko", { recursive: true });
+    fs.writeFileSync(HIST_PATH + ".tmp", JSON.stringify(hist));
+    fs.renameSync(HIST_PATH + ".tmp", HIST_PATH);
+  } catch (e) { console.warn("[fillpump] hist", e.message); }
+};
+const saveEvents = () => {
+  try {
+    fs.mkdirSync("/home/atte/.config/myko", { recursive: true });
+    fs.writeFileSync(EVENTS_PATH + ".tmp", JSON.stringify(events.slice(-EVENTS_KEEP)));
+    fs.renameSync(EVENTS_PATH + ".tmp", EVENTS_PATH);
+  } catch (e) { console.warn("[fillpump] events", e.message); }
+};
+
+function pushEvent(kind, text, code) {
+  events.push({ ts: new Date().toISOString(), kind, text: String(text).slice(0, 200), ...(code ? { code } : {}) });
+  events = events.slice(-EVENTS_KEEP);
+  saveEvents();
+}
+
+function sampleLevel(plc) {
+  const v = Number(plc?.Level ?? plc?.St_Level);
+  if (!Number.isFinite(v)) return;
+  const now = Date.now();
+  const m = Math.floor(now / 60_000) * 60_000;
+  if (!hist.length || hist[hist.length - 1].t !== m) hist.push({ t: m, v });
+  else hist[hist.length - 1].v = v;
+  const cut = now - HIST_KEEP_MS;
+  if (hist.length > 10 && hist[0].t < cut) hist = hist.filter((p) => p.t >= cut);
+  // Persist throttled: every ~5 samples or first
+  if (hist.length % 5 === 1) saveHist();
+}
 
 function cmd(body, timeoutMs = 5000) {
   return new Promise((resolve) => {
@@ -140,6 +192,7 @@ async function evalAlarms() {
         st.at[key] = now;
         if (st.acked) delete st.acked[key];
         console.log(`[fillpump] ALARM ${key}: ${msg}`);
+        pushEvent("alarm", msg, key);
         await notifySafe(`🚨 ${msg} (ilmoitetaan kerran, palautumisesta erikseen)`);
       }
     } else if (!bad) {
@@ -147,6 +200,7 @@ async function evalAlarms() {
       if (st.active[key]) {
         st.active[key] = false;
         console.log(`[fillpump] clear ${key}`);
+        pushEvent("info", `Palautui: ${st.msg[key] ?? msg}`, key);
         // St_Error false (yleensä Cmd_Ack:n jälkeen) / HB palautui
         await notifySafe(`✅ Palautui: ${st.msg[key] ?? msg}`);
       }
@@ -212,7 +266,7 @@ export function startFillPump({ mqttUrl }) {
   mq.on("message", (t, buf) => {
     try {
       const j = JSON.parse(buf.toString());
-      if (t === TOPIC) { S.plc = j; S.at = Date.now(); }
+      if (t === TOPIC) { S.plc = j; S.at = Date.now(); sampleLevel(j); }
       else if (j?.id && PENDING.has(j.id)) { PENDING.get(j.id)(j); PENDING.delete(j.id); }
     } catch { /* ignore */ }
   });
@@ -228,6 +282,9 @@ export function registerFillPumpRoutes(app) {
   app.get("/api/fillpump", (_req, res) => {
     const stale = !S.at || Date.now() - S.at > 30_000;
     const p = S.plc || {};
+    if (!stale && p.present) sampleLevel(p); // keep minute bucket fresh even if MQTT quiet
+    const cut = Date.now() - HIST_KEEP_MS;
+    const trend = hist.filter((h) => h.t >= cut).map((h) => [h.t, h.v]);
     res.json({
       plc: p,
       plc_at: S.at ? new Date(S.at).toISOString() : null,
@@ -237,6 +294,8 @@ export function registerFillPumpRoutes(app) {
       write_note: "FillPump Cfg_*/Cmd_Ack hyväksytty; ei startup-synkkaa. Kirjoitus vain UI:sta confirm: true.",
       err_codes: ERR,
       allowed_writes: Object.keys(ALLOWED),
+      trend,
+      events: events.slice().reverse(),
       alarms: {
         active: Object.fromEntries(Object.entries(st.active).filter(([, v]) => v)),
         texts: TEXTS,
@@ -257,7 +316,10 @@ export function registerFillPumpRoutes(app) {
       const results = ack.results || {};
       const bad = Object.entries(results).find(([, r]) => !r || r.result === undefined || !String(r.result).startsWith("ok"));
       if (bad) return res.status(502).json({ error: String(bad[1] ?? "tuntematon"), ack });
-      res.json({ ok: true, results, by: String(req.body?.by ?? "myko-ui") });
+      const by = String(req.body?.by ?? "myko-ui");
+      pushEvent("cmd", `Kirjoitus ${Object.keys(v.ok).join(",")} by ${by}`);
+      if (v.ok.Cmd_Ack) pushEvent("ack", "Cmd_Ack → TRUE (kuittaus)", "Cmd_Ack");
+      res.json({ ok: true, results, by });
     } catch (e) { res.status(500).json({ error: String(e?.message ?? e) }); }
   });
 }
