@@ -8,9 +8,11 @@ Luku + hyväksytyt kirjoitukset (`~/opcua-bridge/config.yaml`):
 | CircPump_L | `@*/Pumput_DB/Static/CircPump_L/*` |
 | CircPump_R | `@*/Pumput_DB/Static/CircPump_R/*` |
 | FertDose | `@*/Pumput_DB/Static/FertDose/*` |
-| TankLevel (pinta) | `@*/Pumput_DB/Static/LVL` (Float %, OPC-nimi **LVL**; ei `Sequence/Level`) |
+| FillPump | `@*/Pumput_DB/Static/FillPump/*` (vain luku) |
+| TankLevel (pinta, live) | `@*/Pumput_DB/Static/Level` (Float %) |
+| LvlSnap (snapshot) | `@*/Pumput_DB/Static/LVL` (Float %, tasaantumisen jälkeen) |
 
-MQTT: `Sensors/PLC_2/Sequence` (sis. `TankLevel` ← Static/LVL), `Sensors/PLC_2/FertDose`, `Sensors/PLC_2/Pumput` (LVL).
+MQTT: `Sensors/PLC_2/Sequence` (`TankLevel` ← Static/Level, `LvlSnap` ← Static/LVL, `Level` ← Sequence/Level), `Sensors/PLC_2/FertDose`, `Sensors/PLC_2/Pumput` (Level+LVL), `Sensors/PLC_2/FillPump` (vain luku).
 
 ## Kirjoituswhitelist
 - `CircPump_L/Enable`, `CircPump_R/Enable` (Bool) ← Myko/Cmd/CircPump (15:46)
@@ -20,4 +22,4 @@ MQTT: `Sensors/PLC_2/Sequence` (sis. `TankLevel` ← Static/LVL), `Sensors/PLC_2
 - `FertDose/DoseTrig` (Bool pulse)
 - `FertDose/Heartbeat` (Int32)
 
-Vanha `FB_FertDose_DB` ei enää kirjoituskohde. `Sequence/Level` = askel 3:n tallenne, ei live-pinta.
+Vanha `FB_FertDose_DB` ei enää kirjoituskohde. `Sequence/Level` = askel 3:n tallenne. Live-pinta = Static/Level; snapshot = Static/LVL.

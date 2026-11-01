@@ -395,7 +395,7 @@ export type SequenceResponse = {
   settings: SequenceSettings; present: boolean; stale: boolean; plc_at: string | null; steps: Record<string, string>;
   write_allowed: boolean; write_note: string; pump_write_allowed?: boolean; seq_enable_write_allowed?: boolean; write_nodes_pending?: string[];
   plc: { present?: boolean; Step?: number; StepTime_ms?: number; HB_OK?: boolean; Stopped?: boolean; CycleCount?: number;
-    Enable?: boolean; LeakAlarm?: boolean; T_Circ?: number; T_Settle?: number; T_Fill?: number; Level?: number; TankLevel?: number;
+    Enable?: boolean; LeakAlarm?: boolean; T_Circ?: number; T_Settle?: number; T_Fill?: number; Level?: number; TankLevel?: number; LvlSnap?: number;
     L_Pump?: boolean; L_Running?: boolean; L_Error?: boolean; L_Enable?: boolean; L_Done?: boolean; L_Status?: number;
     L_Waiting?: boolean; L_Skipped?: boolean; L_ErrCode?: number; L_RunTime_ms?: number; L_StartCount?: number; L_LastRun_ms?: number;
     R_Pump?: boolean; R_Running?: boolean; R_Error?: boolean; R_Enable?: boolean; R_Done?: boolean; R_Status?: number;

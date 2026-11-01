@@ -167,22 +167,27 @@ function fmt(v: number | null | undefined, d: number) {
 
 const ACCENT = "#f59e0b";
 type BoxState = "alarm" | "alarmAck" | "warning" | undefined;
-function ValueBox({ x, y, w = 92, h = 40, label, value, unit, wired = true, title, onClick, selected = false, alarm = false, state, limits, clickHint }: {
+function ValueBox({ x, y, w = 92, h = 40, label, value, unit, wired = true, title, onClick, selected = false, alarm = false, state, limits, clickHint, sub, subTitle }: {
   x: number; y: number; w?: number; h?: number; label: string; value?: string; unit?: string; wired?: boolean; title?: string;
   onClick?: () => void; selected?: boolean; alarm?: boolean; state?: BoxState; limits?: string; clickHint?: string;
+  /** Pienempi riviteksti arvon alla (esim. snapshot). */
+  sub?: string; subTitle?: string;
 }) {
   const st: BoxState = state ?? (alarm ? "alarm" : undefined);
   // kuittaamaton hälytys = punasävy + punainen kehys; kuitattu = vain punainen kehys; varoitus = oranssi kehys
   const fill = st === "alarm" ? "#4a1d22" : C.panel;
   const stroke = st === "alarm" || st === "alarmAck" ? "#ef4444" : st === "warning" ? "#f59e0b" : selected ? ACCENT : wired ? C.stroke : C.na;
-  const labelY = Math.min(14, Math.max(10, h * 0.35));
-  const valueY = Math.max(labelY + 12, h - 8);
+  const hasSub = Boolean(sub);
+  const H = hasSub ? Math.max(h, 52) : h;
+  const labelY = Math.min(14, Math.max(10, H * 0.28));
+  const valueY = hasSub ? Math.max(labelY + 13, H * 0.55) : Math.max(labelY + 12, H - 8);
+  const subY = Math.max(valueY + 11, H - 5);
   return (
     <g transform={`translate(${x},${y})`} opacity={wired ? 1 : 0.55} onClick={onClick}
       style={onClick ? { cursor: "pointer" } : undefined} role={onClick ? "button" : undefined}
       data-testid={onClick ? `pd-click-${label}` : undefined}>
       <title>{(title ?? label) + (onClick ? (clickHint ?? " – avaa G_Air-säädin") : "")}</title>
-      <rect width={w} height={h} rx={6} fill={fill} stroke={stroke} strokeWidth={selected || st ? 2.5 : 1} data-state={st ?? ""} strokeDasharray={wired ? undefined : "4 3"} />
+      <rect width={w} height={H} rx={6} fill={fill} stroke={stroke} strokeWidth={selected || st ? 2.5 : 1} data-state={st ?? ""} strokeDasharray={wired ? undefined : "4 3"} />
       {limits && <text x={w - 6} y={labelY} textAnchor="end" fontSize={8} fill={st === "alarm" ? "#fecaca" : C.muted} fontFamily="monospace">{limits}</text>}
       {selected && (
         <g transform={`translate(${w - 26},-7)`}>
@@ -191,9 +196,12 @@ function ValueBox({ x, y, w = 92, h = 40, label, value, unit, wired = true, titl
         </g>
       )}
       <text x={8} y={labelY} fontSize={9} fill={C.muted} fontFamily="monospace">{label}</text>
-      <text x={8} y={valueY} fontSize={wired ? 15 : 10} fill={wired ? C.text : C.muted} fontFamily="monospace" fontWeight={600}>
+      <text x={8} y={valueY} fontSize={wired ? (hasSub ? 16 : 15) : 10} fill={wired ? C.text : C.muted} fontFamily="monospace" fontWeight={600}>
         {wired ? `${value ?? "—"}${unit ? ` ${unit}` : ""}` : "ei kytketty"}
       </text>
+      {hasSub && wired && (
+        <text x={8} y={subY} fontSize={8} fill={C.muted} fontFamily="monospace">{subTitle ? <title>{subTitle}</title> : null}{sub}</text>
+      )}
     </g>
   );
 }
@@ -564,7 +572,10 @@ export function ProcessDiagramWidget() {
   };
   const cL = circ("L"); const cR = circ("R");
   const seqStep = sqLive ? (sq.Step as number | undefined) : undefined;
+  // TankLevel = Static/Level (reaaliaikainen). LvlSnap/LVL = tasaantumisen snapshot.
   const tankLevel = sqLive && typeof sq.TankLevel === "number" ? (sq.TankLevel as number)
+    : (pu.n("Level") ?? pu.n("LVL") ?? undefined);
+  const lvlSnap = sqLive && typeof sq.LvlSnap === "number" ? (sq.LvlSnap as number)
     : (pu.n("LVL") ?? undefined);
   const seqEnable = sqLive ? (sq.Enable as boolean | undefined) : undefined;
   const seqRunning = seqEnable === true && sq.Stopped !== true;
@@ -715,7 +726,11 @@ export function ProcessDiagramWidget() {
           {/* Main tank */}
           <Tank x={300} y={320} w={130} h={200} level={tankLevel ?? null} label="Ravinnesäiliö" />
           <EditableBox id="vb-pinta" box={pe.box("vb-pinta")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
-            <ValueBox {...pe.box("vb-pinta")} label="Pinta" value={fmt(tankLevel ?? null, 1)} unit="%" title={`Pumput_DB/Static/LVL (Float %) · SP ${pu.n("LVL_SP") ?? "—"} % · ei Sequence/Level`} {...kp("pinta")} onClick={pe.editing ? undefined : kp("pinta").onClick} />
+            <ValueBox {...pe.box("vb-pinta")} label="Pinta" value={fmt(tankLevel ?? null, 1)} unit="%"
+              sub={lvlSnap !== undefined ? `Snapshot ${fmt(lvlSnap, 1)} %` : undefined}
+              subTitle="Pumput_DB/Static/LVL – tallennettu arvo tasaantumisen jälkeen"
+              title={`Pumput_DB/Static/Level (reaaliaikainen %) · Snapshot LVL ${lvlSnap !== undefined ? `${Number(lvlSnap).toFixed(1)} %` : "—"} · SP ${pu.n("LVL_SP") ?? "—"} %`}
+              {...kp("pinta")} onClick={pe.editing ? undefined : kp("pinta").onClick} />
           </EditableBox>
           <EditableBox id="vb-vesi" box={pe.box("vb-vesi")} editing={pe.editing} svgRef={pe.svgRef} onChange={pe.onChange}>
             <ValueBox {...pe.box("vb-vesi")} label="Vesi" value={fmt(v("waterTemp"), 1)} unit="°C" title={`${TAGS.waterTemp} Water Temp`} {...kp("vesi")} onClick={pe.editing ? undefined : kp("vesi").onClick} />

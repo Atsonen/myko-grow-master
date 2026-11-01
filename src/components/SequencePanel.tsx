@@ -44,7 +44,9 @@ export function SequencePanel() {
   const plcEnable = live ? (p.Enable as boolean | undefined) : undefined;
   const running = plcEnable === true && p.Stopped !== true;
   const tankFromTank = live && typeof p.TankLevel === "number" ? (p.TankLevel as number) : undefined;
-  const snapLevel = live && typeof p.Level === "number" ? (p.Level as number) : undefined;
+  // LvlSnap = Static/LVL (tasaantumisen snapshot); Sequence/Level = askel 3 tallenne (fallback).
+  const snapLevel = live && typeof p.LvlSnap === "number" ? (p.LvlSnap as number)
+    : (live && typeof p.Level === "number" ? (p.Level as number) : undefined);
 
   const togglePump = async (sd: "L" | "R", en: boolean) => {
     const name = sd === "L" ? "vasen" : "oikea";
@@ -92,8 +94,8 @@ export function SequencePanel() {
         <span>Askel <b>{step ?? "–"}</b>{step !== undefined ? ` (${STEPS.find(([n]) => n === step)?.[1] ?? ""})` : ""}</span>
         <span>HB {b(live ? p.HB_OK as boolean : undefined, "OK", "PUUTTUU", false)}</span>
         <span>Vuoto {b(live ? !(p.LeakAlarm as boolean) : undefined, "ei", "HÄLYTYS")}</span>
-        <span title="Pumput_DB/Static/LVL (Float %)">Pinta <b>{tankFromTank !== undefined ? `${tankFromTank.toFixed(1)} %` : "–"}</b></span>
-        {snapLevel !== undefined && <span className="text-muted-foreground" title="Sequence/Level (tallenne askel 3)">tallenne {snapLevel.toFixed(1)}</span>}
+        <span title="Pumput_DB/Static/Level (reaaliaikainen %)">Pinta <b>{tankFromTank !== undefined ? `${tankFromTank.toFixed(1)} %` : "–"}</b></span>
+        {snapLevel !== undefined && <span className="text-muted-foreground" title="Pumput_DB/Static/LVL – Snapshot tasaantumisen jälkeen">Snapshot {snapLevel.toFixed(1)} %</span>}
         <Button size="sm" variant={running ? "destructive" : "default"} className="ml-auto h-7 px-3"
           disabled={!live || plcEnable === undefined || !d?.seq_enable_write_allowed || seqBusy}
           title={d?.seq_enable_write_allowed ? "Kirjoittaa Sequence/Enable PLC:hen (vahvistus)" : "Kirjoitus ei käytössä"}
