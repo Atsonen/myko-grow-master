@@ -10,6 +10,26 @@ import { PidParamsEditor } from "./PidParamsEditor";
 import { PidAiTab, usePidAiBadge } from "./PidAiTab";
 import type { WidgetConfigMap } from "./types";
 
+
+const LS_DIALOG_SIZE = "myko.pidFaceplate.size"; // normal | wide | full
+const LS_DIALOG_W = "myko.pidFaceplate.widthPx";
+type DialogSizeMode = "normal" | "wide" | "full";
+const SIZE_WIDTH: Record<DialogSizeMode, number> = { normal: 720, wide: 1100, full: 0 };
+function loadDialogSize(): { mode: DialogSizeMode; widthPx: number | null } {
+  try {
+    const mode = (localStorage.getItem(LS_DIALOG_SIZE) as DialogSizeMode) || "normal";
+    const w = Number(localStorage.getItem(LS_DIALOG_W));
+    const ok = mode === "normal" || mode === "wide" || mode === "full";
+    return { mode: ok ? mode : "normal", widthPx: Number.isFinite(w) && w >= 480 ? w : null };
+  } catch { return { mode: "normal", widthPx: null }; }
+}
+function saveDialogSize(mode: DialogSizeMode, widthPx: number | null) {
+  try {
+    localStorage.setItem(LS_DIALOG_SIZE, mode);
+    if (widthPx && mode !== "full") localStorage.setItem(LS_DIALOG_W, String(Math.round(widthPx)));
+  } catch { /* ignore */ }
+}
+
 const HEL: Intl.DateTimeFormatOptions = { timeZone: "Europe/Helsinki", day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" };
 const fmt = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleString("fi-FI", HEL) : "—");
 
@@ -108,10 +128,13 @@ export function MeasurementPointWidget({ config, open: openProp, onOpenChange, d
   const [evTick, setEvTick] = useState(0);
   const id = config.pointId;
   const pidKey = id ? PID_KEY_BY_POINT[id] : undefined;
-  const pid = usePid(pidKey, open ? 2000 : 5000, open);
+  const pid = usePid(pidKey, open ? 2000 : 5000, false); // trend loaded in PidControlTab with rangeHours
   const [aiNew, clearAiNew] = usePidAiBadge(pidKey);
   const cardRef = useRef<HTMLDivElement | null>(null);
   const [gaugeSize, setGaugeSize] = useState(88);
+  const [dlgSize, setDlgSize] = useState<DialogSizeMode>(() => loadDialogSize().mode);
+  const [dlgWidth, setDlgWidth] = useState<number | null>(() => loadDialogSize().widthPx);
+  const dragRef = useRef<{ startX: number; startW: number } | null>(null);
 
   // Size gauge from available card width/height so Mittauspiste fills the widget without overflow/scrollbar.
   useLayoutEffect(() => {
@@ -253,8 +276,49 @@ export function MeasurementPointWidget({ config, open: openProp, onOpenChange, d
           <DialogPrimitive.Content
             data-testid="mp-dialog"
             aria-describedby={undefined}
-            className="fixed z-50 flex flex-col border bg-background shadow-lg inset-0 overscroll-contain md:inset-auto md:left-1/2 md:top-1/2 md:h-[min(85vh,760px)] md:w-[min(92vw,720px)] md:-translate-x-1/2 md:-translate-y-1/2 md:rounded-lg [@media(max-height:560px)]:inset-0 [@media(max-height:560px)]:h-auto [@media(max-height:560px)]:w-auto [@media(max-height:560px)]:translate-x-0 [@media(max-height:560px)]:translate-y-0 [@media(max-height:560px)]:rounded-none"
+            data-size={dlgSize}
+            className="fixed z-50 flex flex-col border bg-background shadow-lg inset-0 overscroll-contain md:inset-auto md:left-1/2 md:top-1/2 md:h-[min(90vh,900px)] md:w-[var(--mp-dialog-w)] md:max-w-[min(98vw,1600px)] md:-translate-x-1/2 md:-translate-y-1/2 md:rounded-lg [@media(max-height:560px)]:inset-0 [@media(max-height:560px)]:h-auto [@media(max-height:560px)]:w-auto [@media(max-height:560px)]:max-w-none [@media(max-height:560px)]:translate-x-0 [@media(max-height:560px)]:translate-y-0 [@media(max-height:560px)]:rounded-none"
+            style={{
+              ["--mp-dialog-w" as string]:
+                dlgSize === "full" ? "min(98vw, 1600px)" : `min(98vw, ${dlgWidth ?? SIZE_WIDTH[dlgSize]}px)`,
+            }}
           >
+            {/* Left-edge drag handle (desktop): widen/narrow the faceplate */}
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Muuta dialogin leveyttä"
+              data-testid="mp-dialog-resize"
+              className="absolute bottom-8 left-0 top-8 z-10 hidden w-2 cursor-ew-resize md:block"
+              onPointerDown={(e) => {
+                e.preventDefault();
+                const el = e.currentTarget.parentElement;
+                const startW = el?.getBoundingClientRect().width ?? SIZE_WIDTH.normal;
+                dragRef.current = { startX: e.clientX, startW };
+                const move = (ev: PointerEvent) => {
+                  if (!dragRef.current) return;
+                  // Dragging the left edge right shrinks; left grows.
+                  const next = Math.max(480, Math.min(1600, dragRef.current.startW + (dragRef.current.startX - ev.clientX)));
+                  setDlgWidth(next);
+                  setDlgSize(next >= 1300 ? "full" : next >= 900 ? "wide" : "normal");
+                };
+                const up = () => {
+                  dragRef.current = null;
+                  window.removeEventListener("pointermove", move);
+                  window.removeEventListener("pointerup", up);
+                  setDlgWidth((cur) => {
+                    const mode: DialogSizeMode = (cur ?? 720) >= 1300 ? "full" : (cur ?? 720) >= 900 ? "wide" : "normal";
+                    saveDialogSize(mode, cur);
+                    setDlgSize(mode);
+                    return cur;
+                  });
+                };
+                window.addEventListener("pointermove", move);
+                window.addEventListener("pointerup", up);
+              }}
+            >
+              <div className="mx-auto h-full w-1 rounded-full bg-zinc-600/80 hover:bg-zinc-400" />
+            </div>
             <div className={`flex items-center gap-3 border-b border-border p-3 ${LEVEL_STYLE[level]}`}>
               <div className="min-w-0 flex-1">
                 <PidModeBanner ind={modeInd} className="mb-1" />
@@ -265,6 +329,35 @@ export function MeasurementPointWidget({ config, open: openProp, onOpenChange, d
                   {active.length ? ` · ${active.join(", ")}` : " · Normaali"}
                   {disabled ? ` · WhatsApp-hälytykset pois ${hm(point.controls!.alarmsDisabledUntil!)} asti` : ""}
                 </div>
+              </div>
+              <div className="hidden shrink-0 items-center gap-1 md:flex" role="radiogroup" aria-label="Dialogin leveys">
+                {([
+                  ["normal", "Normaali"],
+                  ["wide", "Leveä"],
+                  ["full", "Koko näyttö"],
+                ] as const).map(([mode, label]) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    role="radio"
+                    aria-checked={dlgSize === mode}
+                    data-testid={`mp-size-${mode}`}
+                    title={label}
+                    onClick={() => {
+                      setDlgSize(mode);
+                      const w = mode === "full" ? null : SIZE_WIDTH[mode];
+                      setDlgWidth(w);
+                      saveDialogSize(mode, w);
+                    }}
+                    className={`h-9 rounded-md border px-2 text-[11px] font-semibold ${
+                      dlgSize === mode
+                        ? "border-zinc-300 bg-zinc-200 text-zinc-900"
+                        : "border-border bg-secondary/40 text-muted-foreground hover:bg-secondary/70"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
               </div>
               <DialogPrimitive.Close aria-label="Sulje" data-testid="mp-close" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground">
                 <X className="h-5 w-5" />
@@ -342,6 +435,7 @@ export function MeasurementPointWidget({ config, open: openProp, onOpenChange, d
                 <>
                   <TabsPrimitive.Content value="saato" className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3 text-sm">
                     <PidControlTab pidKey={pidKey} pid={pid} unit={point.unit}
+                      trendHeight={dlgSize === "full" ? 240 : dlgSize === "wide" || (dlgWidth ?? 0) >= 900 ? 200 : 140}
                       onSetpoint={(sp) => applyControls({ setpoint: sp })} />
                     {point.controls && (
                       <>

@@ -247,33 +247,165 @@ export function CodeInfo({ v, focus }: { v: Partial<PidValues>; focus: "err" | "
   );
 }
 
-/** Mini trend (in-memory, 30 s samples, up to 6 h): PV solid, SP dashed, output as faint area (±100 %). */
-export function MiniTrend({ data, unit }: { data: NonNullable<PidStatus["trend"]>; unit: string }) {
-  const pts = data.filter((d) => Number.isFinite(d.pv));
-  if (pts.length < 3) return <div className="text-[11px] text-muted-foreground">Minitrendi kertyy (30 s välein, max 6 h).</div>;
-  const W = 300, H = 64;
-  const t0 = pts[0].t, t1 = pts[pts.length - 1].t;
-  const ys = pts.flatMap((d) => [d.pv!, d.sp ?? d.pv!]);
-  let lo = Math.min(...ys), hi = Math.max(...ys);
-  if (hi - lo < 1) { lo -= 0.5; hi += 0.5; }
-  const x = (t: number) => ((t - t0) / Math.max(1, t1 - t0)) * W;
-  const y = (v: number) => H - 2 - ((v - lo) / (hi - lo)) * (H - 4);
-  const yo = (o: number) => H / 2 - (o / 100) * (H / 2 - 1);
-  const line = (k: "pv" | "sp") => pts.map((d, i) => `${i ? "L" : "M"}${x(d.t).toFixed(1)},${y((d[k] ?? d.pv)!).toFixed(1)}`).join("");
-  const area = `M0,${H / 2}` + pts.map((d) => `L${x(d.t).toFixed(1)},${yo(d.out ?? 0).toFixed(1)}`).join("") + `L${W},${H / 2}Z`;
-  const mins = Math.round((t1 - t0) / 60000);
-  return (
-    <div data-testid="pid-trend">
-      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="h-16 w-full">
-        <path d={area} className="fill-zinc-500/20" />
-        <path d={line("sp")} className="fill-none stroke-zinc-400" strokeWidth={1} strokeDasharray="4 3" vectorEffect="non-scaling-stroke" />
-        <path d={line("pv")} className="fill-none stroke-zinc-100" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
-      </svg>
-      <div className="flex justify-between text-[11px] tabular-nums text-muted-foreground">
-        <span>−{mins >= 60 ? `${f1(mins / 60)} h` : `${mins} min`}</span>
-        <span>PV — · SP - - · lähtö ▒ · {f1(lo)}…{f1(hi)} {unit}</span>
-        <span>nyt</span>
+/** Faceplate SP/PV trend: deadband bands, selectable window (memory 30 s / DB ~60 s raw). */
+export const PID_TREND_RANGES = [
+  { h: 0.5, label: "30 min" },
+  { h: 1, label: "1 h" },
+  { h: 3, label: "3 h" },
+  { h: 12, label: "12 h" },
+  { h: 24, label: "24 h" },
+  { h: 168, label: "7 d" },
+] as const;
+
+const LS_TREND_H = "myko.pidFaceplate.rangeHours";
+export function loadPidTrendHours(): number {
+  try {
+    const n = Number(localStorage.getItem(LS_TREND_H));
+    if (PID_TREND_RANGES.some((r) => r.h === n)) return n;
+  } catch { /* ignore */ }
+  return 1;
+}
+export function savePidTrendHours(h: number) {
+  try { localStorage.setItem(LS_TREND_H, String(h)); } catch { /* ignore */ }
+}
+
+type TrendPt = { t: number; pv?: number; sp?: number; out?: number };
+
+function bandPath(
+  pts: TrendPt[],
+  x: (t: number) => number,
+  y: (v: number) => number,
+  loOf: (sp: number) => number,
+  hiOf: (sp: number) => number,
+  fallbackSp: number,
+): string | null {
+  if (pts.length < 2) return null;
+  const top: string[] = [];
+  const bot: string[] = [];
+  let lastSp = fallbackSp;
+  for (const d of pts) {
+    const sp = Number.isFinite(d.sp) ? (d.sp as number) : lastSp;
+    lastSp = sp;
+    const xx = x(d.t).toFixed(1);
+    top.push(`${xx},${y(hiOf(sp)).toFixed(1)}`);
+    bot.push(`${xx},${y(loOf(sp)).toFixed(1)}`);
+  }
+  return `M${top[0]}` + top.slice(1).map((p) => `L${p}`).join("") + bot.reverse().map((p) => `L${p}`).join("") + "Z";
+}
+
+/** Mini trend: PV solid, SP dashed, output area, HDZ/CDZ shaded bands following SP history. */
+export function MiniTrend({
+  data, unit, hdz = 0, cdz = 0, height = 140, rangeHours, onRangeHours, loading,
+}: {
+  data: TrendPt[];
+  unit: string;
+  hdz?: number;
+  cdz?: number;
+  height?: number;
+  rangeHours: number;
+  onRangeHours: (h: number) => void;
+  loading?: boolean;
+}) {
+  const now = Date.now();
+  const tEnd = now;
+  const tStart = now - rangeHours * 3600_000;
+  const pts = data.filter((d) => Number.isFinite(d.pv) && d.t >= tStart - 60_000 && d.t <= tEnd + 60_000);
+  const W = 640;
+  const H = Math.max(96, height);
+  const curSp = pts.length ? (Number.isFinite(pts[pts.length - 1].sp) ? pts[pts.length - 1].sp! : pts[pts.length - 1].pv!) : 0;
+  const hdzN = Math.max(0, Number(hdz) || 0);
+  const cdzN = Math.max(0, Number(cdz) || 0);
+
+  let body: ReactNode;
+  if (pts.length < 2) {
+    body = (
+      <div className="flex h-24 items-center justify-center text-[11px] text-muted-foreground">
+        {loading ? "Ladataan trendiä…" : "Trendi kertyy (30 s / ~1 min näytteet)."}
       </div>
+    );
+  } else {
+    const t0 = Math.min(pts[0].t, tStart);
+    const t1 = Math.max(pts[pts.length - 1].t, tEnd);
+    const ys: number[] = [];
+    let lastSp = curSp;
+    for (const d of pts) {
+      const sp = Number.isFinite(d.sp) ? (d.sp as number) : lastSp;
+      lastSp = sp;
+      ys.push(d.pv!, sp, sp - hdzN, sp + cdzN);
+    }
+    let lo = Math.min(...ys), hi = Math.max(...ys);
+    const pad = Math.max(0.4, (hi - lo) * 0.08);
+    lo -= pad; hi += pad;
+    if (hi - lo < 1) { lo -= 0.5; hi += 0.5; }
+    const x = (t: number) => ((t - t0) / Math.max(1, t1 - t0)) * W;
+    const y = (v: number) => H - 4 - ((v - lo) / (hi - lo)) * (H - 8);
+    const yo = (o: number) => H / 2 - (o / 100) * (H / 2 - 2);
+    const line = (k: "pv" | "sp") => {
+      let ls = curSp;
+      return pts.map((d, i) => {
+        const sp = Number.isFinite(d.sp) ? (d.sp as number) : ls;
+        ls = sp;
+        const v = k === "pv" ? d.pv! : sp;
+        return `${i ? "L" : "M"}${x(d.t).toFixed(1)},${y(v).toFixed(1)}`;
+      }).join("");
+    };
+    const area = `M0,${H / 2}` + pts.map((d) => `L${x(d.t).toFixed(1)},${yo(d.out ?? 0).toFixed(1)}`).join("") + `L${W},${H / 2}Z`;
+    const heatBand = hdzN > 0 ? bandPath(pts, x, y, (sp) => sp - hdzN, (sp) => sp, curSp) : null;
+    const coolBand = cdzN > 0 ? bandPath(pts, x, y, (sp) => sp, (sp) => sp + cdzN, curSp) : null;
+    const spanMs = t1 - t0;
+    const leftLbl = spanMs >= 48 * 3600_000
+      ? `−${f1(spanMs / 86400_000, 1)} d`
+      : spanMs >= 90 * 60_000
+        ? `−${f1(spanMs / 3600_000, 1)} h`
+        : `−${Math.max(1, Math.round(spanMs / 60_000))} min`;
+    body = (
+      <>
+        <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="w-full" style={{ height: H }} role="img" aria-label="SP/PV-trendi">
+          <path d={area} className="fill-zinc-500/15" />
+          {heatBand && <path d={heatBand} fill="#d9b08f" fillOpacity={0.22} stroke="none" />}
+          {coolBand && <path d={coolBand} fill="#a9c8e8" fillOpacity={0.22} stroke="none" />}
+          <path d={line("sp")} className="fill-none stroke-zinc-400" strokeWidth={1.25} strokeDasharray="4 3" vectorEffect="non-scaling-stroke" />
+          <path d={line("pv")} className="fill-none stroke-zinc-100" strokeWidth={1.75} vectorEffect="non-scaling-stroke" />
+        </svg>
+        <div className="mt-0.5 flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5 text-[11px] tabular-nums text-muted-foreground">
+          <span>{leftLbl}</span>
+          <span className="flex flex-wrap items-center justify-center gap-x-2">
+            <span>PV —</span>
+            <span>SP - -</span>
+            <span>lähtö ▒</span>
+            {hdzN > 0 && <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-3 rounded-sm bg-[#d9b08f]/40" />HDZ {f1(hdzN, 2)}</span>}
+            {cdzN > 0 && <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-3 rounded-sm bg-[#a9c8e8]/40" />CDZ {f1(cdzN, 2)}</span>}
+            {(hdzN <= 0 && cdzN <= 0) && <span className="text-zinc-500">kuollut alue 0</span>}
+            <span>· {f1(lo)}…{f1(hi)} {unit}</span>
+          </span>
+          <span>nyt</span>
+        </div>
+      </>
+    );
+  }
+
+  return (
+    <div data-testid="pid-trend" className="space-y-1.5">
+      <div className="flex flex-wrap items-center gap-1" role="radiogroup" aria-label="Trendin aikaikkuna">
+        {PID_TREND_RANGES.map((r) => (
+          <button
+            key={r.h}
+            type="button"
+            role="radio"
+            aria-checked={rangeHours === r.h}
+            data-testid={`pid-trend-range-${r.h}`}
+            onClick={() => onRangeHours(r.h)}
+            className={`h-8 rounded border px-2 text-[11px] font-mono ${
+              rangeHours === r.h
+                ? "border-zinc-300 bg-zinc-200 text-zinc-900"
+                : "border-border bg-secondary/40 text-muted-foreground hover:bg-secondary/70"
+            }`}
+          >
+            {r.label}
+          </button>
+        ))}
+      </div>
+      {body}
     </div>
   );
 }
@@ -373,17 +505,37 @@ function FeedSection({ pidKey, unit }: { pidKey: string; unit: string }) {
 
 /** Säätö tab: setpoint (controls route -> status word + OPC UA), Auto/Manual, manual value, ErrorAck, mini trend, last commands. */
 export function PidControlTab({
-  pidKey, pid, unit, onSetpoint,
+  pidKey, pid, unit, onSetpoint, trendHeight = 140,
 }: {
   pidKey: string; pid: Pid; unit: string; onSetpoint: (sp: number) => Promise<boolean>;
+  /** SVG trend height in px; scales with a widened faceplate dialog. */
+  trendHeight?: number;
 }) {
   const v = pid.v;
   const [pending, setPending] = useState<Pending>(null);
   const [busy, setBusy] = useState(false);
   const [sp, setSp] = useState("");
   const [mv, setMv] = useState("");
+  const [rangeHours, setRangeHours] = useState(loadPidTrendHours);
+  const [trendData, setTrendData] = useState<NonNullable<PidStatus["trend"]>>([]);
+  const [trendLoading, setTrendLoading] = useState(false);
   useEffect(() => { if (v?.SP !== undefined && !pending) setSp(f1(v.SP)); }, [v?.SP]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (v?.ManVal !== undefined && !pending) setMv(f1(v.ManVal)); }, [v?.ManVal]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    let stop = false;
+    const load = () => {
+      setTrendLoading(true);
+      getPid(pidKey, true, rangeHours)
+        .then((r) => { if (!stop) setTrendData(r.trend ?? []); })
+        .catch(() => undefined)
+        .finally(() => { if (!stop) setTrendLoading(false); });
+    };
+    load();
+    const ms = rangeHours <= 3 ? 30_000 : 60_000;
+    const t = setInterval(load, ms);
+    return () => { stop = true; clearInterval(t); };
+  }, [pidKey, rangeHours]);
+  const setRange = (h: number) => { setRangeHours(h); savePidTrendHours(h); };
   if (!v) return <div className="text-xs italic text-muted-foreground">Ei PID-dataa.</div>;
   const lo = Math.max(0, v.InLo ?? 0), hi = Math.min(30, v.InHi ?? 30);
   const num = (s: string) => Number(s.replace(",", "."));
@@ -421,7 +573,16 @@ export function PidControlTab({
         <div className="text-[11px] text-muted-foreground">
           PLC: SP {f1(v.SP)} · CSP {f1(v.CSP)} {unit} · PV {f1(v.PV)} · sallittu {f1(lo)}…{f1(hi)} (0,1 askel).
         </div>
-        {pid.s?.trend && <MiniTrend data={pid.s.trend} unit={unit} />}
+        <MiniTrend
+          data={trendData.length ? trendData : (pid.s?.trend ?? [])}
+          unit={unit}
+          hdz={v.HDZ}
+          cdz={v.CDZ}
+          height={trendHeight}
+          rangeHours={rangeHours}
+          onRangeHours={setRange}
+          loading={trendLoading && trendData.length < 2}
+        />
       </Section>
       <FeedSection pidKey={pidKey} unit={unit} />
       <Section title="Toimintatila" testid="pid-mode-ctl" right={<CodeInfo v={v} focus="state" />}>

@@ -649,8 +649,11 @@ export interface PidStatus {
   commands: { alarm: string; at: string }[];
 }
 export type PidCommand = { ManualEnable?: boolean; ManualValue?: number; Mode?: 0 | 1 | 2 | 3 | 4; ModeActivate?: true; ErrorAck?: true; HeatEnableTuning?: boolean; CoolEnableTuning?: boolean };
-export async function getPid(key: string, trend = false) {
-  return requestJson<PidStatus>(`/api/pid/${encodeURIComponent(key)}${trend ? "?trend=1" : ""}`);
+export async function getPid(key: string, trend = false, hours?: number) {
+  if (!trend) return requestJson<PidStatus>(`/api/pid/${encodeURIComponent(key)}`);
+  const q = new URLSearchParams({ trend: "1" });
+  if (hours !== undefined && Number.isFinite(hours) && hours > 0) q.set("hours", String(hours));
+  return requestJson<PidStatus>(`/api/pid/${encodeURIComponent(key)}?${q}`);
 }
 export async function sendPidCommand(key: string, cmd: PidCommand) {
   return requestJson<{ id: string; results?: Record<string, unknown>; error?: string }>(`/api/pid/${encodeURIComponent(key)}/cmd`, {

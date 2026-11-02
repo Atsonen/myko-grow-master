@@ -177,6 +177,41 @@ export function registerPidRoutes(app, { mqttClient, query, asyncRoute, onComman
   }
   setInterval(() => { for (const k of Object.keys(PID_POINTS)) evaluate(k); }, 2000).unref();
 
+
+  /** Mini/history trend for faceplate: in-memory 30 s samples (≤6 h) or pid_training_log (~60 s raw) for longer/hours=… */
+  async function loadTrend(key, hoursRaw) {
+    const mem = trend[key] ?? [];
+    const hours = Number(hoursRaw);
+    if (!Number.isFinite(hours) || hours <= 0) return mem;
+    const h = Math.min(Math.max(hours, 0.25), 168);
+    const sinceMs = Date.now() - h * 3600_000;
+    const memFrom = mem.filter((p) => p.t >= sinceMs);
+    const memCovers = memFrom.length >= 3 && mem[0]?.t <= sinceMs + 90_000;
+    if (h <= 6 && memCovers) return memFrom;
+    const rows = await query(
+      `SELECT UNIX_TIMESTAMP(at) * 1000 AS t, pv, sp, out_sum AS o
+       FROM pid_training_log
+       WHERE pid_key = ? AND at >= FROM_UNIXTIME(?)
+       ORDER BY at ASC
+       LIMIT 12000`,
+      [key, Math.floor(sinceMs / 1000)],
+    ).catch(() => []);
+    const db = [];
+    for (const r of rows) {
+      const t = Number(r.t);
+      if (!Number.isFinite(t)) continue;
+      db.push({
+        t,
+        pv: r.pv == null ? undefined : Number(r.pv),
+        sp: r.sp == null ? undefined : Number(r.sp),
+        out: r.o == null ? undefined : Number(r.o),
+      });
+    }
+    const lastT = db.length ? db[db.length - 1].t : 0;
+    for (const p of mem) if (p.t > lastT + 10_000) db.push(p);
+    return db.length ? db : memFrom;
+  }
+
   app.get(
     "/api/pid/:key",
     asyncRoute(async (req, res) => {
@@ -188,6 +223,7 @@ export function registerPidRoutes(app, { mqttClient, query, asyncRoute, onComman
          WHERE point_id = ? AND event = 'control' AND (alarm LIKE 'PID %' OR alarm LIKE 'SP %') ORDER BY at DESC, id DESC LIMIT 6`,
         [pointId],
       ).catch(() => []);
+      const trendPts = req.query.trend === "1" ? await loadTrend(key, req.query.hours) : undefined;
       res.json({
         key, pointId, alarmPointId: `${key}_PID`,
         at: state[key] ? new Date(state[key].at).toISOString() : null,
@@ -195,7 +231,7 @@ export function registerPidRoutes(app, { mqttClient, query, asyncRoute, onComman
         active: [...(active[key] ?? [])],
         intended: Boolean(intent[key]?.intended),
         tuning: Boolean(intent[key]?.tuning),
-        trend: req.query.trend === "1" ? trend[key] ?? [] : undefined,
+        trend: trendPts,
         commands,
       });
     }),
