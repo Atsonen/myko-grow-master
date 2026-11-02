@@ -93,6 +93,25 @@ export function PumpRunLegend({
   );
 }
 
+/** Expand short intervals to minMs centered on the run (not only to the right).
+ *  Right-only expand made yellow/purple bars look minutes late vs ppm peaks. */
+function visualSpan(startMs: number, endMs: number, minMs: number, xMin: number, xMax: number) {
+  let x1 = Math.max(xMin, startMs);
+  let x2 = Math.min(xMax, endMs);
+  if (x2 < x1) return null;
+  if (x2 - x1 < minMs) {
+    const mid = (startMs + endMs) / 2;
+    x1 = Math.max(xMin, mid - minMs / 2);
+    x2 = Math.min(xMax, mid + minMs / 2);
+    // Clamp against domain edges without re-skewing solely to the right when possible.
+    if (x2 - x1 < minMs) {
+      if (x1 === xMin) x2 = Math.min(xMax, x1 + minMs);
+      else if (x2 === xMax) x1 = Math.max(xMin, x2 - minMs);
+    }
+  }
+  return { x1, x2 };
+}
+
 /** Recharts children: hidden pump axis + ReferenceArea lanes (min visual width). */
 export function renderPumpRunAreas(
   intervals: PumpRunInterval[],
@@ -115,16 +134,14 @@ export function renderPumpRunAreas(
     const m = meta[iv.pump];
     if (!m) continue;
     const lane = laneOf[iv.pump] ?? 0;
-    let x1 = Math.max(xMin, iv.startMs);
-    let x2 = Math.min(xMax, iv.endMs);
-    if (x2 < x1) continue;
-    if (x2 - x1 < minMs) x2 = Math.min(xMax, x1 + minMs);
+    const vs = visualSpan(iv.startMs, iv.endMs, minMs, xMin, xMax);
+    if (!vs) continue;
     out.push(
       <ReferenceArea
         key={`pr-${iv.pump}-${iv.startMs}`}
         yAxisId="pumps"
-        x1={x1}
-        x2={x2}
+        x1={vs.x1}
+        x2={vs.x2}
         y1={lane + 0.12}
         y2={lane + 0.88}
         fill={m.color}
@@ -141,9 +158,14 @@ export function renderPumpRunAreas(
   return out;
 }
 
-export function pumpRunsAt(ts: number, intervals: PumpRunInterval[], pumps: PumpRunMeta[]) {
+export function pumpRunsAt(ts: number, intervals: PumpRunInterval[], pumps: PumpRunMeta[], hitMs = 60_000) {
   const meta = Object.fromEntries(pumps.map((p) => [p.id, p]));
+  // Short fert/fill pulses rarely land on a chart sample; allow ±hitMs around the run.
   return intervals
-    .filter((iv) => ts >= iv.startMs && ts <= iv.endMs)
+    .filter((iv) => {
+      const mid = (iv.startMs + iv.endMs) / 2;
+      const half = Math.max(hitMs, (iv.endMs - iv.startMs) / 2);
+      return ts >= mid - half && ts <= mid + half;
+    })
     .map((iv) => fmtPumpRunTip(iv, meta[iv.pump]));
 }

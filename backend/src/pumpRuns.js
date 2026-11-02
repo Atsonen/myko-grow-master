@@ -188,8 +188,49 @@ export function startPumpRuns({ mqttUrl }) {
   setInterval(() => { if (dirty) save(); else save(); }, 60_000); // durable open runs
 }
 
+/** Live-annokset fert_dose_logista → overlay (DoseActive-MQTT jää usein väliin). */
+async function fertIntervalsFromLog(from, to) {
+  const rows = await query(
+    `SELECT UNIX_TIMESTAMP(ts) * 1000 AS t, COALESCE(actual_ms, requested_ms) AS ms
+     FROM fert_dose_log
+     WHERE mode = 'live' AND requested_ms > 0
+       AND ts >= FROM_UNIXTIME(? / 1000) - INTERVAL 1 MINUTE
+       AND ts <= FROM_UNIXTIME(? / 1000) + INTERVAL 1 MINUTE
+     ORDER BY ts`,
+    [from, to],
+  );
+  return rows.map((r) => {
+    const start = Number(r.t);
+    const ms = Math.max(500, Number(r.ms) || 1000);
+    const end = start + ms;
+    return {
+      pump: "fert",
+      start: new Date(start).toISOString(),
+      end: new Date(end).toISOString(),
+      startMs: start,
+      endMs: end,
+      duration_s: ms / 1000,
+      source: "fert_dose_log",
+    };
+  }).filter((iv) => Number.isFinite(iv.startMs) && iv.endMs >= from && iv.startMs <= to);
+}
+
+function mergeFertLog(intervals, logFert) {
+  const out = intervals.filter((i) => i.pump !== "fert");
+  const edgeFert = intervals.filter((i) => i.pump === "fert");
+  // Prefer log as source of truth for fert; keep edge-only runs that don't match a log row (±5 s).
+  for (const lf of logFert) {
+    out.push(lf);
+  }
+  for (const ef of edgeFert) {
+    const dup = logFert.some((lf) => Math.abs(lf.startMs - ef.startMs) < 5000 || Math.abs(lf.endMs - ef.endMs) < 5000);
+    if (!dup) out.push({ ...ef, source: ef.source ?? "mqtt" });
+  }
+  return out;
+}
+
 export function registerPumpRunsRoutes(app) {
-  app.get("/api/pump-runs", (req, res) => {
+  app.get("/api/pump-runs", async (req, res) => {
     try {
       const now = Date.now();
       let from = Date.parse(String(req.query.from ?? ""));
@@ -199,7 +240,7 @@ export function registerPumpRunsRoutes(app) {
       if (to < from) [from, to] = [to, from];
 
       /** @type {any[]} */
-      const intervals = [];
+      let intervals = [];
       for (const r of closed) {
         if (r.end < from || r.start > to) continue;
         intervals.push({
@@ -223,6 +264,12 @@ export function registerPumpRunsRoutes(app) {
           duration_s: Math.max(0, (now - start) / 1000),
           open: true,
         });
+      }
+      try {
+        const logFert = await fertIntervalsFromLog(from, to);
+        intervals = mergeFertLog(intervals, logFert);
+      } catch (e) {
+        console.warn("[pumpruns] fert log merge", e.message);
       }
       intervals.sort((a, b) => a.startMs - b.startMs);
       res.json({
