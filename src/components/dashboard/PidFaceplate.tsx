@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { Info, X } from "lucide-react";
 import { getPid, getPvFeed, sendPidCommand, setPvFeed, type PvFeedResponse, type PidCommand, type PidStatus, type PidValues } from "@/lib/apiClient";
@@ -271,6 +271,44 @@ export function savePidTrendHours(h: number) {
 
 type TrendPt = { t: number; pv?: number; sp?: number; out?: number };
 
+/** Nice tick step for a value span (1–2–5×10^n). */
+function niceStep(span: number, targetTicks = 5): number {
+  const raw = span / Math.max(2, targetTicks);
+  const pow = 10 ** Math.floor(Math.log10(Math.max(raw, 1e-9)));
+  const n = raw / pow;
+  const m = n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10;
+  return m * pow;
+}
+
+/** Pad + snap a temp range to nice ticks; enforce a minimum span (~0.5 °C). */
+function niceTempRange(rawLo: number, rawHi: number, minSpan = 0.5) {
+  let lo = rawLo, hi = rawHi;
+  if (!Number.isFinite(lo) || !Number.isFinite(hi)) { lo = 0; hi = minSpan; }
+  if (hi < lo) [lo, hi] = [hi, lo];
+  let span = hi - lo;
+  const pad = Math.max(span * 0.06, minSpan * 0.08);
+  lo -= pad;
+  hi += pad;
+  span = hi - lo;
+  if (span < minSpan) {
+    const mid = (lo + hi) / 2;
+    lo = mid - minSpan / 2;
+    hi = mid + minSpan / 2;
+    span = minSpan;
+  }
+  const step = niceStep(span, 5);
+  lo = Math.floor(lo / step) * step;
+  hi = Math.ceil(hi / step) * step;
+  if (hi - lo < minSpan - 1e-9) hi = lo + Math.ceil(minSpan / step) * step;
+  const ticks: number[] = [];
+  const nMax = 12;
+  for (let i = 0, v = lo; v <= hi + step * 0.5 && i < nMax; i++, v = lo + i * step) {
+    ticks.push(Number(v.toFixed(6)));
+  }
+  if (ticks.length && ticks[ticks.length - 1] < hi - step * 0.1) ticks.push(Number(hi.toFixed(6)));
+  return { lo, hi, step, ticks };
+}
+
 function bandPath(
   pts: TrendPt[],
   x: (t: number) => number,
@@ -293,7 +331,29 @@ function bandPath(
   return `M${top[0]}` + top.slice(1).map((p) => `L${p}`).join("") + bot.reverse().map((p) => `L${p}`).join("") + "Z";
 }
 
-/** Mini trend: PV solid, SP dashed, output area, HDZ/CDZ shaded bands following SP history. */
+function fmtTrendTime(t: number, spanMs: number) {
+  const d = new Date(t);
+  if (spanMs >= 36 * 3600_000) {
+    return d.toLocaleString("fi-FI", { timeZone: "Europe/Helsinki", day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" });
+  }
+  return d.toLocaleTimeString("fi-FI", { timeZone: "Europe/Helsinki", hour: "2-digit", minute: "2-digit" });
+}
+
+const OUT_LO = -100;
+const OUT_HI = 100;
+const OUT_TICKS = [-100, -50, 0, 50, 100];
+const COL = {
+  pv: "#2dd4bf",
+  sp: "#fbbf24",
+  out: "#e879f9",
+  outFill: "rgba(232, 121, 249, 0.36)",
+  heat: "#d9b08f",
+  cool: "#7dd3fc",
+  grid: "rgba(161, 161, 170, 0.28)",
+  axis: "#a1a1aa",
+};
+
+/** Mini trend: auto-scaled °C Y, % right axis, grid, clock times, hover tooltip. */
 export function MiniTrend({
   data, unit, hdz = 0, cdz = 0, height = 140, rangeHours, onRangeHours, loading,
 }: {
@@ -310,36 +370,71 @@ export function MiniTrend({
   const tEnd = now;
   const tStart = now - rangeHours * 3600_000;
   const pts = data.filter((d) => Number.isFinite(d.pv) && d.t >= tStart - 60_000 && d.t <= tEnd + 60_000);
-  const W = 640;
-  const H = Math.max(96, height);
+  const H = Math.max(120, height);
   const curSp = pts.length ? (Number.isFinite(pts[pts.length - 1].sp) ? pts[pts.length - 1].sp! : pts[pts.length - 1].pv!) : 0;
   const hdzN = Math.max(0, Number(hdz) || 0);
   const cdzN = Math.max(0, Number(cdz) || 0);
 
-  let body: ReactNode;
-  if (pts.length < 2) {
-    body = (
-      <div className="flex h-24 items-center justify-center text-[11px] text-muted-foreground">
-        {loading ? "Ladataan trendiä…" : "Trendi kertyy (30 s / ~1 min näytteet)."}
-      </div>
-    );
-  } else {
+  const plotRef = useRef<HTMLDivElement>(null);
+  const clipId = useId().replace(/:/g, "");
+  const [cw, setCw] = useState(640);
+  const [hover, setHover] = useState<{ i: number; xPct: number } | null>(null);
+
+  useEffect(() => {
+    const el = plotRef.current;
+    if (!el) return;
+    const measure = () => setCw(Math.max(200, el.clientWidth || 640));
+    measure();
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
+    ro?.observe(el);
+    return () => ro?.disconnect();
+  }, [pts.length >= 2, H]);
+
+  const geom = useMemo(() => {
+    if (pts.length < 2) return null;
     const t0 = Math.min(pts[0].t, tStart);
     const t1 = Math.max(pts[pts.length - 1].t, tEnd);
-    const ys: number[] = [];
+    const pvSp: number[] = [];
     let lastSp = curSp;
     for (const d of pts) {
       const sp = Number.isFinite(d.sp) ? (d.sp as number) : lastSp;
       lastSp = sp;
-      ys.push(d.pv!, sp, sp - hdzN, sp + cdzN);
+      pvSp.push(d.pv!, sp);
     }
-    let lo = Math.min(...ys), hi = Math.max(...ys);
-    const pad = Math.max(0.4, (hi - lo) * 0.08);
-    lo -= pad; hi += pad;
-    if (hi - lo < 1) { lo -= 0.5; hi += 0.5; }
-    const x = (t: number) => ((t - t0) / Math.max(1, t1 - t0)) * W;
-    const y = (v: number) => H - 4 - ((v - lo) / (hi - lo)) * (H - 8);
-    const yo = (o: number) => H / 2 - (o / 100) * (H / 2 - 2);
+    let dLo = Math.min(...pvSp), dHi = Math.max(...pvSp);
+    if (!Number.isFinite(dLo) || !Number.isFinite(dHi)) { dLo = curSp; dHi = curSp; }
+    // Scale tightly to PV/SP. Deadband edges expand the range only when already near the data
+    // (within ~½ of the padded min span), so a large HDZ/CDZ cannot squash the plot.
+    const provisional = niceTempRange(dLo, dHi, 0.5);
+    const near = Math.max((provisional.hi - provisional.lo) * 0.35, 0.35);
+    if (hdzN > 0 || cdzN > 0) {
+      let ls = curSp;
+      for (const d of pts) {
+        const sp = Number.isFinite(d.sp) ? (d.sp as number) : ls;
+        ls = sp;
+        if (hdzN > 0) {
+          const e = sp - hdzN;
+          if (e >= provisional.lo - near && e <= provisional.hi + near) dLo = Math.min(dLo, e);
+        }
+        if (cdzN > 0) {
+          const e = sp + cdzN;
+          if (e >= provisional.lo - near && e <= provisional.hi + near) dHi = Math.max(dHi, e);
+        }
+      }
+    }
+    const { lo, hi, ticks: yTicks } = niceTempRange(dLo, dHi, 0.5);
+
+    const ML = 42, MR = 34, MT = 10, MB = 24;
+    const W = cw;
+    const plotW = Math.max(40, W - ML - MR);
+    const plotH = Math.max(40, H - MT - MB);
+    const x = (t: number) => ML + ((t - t0) / Math.max(1, t1 - t0)) * plotW;
+    const y = (v: number) => MT + (1 - (v - lo) / Math.max(1e-9, hi - lo)) * plotH;
+    const yo = (o: number) => {
+      const clamped = Math.max(OUT_LO, Math.min(OUT_HI, o));
+      return MT + (1 - (clamped - OUT_LO) / (OUT_HI - OUT_LO)) * plotH;
+    };
+
     const line = (k: "pv" | "sp") => {
       let ls = curSp;
       return pts.map((d, i) => {
@@ -349,36 +444,142 @@ export function MiniTrend({
         return `${i ? "L" : "M"}${x(d.t).toFixed(1)},${y(v).toFixed(1)}`;
       }).join("");
     };
-    const area = `M0,${H / 2}` + pts.map((d) => `L${x(d.t).toFixed(1)},${yo(d.out ?? 0).toFixed(1)}`).join("") + `L${W},${H / 2}Z`;
+    const outLine = pts.map((d, i) => `${i ? "L" : "M"}${x(d.t).toFixed(1)},${yo(d.out ?? 0).toFixed(1)}`).join("");
+    const outArea = `M${x(pts[0].t).toFixed(1)},${yo(0).toFixed(1)}`
+      + pts.map((d) => `L${x(d.t).toFixed(1)},${yo(d.out ?? 0).toFixed(1)}`).join("")
+      + `L${x(pts[pts.length - 1].t).toFixed(1)},${yo(0).toFixed(1)}Z`;
     const heatBand = hdzN > 0 ? bandPath(pts, x, y, (sp) => sp - hdzN, (sp) => sp, curSp) : null;
     const coolBand = cdzN > 0 ? bandPath(pts, x, y, (sp) => sp, (sp) => sp + cdzN, curSp) : null;
+
     const spanMs = t1 - t0;
-    const leftLbl = spanMs >= 48 * 3600_000
-      ? `−${f1(spanMs / 86400_000, 1)} d`
-      : spanMs >= 90 * 60_000
-        ? `−${f1(spanMs / 3600_000, 1)} h`
-        : `−${Math.max(1, Math.round(spanMs / 60_000))} min`;
+    const nX = spanMs >= 48 * 3600_000 ? 5 : spanMs >= 6 * 3600_000 ? 5 : 4;
+    const xTicks: { t: number; label: string }[] = [];
+    for (let i = 0; i <= nX; i++) {
+      const t = t0 + (spanMs * i) / nX;
+      xTicks.push({ t, label: fmtTrendTime(t, spanMs) });
+    }
+    return { t0, t1, lo, hi, yTicks, x, y, yo, line, outLine, outArea, heatBand, coolBand, xTicks, spanMs, ML, MR, MT, MB, W, plotW, plotH };
+  }, [pts, cw, H, tStart, tEnd, curSp, hdzN, cdzN]);
+
+  const onMove = (e: ReactMouseEvent<HTMLDivElement>) => {
+    if (!geom || pts.length < 2) return;
+    const el = plotRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const px = e.clientX - rect.left;
+    const frac = Math.max(0, Math.min(1, (px - geom.ML) / geom.plotW));
+    const t = geom.t0 + frac * Math.max(1, geom.t1 - geom.t0);
+    let best = 0, bestD = Infinity;
+    for (let i = 0; i < pts.length; i++) {
+      const d = Math.abs(pts[i].t - t);
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    const xPct = ((pts[best].t - geom.t0) / Math.max(1, geom.t1 - geom.t0)) * 100;
+    setHover({ i: best, xPct: Math.max(0, Math.min(100, xPct)) });
+  };
+
+  let body: ReactNode;
+  if (pts.length < 2 || !geom) {
+    body = (
+      <div className="flex h-24 items-center justify-center text-[11px] text-muted-foreground">
+        {loading ? "Ladataan trendiä…" : "Trendi kertyy (30 s / ~1 min näytteet)."}
+      </div>
+    );
+  } else {
+    const hp = hover ? pts[hover.i] : null;
+    let hs = curSp;
+    if (hp) {
+      for (let i = 0; i <= hover!.i; i++) {
+        if (Number.isFinite(pts[i].sp)) hs = pts[i].sp as number;
+      }
+    }
     body = (
       <>
-        <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="w-full" style={{ height: H }} role="img" aria-label="SP/PV-trendi">
-          <path d={area} className="fill-zinc-500/15" />
-          {heatBand && <path d={heatBand} fill="#d9b08f" fillOpacity={0.22} stroke="none" />}
-          {coolBand && <path d={coolBand} fill="#a9c8e8" fillOpacity={0.22} stroke="none" />}
-          <path d={line("sp")} className="fill-none stroke-zinc-400" strokeWidth={1.25} strokeDasharray="4 3" vectorEffect="non-scaling-stroke" />
-          <path d={line("pv")} className="fill-none stroke-zinc-100" strokeWidth={1.75} vectorEffect="non-scaling-stroke" />
-        </svg>
-        <div className="mt-0.5 flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5 text-[11px] tabular-nums text-muted-foreground">
-          <span>{leftLbl}</span>
-          <span className="flex flex-wrap items-center justify-center gap-x-2">
-            <span>PV —</span>
-            <span>SP - -</span>
-            <span>lähtö ▒</span>
-            {hdzN > 0 && <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-3 rounded-sm bg-[#d9b08f]/40" />HDZ {f1(hdzN, 2)}</span>}
-            {cdzN > 0 && <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-3 rounded-sm bg-[#a9c8e8]/40" />CDZ {f1(cdzN, 2)}</span>}
-            {(hdzN <= 0 && cdzN <= 0) && <span className="text-zinc-500">kuollut alue 0</span>}
-            <span>· {f1(lo)}…{f1(hi)} {unit}</span>
-          </span>
-          <span>nyt</span>
+        <div
+          ref={plotRef}
+          className="relative w-full select-none"
+          style={{ height: H }}
+          onMouseMove={onMove}
+          onMouseLeave={() => setHover(null)}
+          data-testid="pid-trend-plot"
+        >
+          <svg width={geom.W} height={H} className="block overflow-visible" role="img" aria-label="SP/PV-trendi">
+            <defs>
+              <clipPath id={`pid-trend-clip-${clipId}`}>
+                <rect x={geom.ML} y={geom.MT} width={geom.plotW} height={geom.plotH} />
+              </clipPath>
+            </defs>
+            {/* horizontal grid + left °C ticks */}
+            {geom.yTicks.map((v) => (
+              <g key={`y-${v}`}>
+                <line x1={geom.ML} y1={geom.y(v)} x2={geom.ML + geom.plotW} y2={geom.y(v)} stroke={COL.grid} strokeWidth={1} />
+                <text x={geom.ML - 6} y={geom.y(v)} textAnchor="end" dominantBaseline="middle" fontSize={10} fill={COL.axis} className="tabular-nums" style={{ fontFamily: "ui-monospace, monospace" }}>
+                  {f1(v, Math.abs(geom.hi - geom.lo) < 2 ? 2 : 1)}
+                </text>
+              </g>
+            ))}
+            {/* right % ticks */}
+            {OUT_TICKS.map((v) => (
+              <text key={`o-${v}`} x={geom.ML + geom.plotW + 6} y={geom.yo(v)} textAnchor="start" dominantBaseline="middle" fontSize={9} fill={COL.out} className="tabular-nums" style={{ fontFamily: "ui-monospace, monospace", opacity: 0.9 }}>
+                {v}
+              </text>
+            ))}
+            <g clipPath={`url(#pid-trend-clip-${clipId})`}>
+              {/* zero-output guide */}
+              <line x1={geom.ML} y1={geom.yo(0)} x2={geom.ML + geom.plotW} y2={geom.yo(0)} stroke={COL.out} strokeOpacity={0.25} strokeWidth={1} strokeDasharray="2 3" />
+              {/* output area + line (own scale) */}
+              <path d={geom.outArea} fill={COL.outFill} stroke="none" />
+              <path d={geom.outLine} fill="none" stroke={COL.out} strokeWidth={2.25} />
+              {/* deadband (clipped; scale stays tight to PV/SP) */}
+              {geom.heatBand && <path d={geom.heatBand} fill={COL.heat} fillOpacity={0.4} stroke="none" />}
+              {geom.coolBand && <path d={geom.coolBand} fill={COL.cool} fillOpacity={0.4} stroke="none" />}
+              {/* SP / PV */}
+              <path d={geom.line("sp")} fill="none" stroke={COL.sp} strokeWidth={2} strokeDasharray="5 3.5" />
+              <path d={geom.line("pv")} fill="none" stroke={COL.pv} strokeWidth={2.75} strokeLinecap="round" strokeLinejoin="round" />
+            </g>
+            {/* plot frame */}
+            <rect x={geom.ML} y={geom.MT} width={geom.plotW} height={geom.plotH} fill="none" stroke="rgba(113,113,122,0.45)" strokeWidth={1} />
+            {/* X ticks */}
+            {geom.xTicks.map((xt, i) => (
+              <g key={`x-${i}`}>
+                <line x1={geom.x(xt.t)} y1={geom.MT + geom.plotH} x2={geom.x(xt.t)} y2={geom.MT + geom.plotH + 4} stroke={COL.axis} strokeWidth={1} />
+                <text x={geom.x(xt.t)} y={H - 6} textAnchor={i === 0 ? "start" : i === geom.xTicks.length - 1 ? "end" : "middle"} fontSize={10} fill={COL.axis} className="tabular-nums" style={{ fontFamily: "ui-monospace, monospace" }}>
+                  {xt.label}
+                </text>
+              </g>
+            ))}
+            {/* axis unit hints */}
+            <text x={4} y={12} fontSize={9} fill={COL.axis} style={{ fontFamily: "ui-monospace, monospace" }}>{unit}</text>
+            <text x={geom.W - 4} y={12} textAnchor="end" fontSize={9} fill={COL.out} style={{ fontFamily: "ui-monospace, monospace" }}>%</text>
+            {/* hover crosshair */}
+            {hover && (
+              <line x1={geom.x(pts[hover.i].t)} y1={geom.MT} x2={geom.x(pts[hover.i].t)} y2={geom.MT + geom.plotH} stroke="#e4e4e7" strokeOpacity={0.55} strokeWidth={1} />
+            )}
+          </svg>
+          {hp && hover && (
+            <div
+              className="pointer-events-none absolute z-10 rounded border border-zinc-600 bg-zinc-900/95 px-2 py-1 text-[11px] tabular-nums text-zinc-100 shadow-lg"
+              style={{
+                top: 8,
+                left: `clamp(4px, calc(${((geom.x(pts[hover.i].t) / geom.W) * 100).toFixed(2)}% - 70px), calc(100% - 148px))`,
+              }}
+              data-testid="pid-trend-tooltip"
+            >
+              <div className="font-mono text-zinc-300">{fmtTrendTime(hp.t, geom.spanMs)}</div>
+              <div><span style={{ color: COL.pv }}>PV</span> {f1(hp.pv)} {unit}</div>
+              <div><span style={{ color: COL.sp }}>SP</span> {f1(hs)} {unit}</div>
+              <div><span style={{ color: COL.out }}>lähtö</span> {f1(hp.out ?? 0, 0)} %</div>
+            </div>
+          )}
+        </div>
+        <div className="mt-0.5 flex flex-wrap items-center justify-center gap-x-3 gap-y-0.5 text-[11px] tabular-nums text-muted-foreground">
+          <span className="inline-flex items-center gap-1"><span className="inline-block h-0.5 w-3 rounded-sm" style={{ background: COL.pv }} />PV</span>
+          <span className="inline-flex items-center gap-1"><span className="inline-block h-0.5 w-3 border-t-2 border-dashed" style={{ borderColor: COL.sp }} />SP</span>
+          <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-3 rounded-sm" style={{ background: COL.outFill, boxShadow: `inset 0 0 0 1px ${COL.out}` }} />lähtö %</span>
+          {hdzN > 0 && <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-3 rounded-sm" style={{ background: COL.heat, opacity: 0.7 }} />HDZ {f1(hdzN, 2)}</span>}
+          {cdzN > 0 && <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-3 rounded-sm" style={{ background: COL.cool, opacity: 0.7 }} />CDZ {f1(cdzN, 2)}</span>}
+          {(hdzN <= 0 && cdzN <= 0) && <span className="text-zinc-500">kuollut alue 0</span>}
+          <span>· {f1(geom.lo)}…{f1(geom.hi)} {unit}</span>
         </div>
       </>
     );
