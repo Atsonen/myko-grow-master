@@ -49,10 +49,13 @@ function fmtDur(s: number) {
 
 export function fmtPumpRunTip(iv: PumpRunInterval, meta?: PumpRunMeta) {
   const label = meta?.label ?? iv.pump;
-  const start = new Date(iv.startMs).toLocaleString("fi-FI", {
-    day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit",
-  });
-  return `${label}: ${start} · ${fmtDur(iv.duration_s)}${iv.open ? " (käy)" : ""}`;
+  const d = new Date(iv.startMs);
+  const start = `${d.getDate()}.${d.getMonth() + 1}. ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
+  // Täyttöpumpulla kesto on oleellinen; muilla riittää tieto että kävi (+ lyhyt kesto).
+  if (iv.pump === "fill") {
+    return `${label}: alku ${start} · kesto ${fmtDur(iv.duration_s)}${iv.open ? " (käy)" : ""}`;
+  }
+  return `${label}: ${start}${iv.open ? " (käy)" : ""}`;
 }
 
 /** Legend chips + optional master toggle row. */

@@ -3,6 +3,7 @@
 // No PLC writes. Persist closed+open intervals to JSON; GET /api/pump-runs?from=&to=.
 import fs from "node:fs";
 import mqtt from "mqtt";
+import { query } from "./db.js";
 
 const STATE_PATH = "/home/atte/.config/myko/pump_runs.json";
 const KEEP_MS = 14 * 24 * 3600_000; // 14 d
@@ -104,12 +105,68 @@ function fromFill(j) {
   edge("fill", j.Pump === true || j.St_Running === true || j.Run === true);
 }
 
+let lastDoseCount = null;
+
 function fromFert(j) {
-  edge("fert", j.DoseActive === true);
+  // DoseActive ~1 s jää helposti 1 s MQTT-pollauksessa väliin → myös Pump + DoseCount.
+  const active = j.DoseActive === true || j.Pump === true;
+  edge("fert", active);
+  const dc = Number(j.DoseCount);
+  if (Number.isFinite(dc)) {
+    if (lastDoseCount != null && dc > lastDoseCount && !lastOn.fert) {
+      const ms = Math.max(500, Number(j.LastDose_ms) || 1000);
+      const end = Date.now();
+      noteFertDose(ms, end);
+    }
+    lastDoseCount = dc;
+  }
+}
+
+/** Kirjaa lannoiteannoksen käynnin (kiinteä kesto). Dedup ~5 s ikkunalla. */
+export function noteFertDose(ms, endTs = Date.now()) {
+  const dur = Math.max(500, Number(ms) || 1000);
+  const end = Number(endTs) || Date.now();
+  const start = end - dur;
+  // älä tuplaa jos sama/overlapping fert-interval jo olemassa
+  for (const r of closed) {
+    if (r.pump !== "fert") continue;
+    if (Math.abs(r.start - start) < 5000 || Math.abs(r.end - end) < 5000) return;
+    if (start <= r.end && end >= r.start) return;
+  }
+  if (openAt.fert && Math.abs(openAt.fert - start) < 5000) return;
+  closed.push({ pump: "fert", start, end });
+  if (closed.length > 50_000) closed = closed.slice(-40_000);
+  dirty = true;
+}
+
+/** Käynnistyksessä: täydennä puuttuvat fert-käynnit fert_dose_logista (DoseActive-missit). */
+export function seedFertDosesFromLog(rows) {
+  let n = 0;
+  for (const r of rows || []) {
+    const t = Number(r.t); const ms = Number(r.ms) || 1000;
+    if (!Number.isFinite(t) || t <= 0) continue;
+    const before = closed.length;
+    noteFertDose(ms, t + ms); // ts = lähetyksen hetki → start=t, end=t+ms
+    if (closed.length > before) n++;
+  }
+  if (n) { dirty = true; save(); console.log(`[pumpruns] seeded ${n} fert doses from log`); }
+}
+
+async function seedFertFromDb() {
+  try {
+    const rows = await query(
+      `SELECT UNIX_TIMESTAMP(ts) * 1000 AS t, COALESCE(actual_ms, requested_ms) AS ms
+       FROM fert_dose_log WHERE mode = 'live' AND requested_ms > 0
+         AND ts > UTC_TIMESTAMP() - INTERVAL 14 DAY ORDER BY ts`);
+    seedFertDosesFromLog(rows.map((r) => ({ t: Number(r.t), ms: Number(r.ms) || 1000 })));
+  } catch (e) {
+    console.warn("[pumpruns] seedFertFromDb", e.message);
+  }
 }
 
 export function startPumpRuns({ mqttUrl }) {
   load();
+  seedFertFromDb(); // DoseActive-missit → täydennä fert_dose_logista load():n jälkeen
   const mq = mqtt.connect(mqttUrl, {
     clientId: `myko-backend-pumpruns-${process.pid}`,
     reconnectPeriod: 5000,

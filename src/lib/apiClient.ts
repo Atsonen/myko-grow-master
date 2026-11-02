@@ -714,6 +714,8 @@ export type FertDoseStatus = { mode: string; heartbeat: string; hbValue: number;
   active: FertEvent[]; events: FertEvent[];
   cumulative: { fert: string; mode: string; n: number; req_ms: number; act_ms: number }[];
   recent: { ts: string; fert: string; requested_ms: number; actual_ms: number | null; ec_before?: number | null; ec_sp?: number | null; mode: string; reason: string }[];
+  /** Live-annokset EC-trendivälillä (erillinen kysely, ei recent-limitin varassa). */
+  trendDoses?: { ts: string; fert: string; requested_ms: number; actual_ms: number | null; ec_before?: number | null; ec_sp?: number | null; mode: string; reason: string }[];
   reliable?: { ok: boolean; why: string | null }; spPlc?: number | null; validSince?: string | null; trend?: [number, number][] };
 export async function postFertDose() {
   return requestJson<{ ok: boolean; mode?: string; error?: string }>("/api/fertdose/dose", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirm: true }) });

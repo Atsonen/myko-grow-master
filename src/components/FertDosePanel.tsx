@@ -46,7 +46,7 @@ function KV({ k, v, cls }: { k: string; v: React.ReactNode; cls?: string }) {
 
 function Trend({ d }: { d: FertDoseStatus }) {
   const pts = d.trend ?? []; const sp = d.sp; const A = d.config.ec_alarm;
-  if (pts.length < 2) return <div className="flex h-36 items-center justify-center text-xs text-muted-foreground">Trendi kertyy (1 min näytteet, max 6 h)…</div>;
+  if (pts.length < 2) return <div className="flex h-36 items-center justify-center text-xs text-muted-foreground">Trendi kertyy (1 min näytteet, max 6 h, backfill DB:stä)…</div>;
   const W = 600, H = 150, P = 4;
   const vals = pts.map((p) => p[1]); const bands = sp != null ? [sp + A.lo_off, sp + A.hi_off] : [];
   let lo = Math.min(...vals, ...(sp != null ? [sp + A.warn_lo_off] : [])), hi = Math.max(...vals, ...(sp != null ? [sp + A.warn_hi_off] : []));
@@ -56,8 +56,19 @@ function Trend({ d }: { d: FertDoseStatus }) {
   const y = (v: number) => H - P - ((v - lo) / (hi - lo)) * (H - 2 * P);
   const line = pts.map((p, i) => `${i ? "L" : "M"}${x(p[0]).toFixed(1)},${y(p[1]).toFixed(1)}`).join(" ");
   const band = (a: number, b: number, fill: string) => { const ya = y(Math.min(hi, Math.max(lo, b))), yb = y(Math.min(hi, Math.max(lo, a))); return <rect x={0} y={ya} width={W} height={Math.max(0, yb - ya)} fill={fill} />; };
-  // Live-annokset trendivälillä: merkki + tooltip (aika, A/B, ml). 1 s ≈ 1 ml.
-  const doses = (d.recent ?? []).filter((r) => r.mode === "live" && (r.requested_ms ?? 0) > 0).map((r) => {
+  // Live-annokset trendivälillä (trendDoses API:sta; fallback recent). 1 s ≈ 1 ml. A/B = Myko-kirjanpito.
+  const fmtHm = (ms: number) => {
+    const d = new Date(ms);
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+    const day = d.getDate(); const mon = d.getMonth() + 1;
+    const spanH = (t1 - t0) / 3600_000;
+    // Näytä päivä jos ikkuna ylittää keskiyön tai on pitkä.
+    if (spanH >= 12 || new Date(t0).getDate() !== new Date(t1).getDate()) return `${day}.${mon}. ${hh}:${mm}`;
+    return `${hh}:${mm}`;
+  };
+  const src = (d.trendDoses?.length ? d.trendDoses : d.recent ?? []).filter((r) => r.mode === "live" && (r.requested_ms ?? 0) > 0);
+  const doses = src.map((r) => {
     const ts = Date.parse(r.ts); const ml = (r.actual_ms ?? r.requested_ms) / 1000;
     const nearest = pts.reduce((best, p) => Math.abs(p[0] - ts) < Math.abs(best[0] - ts) ? p : best, pts[0]);
     return { ts, fert: r.fert, ml, ec: nearest[1], inRange: ts >= t0 - 60_000 && ts <= t1 + 60_000 };
@@ -71,7 +82,7 @@ function Trend({ d }: { d: FertDoseStatus }) {
         <path d={line} fill="none" stroke="#38bdf8" strokeWidth={2} vectorEffect="non-scaling-stroke" />
         {doses.map((r) => (
           <g key={r.ts} data-testid="fd-trend-dose">
-            <title>{`${new Date(r.ts).toLocaleTimeString("fi-FI", { hour: "2-digit", minute: "2-digit", second: "2-digit" })} · ${r.fert} · ${r.ml.toFixed(1)} ml`}</title>
+            <title>{`${fmtHm(r.ts)}:${String(new Date(r.ts).getSeconds()).padStart(2, "0")} · lannoite ${r.fert} · ${r.ml.toFixed(1)} ml`}</title>
             <line x1={x(r.ts)} x2={x(r.ts)} y1={y(r.ec) - 10} y2={H - P} stroke="#f59e0b" strokeWidth={1} strokeDasharray="2 2" vectorEffect="non-scaling-stroke" />
             <circle cx={x(r.ts)} cy={y(r.ec)} r={4} fill="#f59e0b" stroke="#18181b" strokeWidth={1} vectorEffect="non-scaling-stroke" />
             <text x={x(r.ts) + 5} y={Math.max(10, y(r.ec) - 8)} fill="#fbbf24" fontSize="9" style={{ fontFamily: "ui-monospace, monospace" }}>{`${r.fert} ${r.ml.toFixed(0)}ml`}</text>
@@ -79,9 +90,9 @@ function Trend({ d }: { d: FertDoseStatus }) {
         ))}
       </svg>
       <div className="flex justify-between text-[11px] text-muted-foreground">
-        <span>{new Date(t0).toLocaleTimeString("fi-FI", { hour: "2-digit", minute: "2-digit" })}</span>
+        <span>{fmtHm(t0)}</span>
         <span><span className="text-sky-400">━</span> EC · <span>┅</span> SP · <span className="text-amber-400">●</span> annos · <span className="text-emerald-400">▮</span> varoitusalue · <span className="text-red-400">┅</span> hälytysraja</span>
-        <span>{new Date(t1).toLocaleTimeString("fi-FI", { hour: "2-digit", minute: "2-digit" })}</span>
+        <span>{fmtHm(t1)}</span>
       </div>
     </div>
   );

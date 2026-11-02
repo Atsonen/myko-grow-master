@@ -64,6 +64,38 @@ async function ensureTables() {
   const [last] = await query("SELECT TIMESTAMPDIFF(SECOND, ts, UTC_TIMESTAMP()) age_s FROM fert_dose_log WHERE mode IN ('live','dry-run') AND requested_ms > 0 ORDER BY id DESC LIMIT 1");
   if (last) S.lastDoseAt = Date.now() - Number(last.age_s) * 1000;
 }
+
+/** EC-trendi muistissa max 6 h (1 min näytteet). Backend-restart tyhjentää → täytä dataloggerista. */
+async function backfillTrend(ecKey) {
+  const key = String(ecKey || CFG.ec_key || "dl23");
+  try {
+    const rows = await query(
+      `SELECT UNIX_TIMESTAMP(timestamp) * 1000 AS t, CAST(raw_value AS DECIMAL(12,3)) AS v
+       FROM datalogger_values
+       WHERE variable_key = ? AND timestamp > UTC_TIMESTAMP() - INTERVAL 6 HOUR
+       ORDER BY timestamp`,
+      [key],
+    );
+    if (!rows.length) return;
+    /** @type {{t:number,v:number}[]} */
+    const byMin = [];
+    for (const r of rows) {
+      const t = Number(r.t); const v = Number(r.v);
+      if (!Number.isFinite(t) || !Number.isFinite(v)) continue;
+      const m = Math.floor(t / 60000) * 60000;
+      if (!byMin.length || byMin[byMin.length - 1].t !== m) byMin.push({ t: m, v });
+      else byMin[byMin.length - 1].v = v;
+    }
+    const have = new Set((S.trend ?? []).map((p) => p.t));
+    const merged = [...(S.trend ?? [])];
+    for (const p of byMin) if (!have.has(p.t)) merged.push(p);
+    merged.sort((a, b) => a.t - b.t);
+    S.trend = merged.slice(-360);
+    console.log(`[fertdose] trend backfill ${key}: ${byMin.length} min → ${S.trend.length} pts`);
+  } catch (e) {
+    console.warn("[fertdose] trend backfill", e.message);
+  }
+}
 const logRow = (fert, ms, ec, sp, reason, mode) => query("INSERT INTO fert_dose_log (ts, fert, requested_ms, actual_ms, ec_before, ec_sp, reason, mode) VALUES (UTC_TIMESTAMP(), ?, ?, NULL, ?, ?, ?, ?)", [fert, ms, ec ?? null, sp ?? null, String(reason).slice(0, 200), mode]);
 async function notify(text) {
   for (let i = 0; i < 4; i++) {
@@ -209,7 +241,14 @@ async function dose(c, why, by) {
   const a = await cmd({ DoseReq_ms: ms, DoseTrig: "pulse" });
   const ok = okRes(a, "DoseReq_ms") && okRes(a, "DoseTrig");
   await logRow(fert, ms, ec, S.sp, `${ok ? "LÄHETETTY" : "KIRJOITUS EPÄONNISTUI: " + errTxt(a)} (${by}): ${why}`, ok ? "live" : "live-fail");
-  if (ok) S.lastDoseAt = Date.now();
+  if (ok) {
+    S.lastDoseAt = Date.now();
+    // MQTT DoseActive (~1 s) jää usein väliin – kirjaa käynti suoraan pumpRuns-overlayhin.
+    try {
+      const { noteFertDose } = await import("./pumpRuns.js");
+      noteFertDose(ms, S.lastDoseAt);
+    } catch (e) { console.warn("[fertdose] noteFertDose", e.message); }
+  }
   console.log(`[fertdose] dose ${fert} ${ms} ms by=${by} -> ${ok ? "ok" : errTxt(a)}`);
   return ok ? { ok: true, mode: "live" } : { ok: false, error: errTxt(a) };
 }
@@ -321,6 +360,7 @@ export function startFertDose({ port, mqttUrl }) {
   }, 5000);
   ensureTables().catch((e) => console.warn("[fertdose] table", e.message)).finally(async () => {
     const c = await cfg().catch(() => DEF);
+    await backfillTrend(c.ec_key).catch(() => undefined);
     console.log(`[fertdose] käynnissä, mode=${c.live ? "LIVE" : "dry-run"}, heartbeat=${c.hb_enabled ? "päällä" : "pois"}`);
     const loop = async () => { await tick(port); setTimeout(loop, (Number(CFG.poll_s) || 10) * 1000); };
     loop();
@@ -333,6 +373,20 @@ export function registerFertDoseRoutes(app) {
       const c = await cfg();
       const cum = await query("SELECT fert, mode, COUNT(*) n, SUM(requested_ms) req_ms, SUM(COALESCE(actual_ms,0)) act_ms FROM fert_dose_log WHERE requested_ms > 0 GROUP BY fert, mode");
       const recent = await query("SELECT DATE_FORMAT(ts, '%Y-%m-%dT%H:%i:%sZ') ts, fert, requested_ms, actual_ms, ec_before, ec_sp, reason, mode FROM fert_dose_log ORDER BY id DESC LIMIT 200");
+      // Trendin annosmerkit: vain oikeasti lähetetyt live-annokset trendiväliltä (ei live-fail / Enable-rivejä).
+      // Erillinen kysely, jotta recent-limit 200 (live-fail-tulva) ei peitä vanhempia annoksia.
+      const tr = S.trend ?? [];
+      const t0 = tr.length ? tr[0].t : Date.now() - 6 * 3600_000;
+      const t1 = tr.length ? tr[tr.length - 1].t : Date.now();
+      const trendDoses = await query(
+        `SELECT DATE_FORMAT(ts, '%Y-%m-%dT%H:%i:%sZ') ts, fert, requested_ms, actual_ms, ec_before, ec_sp, reason, mode
+         FROM fert_dose_log
+         WHERE mode = 'live' AND requested_ms > 0
+           AND ts >= FROM_UNIXTIME(? / 1000) - INTERVAL 2 MINUTE
+           AND ts <= FROM_UNIXTIME(? / 1000) + INTERVAL 2 MINUTE
+         ORDER BY ts`,
+        [t0, t1],
+      );
       const events = await query("SELECT id, DATE_FORMAT(ts, '%Y-%m-%dT%H:%i:%sZ') ts, DATE_FORMAT(cleared_ts, '%Y-%m-%dT%H:%i:%sZ') cleared_ts, level, code, text, DATE_FORMAT(acked_ts, '%Y-%m-%dT%H:%i:%sZ') acked_ts, acked_by FROM fert_events ORDER BY id DESC LIMIT 200");
       const lastS = S.samples[S.samples.length - 1];
       res.json({ config: c, mode: c.live ? "live" : "dry-run", heartbeat: !PLC_WRITE_ALLOWED ? "kirjoitus estetty" : !c.hb_enabled ? "off" : !S.plc.present ? "odottaa DB:tä" : S.hbErr ? `virhe: ${S.hbErr}` : "ok",
@@ -343,6 +397,7 @@ export function registerFertDoseRoutes(app) {
         nextAllowedAt: S.lastDoseAt ? new Date(S.lastDoseAt + c.pause_min * 60_000).toISOString() : null,
         reason: S.reason, active: Object.entries(S.ev).filter(([, e]) => e.active).map(([code, e]) => ({ code, ...e, ...fertClearFields(code) })), events: events.map((e) => ({ ...e, id: Number(e.id) })),
         reliable: { ok: Boolean(S.relOk), why: S.relWhy ?? null }, validSince: S.validSince ? new Date(S.validSince).toISOString() : null, spPlc: S.spPlc ?? null, trend: (S.trend ?? []).map((p) => [p.t, p.v]), spNow: S.sp,
+        trendDoses,
         cumulative: cum.map((r) => ({ ...r, n: Number(r.n), req_ms: Number(r.req_ms), act_ms: Number(r.act_ms) })), recent });
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
