@@ -25,7 +25,7 @@ export const PID_ALARM_BITS = [
   { bit: 5, key: "SENSOR_VIKA", level: "alarm", rule: "Myko PV-syöttö päällä: ei hyväksyttyä anturiarvoa 30 s (ESP-virhekoodi/epäuskottava/piikki) yli 10 s" },
   { bit: 7, key: "ANTURIVIKA_ALASAJO", level: "alarm", rule: "P1: anturivika/ei päivity yli alasajoajan (oletus 5 min) -> Myko asetti ON pois (lämmitys+jäähdytys seis). Ei automaattista uudelleenkäynnistystä." },
   { bit: 8, key: "LAHTO_NAN", level: "alarm", rule: "PID-lähtö virheellinen (NaN): OutputHeat (lämmitys päällä), OutputCool (jäähdytys päällä) tai PidOutputSum puuttuu yli 60 s, kun säädin ei ole inaktiivinen" },
-  { bit: 9, key: "PID_LAHTO_JUMISSA", level: "alarm", rule: "PID-lähtö jumissa: State 3 ja PidOutputSum täsmälleen sama yli 15 min, vaikka |PV−SP| ≥ 0,0625 °C (ei hälytä kun lähtö on tarkoituksella rajalla)" },
+  { bit: 9, key: "PID_LAHTO_JUMISSA", level: "alarm", rule: "PID-lähtö jumissa: State 3 ja PidOutputSum täsmälleen sama yli 15 min, vaikka |PV−SP| > deadband (Heat/Cool DeadZone PLC:stä, vähintään 0,0625 °C; ei hälytä deadbandin sisällä eikä kun lähtö on tarkoituksella rajalla)" },
   { bit: 6, key: "INPUT_STALE", level: "alarm", rule: "Myko PV-syöttö päällä: Input-kirjoitus PLC:lle ei onnistunut yli 60 s" },
 ];
 const DEB = { ANTURIVIKA_ALASAJO: 0, SENSOR_VIKA: 10, INPUT_STALE: 10, EI_AUTO: 10, PID_VIKA: 5, ERRORBITS: 10, SATUROITUNUT: 1800, LAHTO_NAN: 60, PID_LAHTO_JUMISSA: 0 }; // seconds
@@ -147,7 +147,7 @@ export function registerPidRoutes(app, { mqttClient, query, asyncRoute, onComman
         if (!Object.is(os.v, v.OutSum)) { os.v = v.OutSum; os.at = now; }
         const d = hcDesired[k] ?? { heat: true, cool: true }, on = hc[k] ?? {};
         const lim = { upper: d.heat ? (Number(on.heatOn) || 100) : HEAT_OFF_LIMIT, lower: d.cool ? (Number(on.coolOn) || -100) : 0 };
-        hold("PID_LAHTO_JUMISSA", now - os.at >= 15 * 60_000 && outputStuck({ state: v.State, outSum: v.OutSum, pv: v.PV, sp: v.CSP ?? v.SP, manEn: v.ManEn }, lim)); }
+        hold("PID_LAHTO_JUMISSA", now - os.at >= 15 * 60_000 && outputStuck({ state: v.State, outSum: v.OutSum, pv: v.PV, sp: v.CSP ?? v.SP, manEn: v.ManEn, hdz: v.HDZ, cdz: v.CDZ }, lim)); }
       hold("SATUROITUNUT", v.State === 3 && Math.abs(v.OutSum ?? 0) >= 99.5);
     }
     const fa = hooks.feedAlarms?.(k) ?? {};

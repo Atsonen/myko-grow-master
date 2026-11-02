@@ -822,7 +822,7 @@ const ALARM_DESC_FI = {
   FLATLINE: "Anturiarvo ei ole muuttunut (jumittunut anturi?)", STALE: "Anturilta ei tule dataa",
   EI_AUTO: "Säädin ei ole automaatilla", PID_VIKA: "PID-säätimen vika päällä (Error=1)",
   ERRORBITS: "PID ErrorBits≠0 – kuittaamaton PLC-vika", OPCUA: "Ei PID-dataa OPC UA:sta yli 60 s",
-  SATUROITUNUT: "Säätimen lähtö ±100 % yli 30 min", SENSOR_VIKA: "PV-syötön anturiarvo ei kelpaa", LAHTO_NAN: "PID-lähtö virheellinen (NaN) yli 60 s", PID_LAHTO_JUMISSA: "PID-lähtö jumissa",
+  SATUROITUNUT: "Säätimen lähtö ±100 % yli 30 min", SENSOR_VIKA: "PV-syötön anturiarvo ei kelpaa", LAHTO_NAN: "PID-lähtö virheellinen (NaN) yli 60 s", PID_LAHTO_JUMISSA: "PID-lähtö jumissa (ei hälytä deadbandin sisällä)",
   ANTURIVIKA_ALASAJO: "Anturivika → Myko ajoi säätimen alas (ON pois)", INPUT_STALE: "PV-arvon kirjoitus PLC:lle epäonnistuu",
 };
 const RULE_FI = [ // English checker rules -> Finnish
