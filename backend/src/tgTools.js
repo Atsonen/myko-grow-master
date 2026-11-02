@@ -1,11 +1,12 @@
-// DB tools for the Telegram DeepSeek assistant (function calling): read-only Myko DB + kunnossapito KB (read + log incidents/actions).
-// Uses a dedicated MariaDB user (myko_ro: SELECT + SHOW VIEW only on myko_valvomo), credentials in
-// /home/atte/.config/myko/db_ro.env (600, never logged). Extra guards: single statement, SELECT/WITH/SHOW/
-// DESCRIBE/EXPLAIN only, forced row limit, max_statement_time, truncated output. Every call is audited to
-// ~/.local/state/myko/tg_ai_queries.log (JSONL). Never touches the PLC.
+// DB + action tools for the Telegram DeepSeek assistant (function calling).
+// Read-only Myko DB (myko_ro) + kunnossapito KB + whitelisted writes via tgActions.js (Atte chat only).
+// Credentials: /home/atte/.config/myko/db_ro.env (600, never logged). SQL guards: single SELECT/WITH/SHOW/
+// DESCRIBE/EXPLAIN, row limit, max_statement_time. Audits: tg_ai_queries.log; writes: tg_writes.log.
+// SensorBlock / ESP commands are NOT exposed.
 import * as mariadb from "mariadb";
 import { readFileSync, appendFileSync, mkdirSync } from "node:fs";
 import { kpSearch, kpShowIncident, kpMatch, kpListFixes, kpPolicy, kpLogIncident, kpLogAction, kpRecentIncidents, kpCandidates, kpStats } from "./kunnossapito.js";
+import { WRITE_TOOLS, callWriteTool, isWriteTool, describeWrite } from "./tgActions.js";
 
 const RO_FILE = process.env.MYKO_DB_RO_ENV || "/home/atte/.config/myko/db_ro.env";
 const AUDIT_DIR = "/home/atte/.local/state/myko";
@@ -134,6 +135,7 @@ export const TOOLS = [
     ts_start: { type: "string", description: "Helsingin aika 'YYYY-MM-DD HH:MM:SS', oletus nyt" } }, ["system", "symptom"]),
   fn("kp_log_action", "KIRJAA toimenpide (esim. käyttäjän kertoma) vikaan. Ei suorita mitään.", { incident_id: { type: "integer" }, action: { type: "string" }, result: { type: "string" },
     worked: { type: "boolean" }, approved_by: { type: "string" }, ts: { type: "string" } }, ["action"]),
+  ...WRITE_TOOLS,
 ];
 const kpPack = async (p) => pack(await p, "kunnossapito; ajat Europe/Helsinki");
 const IMPL = { get_measurements: getMeasurements, get_alarm_history: getAlarmHistory, list_tables: listTables, describe_table: describeTable, run_sql: runSql,
@@ -146,8 +148,12 @@ const IMPL = { get_measurements: getMeasurements, get_alarm_history: getAlarmHis
 export async function callTool(name, args, ctx = {}) {
   const t0 = Date.now();
   try {
-    const f = IMPL[name]; if (!f) throw new Error(`tuntematon työkalu ${name}`);
-    const res = await f(args || {});
+    let res;
+    if (isWriteTool(name)) res = await callWriteTool(name, args || {}, ctx);
+    else {
+      const f = IMPL[name]; if (!f) throw new Error(`tuntematon työkalu ${name}`);
+      res = await f(args || {});
+    }
     audit({ ...ctx, tool: name, args, ms: Date.now() - t0, bytes: res.length });
     return res;
   } catch (e) {
@@ -155,6 +161,7 @@ export async function callTool(name, args, ctx = {}) {
     return JSON.stringify({ error: e.message.slice(0, 300) });
   }
 }
+export { isWriteTool, describeWrite };
 
 export const SCHEMA_HINT = `TIETOKANTA (MariaDB, myko_valvomo; kaikki DATETIME = UTC, esitä ajat Europe/Helsinki):
 - datalogger_values(timestamp, source_id='src-datalogger', variable_key dlXX, numeric_value = skaalattu arvo) ~1 näyte/min. Muuttujat: datalogger_variables.

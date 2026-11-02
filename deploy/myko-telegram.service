@@ -1,7 +1,7 @@
 # systemd USER service: cp to ~/.config/systemd/user/ && systemctl --user enable --now myko-telegram.service
-# Token + optional MYKO_TELEGRAM_CHAT_IDS in ~/.config/myko/telegram.env (600, not in git). Read-only gateway, no PLC writes.
+# Token + optional MYKO_TELEGRAM_CHAT_IDS in ~/.config/myko/telegram.env (600, not in git). Two-way gateway: whitelisted writes only from Atte chat (tgActions.js).
 [Unit]
-Description=Myko Telegram bot (@Valvomo_bot, long polling: alarm buttons, /status, DeepSeek Q&A)
+Description=Myko Telegram bot (@Valvomo_bot, long polling: alarm buttons, /status, DeepSeek Pro + whitelist actions)
 After=network-online.target
 
 [Service]

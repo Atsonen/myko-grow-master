@@ -1,20 +1,23 @@
-// Myko Telegram bot (primary alarm channel + read-only two-way gateway). Run: node src/telegram.js (myko-telegram.service).
-// Long polling (getUpdates), no extra deps. Token: env MYKO_TELEGRAM_BOT_TOKEN or /home/atte/.config/myko/telegram.env (600,
-// never logged, not in git). Allowed chats: env MYKO_TELEGRAM_CHAT_IDS (comma list) or myko_settings k='telegram_chat_ids'
-// (JSON array). Messages/callbacks from any other chat are ignored; their /start is only recorded to
-// myko_settings k='telegram_pending_chats' so the owner can be allow-listed.
-// READ-ONLY towards the PLC from chat: no SP writes, no free pid commands. Exception: 'kp:<id>:do|skip' buttons answer an
-// auto-recovery proposal (autoRecovery.js, kunnossapito known_fixes only); the backend validates and executes.
-// Alarm messages themselves are sent by deploy/myko-ml/alarm_points_check.py (tg_alert.py); this process handles:
-//   callback 'ack:<pointId>:<type>'  -> Kuittaa: Myko-only ack (alarm_events start rows acked, reminders suppressed
-//                                      while the alarm stays active; myko_settings k='telegram_alarm_acks')
-//   callback 'mute:<pointId>:<type>' -> Ohita 1 h: no reminders for that alarm for 60 min
-//   /status /halytykset /help, free text -> DeepSeek (process description + live status + read-only DB tools, src/tgTools.js).
+// Myko Telegram bot (primary alarm channel + two-way gateway with whitelisted writes for Atte).
+// Run: node src/telegram.js (myko-telegram.service). Long polling (getUpdates), no extra deps.
+// Token: env MYKO_TELEGRAM_BOT_TOKEN or /home/atte/.config/myko/telegram.env (600, never logged, not in git).
+// Allowed chats: env MYKO_TELEGRAM_CHAT_IDS (comma list) or myko_settings k='telegram_chat_ids'.
+// Messages/callbacks from any other chat are ignored; their /start is only recorded to telegram_pending_chats.
+// WRITE ACTIONS (PID ModeActivate/ErrorAck/mode, controls/SP, alarm ack): ONLY from Atte's configured chat
+// (MYKO_TELEGRAM_CHAT_IDS / telegram_chat_ids). LLM tool-calling whitelist in tgActions.js. Before each write
+// the bot announces what it will do, then executes and reports PLC readback. Logged to tg_writes.log + kunnossapito.
+// SensorBlock / ESP commands are NOT available here.
+// Alarm messages are sent by deploy/myko-ml/alarm_points_check.py (tg_alert.py); this process handles:
+//   callback 'ack:<pointId>:<type>'  -> Kuittaa (Myko-only ack)
+//   callback 'mute:<pointId>:<type>' -> Ohita 1 h
+//   callback 'kp:<id>:do|skip'       -> auto-recovery proposal
+//   /status /halytykset /help, free text -> DeepSeek Pro (tools: DB read + whitelist writes + auto kunnossapito log).
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { query } from "./db.js";
-import { deepseekChat } from "./deepseek.js";
-import { TOOLS, callTool, SCHEMA_HINT } from "./tgTools.js";
+import { deepseekChat, deepseekModels } from "./deepseek.js";
+import { TOOLS, callTool, SCHEMA_HINT, isWriteTool, describeWrite } from "./tgTools.js";
+import { kpLogIncident, kpLogAction } from "./kunnossapito.js";
 
 const TOKEN_FILE = process.env.MYKO_TELEGRAM_ENV || "/home/atte/.config/myko/telegram.env";
 const API_BASE = process.env.MYKO_API || "http://127.0.0.1:3010";
@@ -47,6 +50,10 @@ export async function allowedChats() {
   for (const x of (await setting("telegram_chat_ids", [])) ?? []) ids.push(String(x));
   return new Set(ids);
 }
+/** Chats allowed to issue PLC/backend write actions (Atte's alarm chat ids). */
+export async function actionChats() {
+  return allowedChats();
+}
 
 const api = async (p) => (await fetch(API_BASE + p, { signal: AbortSignal.timeout(10_000) })).json();
 const n1 = (x) => (x == null || Number.isNaN(Number(x)) ? "?" : Number(x).toFixed(1).replace(".", ","));
@@ -67,7 +74,7 @@ export async function statusText() {
       lines.push(`${ok ? "✅" : "⚠️"} ${NAMES[k]}: ${n1(v.PV)} °C${ok ? "" : age > 5 ? " (ei tuoretta dataa)" : v.Err ? " (säädinvika)" : ` (tavoite ${n1(v.SP)})`}`);
     } catch (e) { lines.push(`${k}: ei saatavilla (${e.message.slice(0, 60)})`); }
   }
-  try { // Kasvamo raja-arvohälytykset (kasvamoAlarms.js, backend kirjoittaa tilan)
+  try {
     const k = JSON.parse((await import("node:fs")).readFileSync("/home/atte/.config/myko/kasvamo_alarm_state.json", "utf8"));
     const a = Object.entries(k.active ?? {}).filter(([, v]) => v).map(([x]) => (k.msg?.[x] ?? x).replace("🌱 Kasvamo: ", ""));
     lines.push(`🌱 Kasvamo-rajat: ${a.length ? a.join("; ") : "ei aktiivisia"}`);
@@ -84,52 +91,102 @@ export async function alarmsText() {
     return `• ${r.pointName}: ${r.alarm} ${n1(r.value)} ${r.unit ?? ""} (${hel(r.start)})${r.acked || a?.acked_at ? " ✔kuitattu" : ""}${mute ? " 🔕" : ""}`;
   }).join("\n");
 }
-const HELP = "Myko-botti (vain luku, ei PLC-kirjoituksia)\n/status – lämpötilat ja onko kunnossa\n/halytykset – aktiiviset hälytykset\n/help – tämä ohje\nVapaa teksti → DeepSeek vastaa prosessikuvauksen ja tilan pohjalta.\nHälytysnapit: Kuittaa (Myko-kuittaus, ei muistutuksia) · Ohita 1 h.";
+const HELP = "Myko-botti (Atten chat: lukee + tekee whitelist-toimenpiteitä)\n/status – lämpötilat ja onko kunnossa\n/halytykset – aktiiviset hälytykset\n/help – tämä ohje\nVapaa teksti → DeepSeek Pro: neuvot + toimenpiteet (PID ModeActivate/ErrorAck/tila, setpoint/on/heat/cool, kuittaukset).\nHavainto ja kunnossapitopyyntö kirjataan aina automaattisesti.\nHälytysnapit: Kuittaa (Myko-kuittaus) · Ohita 1 h.";
 
-async function askDeepSeek(text, who = "telegram") {
+async function autoLogObservation(text, reply, who, chatId) {
+  try {
+    const inc = await kpLogIncident({
+      system: "Myko", device: null,
+      symptom: `Telegram-havainto (${who || chatId}): ${String(text).slice(0, 1500)}`,
+      conditions: ["telegram-auto", chatId ? `chat:${chatId}` : null].filter(Boolean),
+      resolution: String(reply || "").slice(0, 2000),
+      status: "info",
+    });
+    await kpLogAction({
+      incident_id: inc.id, actor: "telegram-atte",
+      action: "Kunnossapitopyyntö (auto): Telegram-keskustelu kirjattu",
+      nodes: "telegram", params: { chatId, q: String(text).slice(0, 500) },
+      approved_by: `telegram:${who || chatId}`, result: "kirjattu automaattisesti",
+    });
+    return inc.id;
+  } catch (e) {
+    console.warn("[telegram] auto-log", e.message);
+    return null;
+  }
+}
+
+async function askDeepSeek(text, opts = {}) {
+  const who = opts.who || "telegram";
+  const chatId = opts.chatId ? String(opts.chatId) : null;
+  const allowWrites = Boolean(opts.allowWrites);
+  const announce = typeof opts.announce === "function" ? opts.announce : null;
   const [doc] = await query("SELECT content FROM ai_process_doc ORDER BY id DESC LIMIT 1").catch(() => []);
   const status = await statusText().catch((e) => `tila ei saatavilla: ${e.message}`);
   const now = new Date().toLocaleString("sv-SE", { timeZone: "Europe/Helsinki" }).slice(0, 16);
+  const models = deepseekModels().join(" → ");
+  const writeHint = allowWrites
+    ? `Voit SUORITTAA toimenpiteitä työkaluilla pid_cmd, set_controls, ack_alarms (ja lukea get_pid). Käyttäjän viestit ovat toimintaohjeita. ` +
+      `Ennen kirjoitusta järjestelmä ilmoittaa käyttäjälle mitä tehdään. ErrorAck ja Mode+ModeActivate erikseen; Mode vain 0/3/4. ` +
+      `Älä käytä SensorBlock/ESP-komentoja (niitä ei ole). dry_run=true vain kun käyttäjä pyytää kuiva-ajoa.`
+    : `Tässä chatissa et voi kirjoittaa PLC:lle; anna neuvoja.`;
   const sys = `Olet Myko-sienikasvamon valvomon avustaja Telegramissa. Vastaa suomeksi, tiiviisti (Telegram, mieluiten alle ~12 riviä, ei markdown-taulukoita). ` +
-    `Et voi tehdä toimenpiteitä etkä kirjoittaa PLC:lle; anna vain tietoa ja neuvoja. Jos käyttäjä pyytää toimenpidettä, kerro että se tehdään Myko-valvomosta.\n` +
-    `Sinulla on vain luku -pääsy Myko-tietokantaan työkaluilla (get_measurements, get_alarm_history, list_tables, describe_table, run_sql). ` +
-    `Kunnossapitotietokanta (kp_search, kp_show_incident, kp_match, kp_list_fixes, kp_policy, kp_recent_incidents, kp_candidates, kp_stats): aiemmat viat, tehdyt toimenpiteet ja tunnetut korjaukset – käytä sitä vikoja selvittäessä. Myko avaa viat automaattisesti hälytyksistä (PID_VIKA, ERRORBITS, PID_LAHTO_JUMISSA ym.) ja tallentaa kontekstin (context_open/close) ja signaturen; vertaa uutta vikaa aiempiin saman signaturen vikoihin ja kerro mikä niissä auttoi. ` +
-    `Voit kirjata (kp_log_incident, kp_log_action) havaitun vian tai käyttäjän kertoman toimenpiteen, mutta et voi suorittaa korjauksia: tunnetut korjaukset tekee automaattinen valvoja Tee/Älä-kysymyksen kautta.\n` +
-    `Hae data työkaluilla äläkä arvaa lukuja. Nyt on ${now} (Europe/Helsinki); "tänään" = klo 00:00 alkaen paikallista aikaa. Ilmoita ajat paikallisaikana ja mainitse lähde (tagi) lyhyesti.\n\n` +
+    `${writeHint}\n` +
+    `Sinulla on Myko-tietokannan lukutyökalut (get_measurements, get_alarm_history, list_tables, describe_table, run_sql) ja kunnossapito (kp_search, kp_show_incident, kp_match, kp_list_fixes, kp_policy, kp_recent_incidents, kp_candidates, kp_stats, kp_log_incident, kp_log_action). ` +
+    `ÄLÄ KOSKAAN kysy "Haluatko että kirjaan havainnon..." – havainto ja kunnossapitopyyntö kirjataan AINA automaattisesti (log_observation ja/tai kp_log_incident). Kerro lyhyesti että kirjattiin.\n` +
+    `Hae data työkaluilla äläkä arvaa lukuja. Nyt on ${now} (Europe/Helsinki). Malli: ${models}.\n\n` +
     `${SCHEMA_HINT}\n\n--- PROSESSIKUVAUS ---\n${String(doc?.content ?? "").slice(0, 8000)}\n--- /PROSESSIKUVAUS ---\n\n--- LIVE-TILA ---\n${status}\n--- /LIVE-TILA ---`;
   const messages = [{ role: "system", content: sys }, { role: "user", content: text.slice(0, 2000) }];
-  const ctx = { who, q: text.slice(0, 200) };
+  const ctx = { who, q: text.slice(0, 200), chatId, allowWrites };
+  let usedModel = null;
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     const r = await deepseekChat({ messages, tools: TOOLS, max_tokens: 900 }, 90_000);
+    usedModel = r._model_used || usedModel;
     const m = r.choices?.[0]?.message; if (!m) break;
-    if (!m.tool_calls?.length) return clip(m.content?.trim() || "(ei vastausta)");
+    if (!m.tool_calls?.length) {
+      let out = clip(m.content?.trim() || "(ei vastausta)");
+      out = out.replace(/Haluatko\s+että\s+kirjaan[\s\S]*?\?/gi, "Kirjasin havainnon ja kunnossapitopyynnön.").trim();
+      return { text: out, model: usedModel };
+    }
     messages.push({ role: "assistant", content: m.content ?? "", tool_calls: m.tool_calls });
     for (const tc of m.tool_calls) {
       let args = {}; try { args = JSON.parse(tc.function.arguments || "{}"); } catch {}
-      messages.push({ role: "tool", tool_call_id: tc.id, content: await callTool(tc.function.name, args, { ...ctx, round }) });
+      const name = tc.function.name;
+      if (isWriteTool(name) && name !== "get_pid" && name !== "log_observation" && announce) {
+        await announce(`⚙️ Suoritan: ${describeWrite(name, args)}`).catch(() => undefined);
+      }
+      messages.push({ role: "tool", tool_call_id: tc.id, content: await callTool(name, args, { ...ctx, round }) });
     }
   }
-  const r = await deepseekChat({ messages: [...messages, { role: "user", content: "Vastaa nyt jo haetun datan perusteella." }], max_tokens: 900 }, 90_000);
-  return clip(r.choices?.[0]?.message?.content?.trim() || "(ei vastausta)");
+  const r = await deepseekChat({ messages: [...messages, { role: "user", content: "Vastaa nyt jo haetun datan perusteella. Älä kysy kirjaamisesta." }], max_tokens: 900 }, 90_000);
+  usedModel = r._model_used || usedModel;
+  let out = clip(r.choices?.[0]?.message?.content?.trim() || "(ei vastausta)");
+  out = out.replace(/Haluatko\s+että\s+kirjaan[\s\S]*?\?/gi, "Kirjasin havainnon ja kunnossapitopyynnön.").trim();
+  return { text: out, model: usedModel };
 }
-const MAX_TOOL_ROUNDS = 6;
+const MAX_TOOL_ROUNDS = 8;
 const clip = (s) => (s.length > 4000 ? s.slice(0, 3990) + "…" : s);
 
-/** Text command handler (exported for local tests). Returns reply text. */
-export async function handleText(text) {
+/** Text command handler (exported for local tests). Returns reply text. opts: { who, chatId, allowWrites, announce } */
+export async function handleText(text, opts = {}) {
   const cmd = text.trim().split(/\s+/)[0].replace(/@.*$/, "").toLowerCase();
   if (cmd === "/status") return statusText();
   if (cmd === "/halytykset" || cmd === "/hälytykset" || cmd === "/alarms") return alarmsText();
   if (cmd === "/help" || cmd === "/start") return HELP;
   if (cmd.startsWith("/")) return "Tuntematon komento. /help";
-  try { return await askDeepSeek(text); } catch (e) { return `DeepSeek ei vastannut: ${e.message.slice(0, 100)}`; }
+  try {
+    const { text: reply, model } = await askDeepSeek(text, opts);
+    const logId = await autoLogObservation(text, reply, opts.who, opts.chatId);
+    const tail = logId ? `\n📋 Kirjattu kunnossapitoon (#${logId}).` : "";
+    const m = model ? `\n🤖 ${model}` : "";
+    return clip((reply + tail + m).trim());
+  } catch (e) { return `DeepSeek ei vastannut: ${e.message.slice(0, 100)}`; }
 }
 
-/** Callback handler: Myko-only ack / 1 h mute. Never touches the PLC. Returns toast text. */
+/** Callback handler: Myko-only ack / 1 h mute. Returns toast text. */
 export async function handleCallback(data, who = "telegram") {
   const [act, pointId, type] = String(data).split(":");
   if (act === "test") return "Testikuittaus OK ✅";
-  if (act === "kp") { // auto-recovery proposal (autoRecovery.js): kp:<proposalId>:do|skip -> backend decides/executes
+  if (act === "kp") {
     const r = await fetch(API_BASE + "/api/autorecovery/decision", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: pointId, decision: type, by: who }), signal: AbortSignal.timeout(10_000) });
     const b = await r.json().catch(() => ({})); return String(b.text ?? b.error ?? `HTTP ${r.status}`).slice(0, 180);
   }
@@ -144,7 +201,7 @@ export async function handleCallback(data, who = "telegram") {
   return act === "ack" ? `Kuitattu Myko:ssa: ${type} (ei muistutuksia)` : `${type} ohitettu 1 h`;
 }
 
-async function onUpdate(u, allow) {
+async function onUpdate(u, allow, actionAllow) {
   const cq = u.callback_query; const m = u.message ?? u.edited_message;
   const chatId = String(cq?.message?.chat?.id ?? m?.chat?.id ?? "");
   if (!chatId) return;
@@ -166,24 +223,27 @@ async function onUpdate(u, allow) {
   }
   if (!m?.text) return;
   if (!m.text.startsWith("/")) await tg("sendChatAction", { chat_id: chatId, action: "typing" }).catch(() => undefined);
-  const reply = await handleText(m.text).catch((e) => `Virhe: ${e.message.slice(0, 100)}`);
+  const who = m.from?.username ?? String(m.from?.id ?? "");
+  const allowWrites = actionAllow.has(chatId);
+  const announce = async (t) => { await tg("sendMessage", { chat_id: chatId, text: String(t).slice(0, 500) }); };
+  const reply = await handleText(m.text, { who, chatId, allowWrites, announce }).catch((e) => `Virhe: ${e.message.slice(0, 100)}`);
   await tg("sendMessage", { chat_id: chatId, text: reply.slice(0, 4000) });
 }
 
 async function main() {
-  const me = await tg("getMe"); console.log(`[telegram] @${me.username} polling`);
+  const me = await tg("getMe");
+  console.log(`[telegram] @${me.username} polling models=${deepseekModels().join(",")}`);
   await tg("setMyCommands", { commands: [{ command: "status", description: "Tila: F1, T1, G_Air + hälytykset" }, { command: "halytykset", description: "Aktiiviset hälytykset" }, { command: "help", description: "Ohje" }] }).catch(() => undefined);
   let offset = 0;
   for (;;) {
     try {
       const ups = await tg("getUpdates", { offset, timeout: 50, allowed_updates: ["message", "callback_query"] }, 65_000);
       const allow = await allowedChats();
-      for (const u of ups) { offset = u.update_id + 1; await onUpdate(u, allow).catch((e) => console.error("[telegram] update", e.message)); }
+      const actionAllow = await actionChats();
+      for (const u of ups) { offset = u.update_id + 1; await onUpdate(u, allow, actionAllow).catch((e) => console.error("[telegram] update", e.message)); }
     } catch (e) { console.error("[telegram] poll", e.message); await new Promise((r) => setTimeout(r, 5000)); }
   }
 }
-// One-off enrolment after the owner sent /start: node src/telegram.js --allow-pending
-// -> pending chat ids (telegram_pending_chats) become allowed (telegram_chat_ids) and get ONE test message with a test Kuittaa button.
 async function allowPending() {
   const pend = Object.keys(await setting("telegram_pending_chats", {}));
   if (!pend.length) { console.log("no pending /start chats"); return; }
