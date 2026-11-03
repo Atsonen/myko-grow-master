@@ -820,7 +820,7 @@ app.get(
 const ALARM_DESC_FI = {
   WARN: "Lämpötila poikkeaa varoitusrajan yli", HIGH: "Lämpötila liian korkea", CRIT: "Lämpötila kriittisen korkea",
   LOW: "Lämpötila liian matala", FREEZE: "Pakkasraja: lämpötila ≤ 0 °C", COLD: "Lämpötila liian kylmä",
-  FLATLINE: "Anturiarvo ei ole muuttunut (jumittunut anturi?)", STALE: "Anturilta ei tule dataa",
+  FLATLINE: "SensorBlock Uptime jumissa tai DS-virhekoodi (≤ -100)", STALE: "Anturilta ei tule dataa",
   EI_AUTO: "Säädin ei ole automaatilla", PID_VIKA: "PID-säätimen vika päällä (Error=1)",
   ERRORBITS: "PID ErrorBits≠0 – kuittaamaton PLC-vika", OPCUA: "Ei PID-dataa OPC UA:sta yli 60 s",
   SATUROITUNUT: "Säätimen lähtö ±100 % yli 30 min", SENSOR_VIKA: "PV-syötön anturiarvo ei kelpaa", LAHTO_NAN: "PID-lähtö virheellinen (NaN) yli 60 s", PID_LAHTO_JUMISSA: "PID-lähtö jumissa (ei hälytä deadbandin sisällä)",
