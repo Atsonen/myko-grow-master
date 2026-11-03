@@ -25,6 +25,9 @@ Alarm policy (2026-10-24, F1/T1 are in outdoor temperature): F1 warming is not d
 near freezing; ~2 °C deviations only slow the process -> WARN bits are MQTT/PLC-only, F1 HIGH (>=SP+4) and T1 LOW
 (<=SP-4) are low-priority notices, F1 CRIT is MQTT-only, T1 COLD = critical below 5 °C. Overridable with
 myko_settings k='alarm_policy' JSON, e.g. {"F1":{"high_delta_min":5},"T1":{"cold_c":4}}.
+FLATLINE (2026-11-03): any value change resets the timer; SensorBlock Uptime increasing => healthy;
+device flatline only if Uptime frozen ~3 min; value stagnation while Uptime grows uses configurable limit (default 30 min).
+Override with myko_settings k='flatline_policy' JSON.
 Reminders: active alarms are repeated every REMIND_MIN as ONE combined WhatsApp, one short line per alarm.
 Channels (2026-10-24): Telegram (tg_alert.py, @Valvomo_bot) is the primary channel, WhatsApp the backup; both on by default,
 switchable with myko_settings k='alarm_channels' {"telegram":true,"whatsapp":true}. Same policy (wa_skip/low_prio) for both.
@@ -38,9 +41,27 @@ from zoneinfo import ZoneInfo
 D=os.path.dirname(os.path.abspath(__file__))
 HEL=ZoneInfo("Europe/Helsinki"); UTC=dt.timezone.utc
 REMIND_MIN=60
-FLAT_MQTT_MIN=15; FLAT_WA_MIN=120  # FLATLINE: MQTT bit at 15 min; WhatsApp (FLATLINE_WA) at 120 min
+# FLATLINE (2026-11-03): short value-flat removed. Any value change resets the stuck timer.
+# If the source SensorBlock Uptime is increasing -> healthy (no short flatline).
+# Device alarm only when Uptime unchanged for uptime_stuck_min (~3 min).
+# Pure value stagnation while Uptime grows -> long configurable limit (default 6 h).
+# Override with myko_settings k='flatline_policy' JSON.
+FLAT_DEFAULTS={
+ "value_eps":0.0,          # 0 = any inequality counts as alive (even 0.01 °C)
+ "value_flat_min":30,      # minutes of unchanged value while SB healthy -> MQTT FLATLINE
+ "wa_min":30,              # same for WhatsApp FLATLINE_WA
+ "uptime_stuck_min":3,     # minutes of unchanged SB Uptime -> device FLATLINE (+ WA)
+ "sb_api":"http://127.0.0.1:3010/api/sensorblock",
+ "sources":{
+   "ColdStorage1":{"device":"SensorBlock_1","field":"DStemp1"},
+   "Terrario1":{"device":"SensorBlock_1","field":"DStemp2"},
+ }}
+# Legacy names kept as aliases of the long value-flat limits (for msg text fallback)
+FLAT_MQTT_MIN=FLAT_DEFAULTS["value_flat_min"]; FLAT_WA_MIN=FLAT_DEFAULTS["wa_min"]
 MQTT_ONLY={"FLATLINE"}
 MQTT_HOST,MQTT_PORT="192.168.1.51","1883"
+SB_UP_STATE=os.path.join(D,"sb_uptime_state.json")
+_ASSUME_SB_OK=False  # set True in --sim so history replay assumes healthy SensorBlock
 CTRL_BITS={"ON":7,"HEAT":8,"COOL":9}; SP_SHIFT=10; SP_MASK=0x1F; DIS_BIT=15
 HB_STATE=os.path.join(D,"heartbeat_state.json")
 POLICY_DEFAULTS={
@@ -72,6 +93,92 @@ def channels():
     c={"telegram":True,"whatsapp":True}; v=setting("alarm_channels",{})
     if isinstance(v,dict): c.update({k:bool(x) for k,x in v.items() if k in c})
     return c
+
+def flat_policy():
+    """Effective flatline policy: code defaults, overridden by myko_settings k='flatline_policy'."""
+    p={k:(dict(v) if isinstance(v,dict) else v) for k,v in FLAT_DEFAULTS.items()}
+    p["sources"]={k:dict(v) for k,v in FLAT_DEFAULTS["sources"].items()}
+    v=setting("flatline_policy",{})
+    if isinstance(v,dict):
+        for k,x in v.items():
+            if k=="sources" and isinstance(x,dict):
+                for pid,src in x.items():
+                    if isinstance(src,dict): p["sources"].setdefault(pid,{}).update(src)
+            elif k in p and not isinstance(p[k],dict):
+                p[k]=type(FLAT_DEFAULTS[k])(x) if k in FLAT_DEFAULTS else x
+            else:
+                p[k]=x
+    return p
+
+def _load_sb_up():
+    try:
+        if os.path.exists(SB_UP_STATE): return json.load(open(SB_UP_STATE))
+    except Exception: pass
+    return {}
+
+def _save_sb_up(d):
+    try: json.dump(d,open(SB_UP_STATE,"w"),indent=1)
+    except Exception: pass
+
+def fetch_sb_item(device, api):
+    """Live SensorBlock item from Myko API (Uptime + temps). None on failure."""
+    try:
+        import urllib.request
+        with urllib.request.urlopen(api, timeout=3) as r:
+            data=json.loads(r.read().decode())
+        for it in data.get("items") or []:
+            if it.get("device")==device: return it
+    except Exception: return None
+    return None
+
+def sb_health(device, now, persist=True):
+    """Track SensorBlock Uptime across runs.
+    Returns dict: ok (Uptime increasing recently), stuck (Uptime frozen), stuck_sec, uptime, unknown."""
+    if _ASSUME_SB_OK or not device:
+        return {"ok":True,"stuck":False,"stuck_sec":0,"uptime":None,"unknown":False,"assume":True}
+    api=flat_policy().get("sb_api") or FLAT_DEFAULTS["sb_api"]
+    it=fetch_sb_item(device, api)
+    if not it:
+        return {"ok":False,"stuck":False,"stuck_sec":0,"uptime":None,"unknown":True}
+    vals=it.get("values") or {}
+    up=vals.get("Uptime")
+    try: up=int(up) if up is not None else None
+    except Exception: up=None
+    st=_load_sb_up(); prev=st.get(device) or {}
+    changed_at=prev.get("changed_at"); last_up=prev.get("uptime")
+    if up is None:
+        return {"ok":False,"stuck":False,"stuck_sec":0,"uptime":None,"unknown":True}
+    if last_up is None or up!=last_up:
+        # Uptime moved (or first sample / reboot if up < last) -> healthy pulse
+        changed_at=now.isoformat(); growing=True
+    else:
+        growing=False
+        try: t0=dt.datetime.fromisoformat(changed_at) if changed_at else now
+        except Exception: t0=now
+        if t0.tzinfo is None: t0=t0.replace(tzinfo=UTC)
+    if persist:
+        st[device]={"uptime":up,"changed_at":changed_at or now.isoformat(),"seen_at":now.isoformat(),
+                    "ageMs":it.get("ageMs"),"stale":bool(it.get("stale"))}
+        _save_sb_up(st)
+    try: t0=dt.datetime.fromisoformat(changed_at) if changed_at else now
+    except Exception: t0=now
+    if t0.tzinfo is None: t0=t0.replace(tzinfo=UTC)
+    stuck_sec=max(0,(now-t0).total_seconds()) if not growing else 0
+    stuck_lim=float(flat_policy().get("uptime_stuck_min",3))*60
+    stuck=stuck_sec>=stuck_lim
+    return {"ok":(not stuck) and (growing or stuck_sec<stuck_lim),"stuck":stuck,
+            "stuck_sec":stuck_sec,"stuck_since":t0 if stuck else None,
+            "uptime":up,"unknown":False,"growing":growing}
+
+def value_flat_since(rows, last_v, eps=0.0):
+    """Earliest timestamp of the trailing run of unchanged values. Any change > eps resets."""
+    st=None
+    for t,v in reversed(rows):
+        same=(v==last_v) if not eps else abs(v-last_v)<=eps
+        if same: st=t
+        else: break
+    return st
+
 def _acks():
     v=setting("telegram_alarm_acks",{}); return v if isinstance(v,dict) else {}
 def suppressed(key,now):
@@ -125,6 +232,7 @@ POINTS={
    bits={"WARN":0,"HIGH":1,"CRIT":2,"LOW":3,"FREEZE":4,"FLATLINE":5,"STALE":6},instant={"FREEZE"},
    state="cold_alarm_state.json",log="cold_alarm.log",plc="F1",
    defaults=dict(on=1,heat=0,cool=0,setpoint=8,warn_delta=1.0,warn_min=30,warn_both=0,high_delta=3.0,high_min=10,low_delta=3.0,low_min=3,disabled_until=None)),
+ # Terrario1 temp = SensorBlock_1 DStemp2 -> datalogger dl00 (same FLATLINE policy as ColdStorage1)
  "Terrario1":dict(name="Terrario 1",var="dl00",topic="Myko/Alarms/Terrario1",rules=t1_rules,
    bits={"WARN":0,"HIGH":1,"CRIT":2,"LOW":3,"COLD":4,"FLATLINE":5,"STALE":6},instant=set(),
    state="terrario1_alarm_state.json",log="terrario1_alarm.log",plc="T1",
@@ -187,12 +295,28 @@ def evaluate(P,rows,now,ctrl):
         active=start is not None and (now-start).total_seconds()>=mins*60 and f(last_v)
         if k in P["instant"]: active=f(last_v)
         res[k]=(active,{"since":start,"v":last_v,"max":max(v for t,v in rows if start and t>=start) if start else last_v,"min":min(v for t,v in rows if start and t>=start) if start else last_v})
-    st=None
-    for t,v in reversed(rows):
-        if v==last_v: st=t
-        else: break
-    res["FLATLINE"]=(st is not None and (last_t-st).total_seconds()>=FLAT_MQTT_MIN*60,{"since":st,"v":last_v})
-    res["FLATLINE_WA"]=(st is not None and (last_t-st).total_seconds()>=FLAT_WA_MIN*60,{"since":st,"v":last_v})
+    # FLATLINE: SensorBlock Uptime-aware (see FLAT_DEFAULTS / flatline_policy).
+    # Applies equally to ColdStorage1 and Terrario1 (sources map). Independent of ctrl.on / PID State/Mode:
+    # temperature + FLATLINE/STALE bits stay evaluated when the point or PID is OFF.
+    pol=flat_policy(); eps=float(pol.get("value_eps") or 0.0)
+    st=value_flat_since(rows, last_v, eps)
+    flat_sec=(last_t-st).total_seconds() if st is not None else 0.0
+    pid=point_id(P); src=(pol.get("sources") or {}).get(pid) or {}
+    device=src.get("device")
+    # persist uptime only on live runs (dry-run/sim pass persist=False via _ASSUME or flag)
+    persist=not _ASSUME_SB_OK and not getattr(evaluate,"_no_persist",False)
+    health=sb_health(device, now, persist=persist) if device else {"ok":True,"stuck":False,"stuck_sec":0,"uptime":None,"unknown":True}
+    v_lim=float(pol.get("value_flat_min",360))*60
+    wa_lim=float(pol.get("wa_min",360))*60
+    device_flat=bool(health.get("stuck"))
+    # Healthy / unknown SB: only long value-stagnation alarms (no short 15 min flat)
+    value_mqtt=flat_sec>=v_lim
+    value_wa=flat_sec>=wa_lim
+    info={"since":(health.get("stuck_since") if device_flat else st),"v":last_v,
+          "reason":("uptime" if device_flat else "value"),"uptime":health.get("uptime"),
+          "flat_min":int(flat_sec//60),"value_limit_min":int(v_lim//60),"uptime_stuck_min":int(pol.get("uptime_stuck_min",3))}
+    res["FLATLINE"]=(device_flat or value_mqtt,info)
+    res["FLATLINE_WA"]=(device_flat or value_wa,info)
     if res["STALE"][0]:
         for k in ("FLATLINE","FLATLINE_WA"): res[k]=(False,res[k][1])
     return res
@@ -201,7 +325,14 @@ def msg(P,ctrl,kind,typ,info,now):
     NAME=P["name"]; v=info.get("v"); cur=f"Nyt {v:.1f} °C ({hel(now)})" if v is not None else f"({hel(now)})"
     since=f"alkaen {hel(info['since'])}" if info.get("since") else ""
     if typ=="STALE": d=f"ei uusia mittauksia {since.replace('alkaen','viimeisin')}".strip(); lab="YHTEYSVIKA: ei dataa 10 min"; cur=f"Viimeisin arvo {v:.1f} °C" if v is not None else ""
-    elif typ in ("FLATLINE","FLATLINE_WA"): lab=f"ANTURIVIKA?: arvo ei muutu {FLAT_WA_MIN} min"; d=f"sama arvo {since}"
+    elif typ in ("FLATLINE","FLATLINE_WA"):
+        reason=info.get("reason") or "value"; lim=info.get("value_limit_min") or flat_policy().get("wa_min",FLAT_WA_MIN)
+        if reason=="uptime":
+            lab=f"ANTURIVIKA?: SensorBlock Uptime jumissa {info.get('uptime_stuck_min') or flat_policy().get('uptime_stuck_min',3)} min"
+            d=f"Uptime ei kasva {since}"+(f" (Uptime={info.get('uptime')})" if info.get("uptime") is not None else "")
+        else:
+            lab=f"ANTURIVIKA?: arvo ei muutu {lim} min (SB OK)"
+            d=f"sama arvo {since}"
     else:
         lab=P["rules"](ctrl)[typ][0]; dur=int((now-info['since']).total_seconds()//60) if info.get("since") else 0
         low=typ in ("LOW","FREEZE","COLD") or (typ=="WARN" and v is not None and v<ctrl["setpoint"])
@@ -276,6 +407,7 @@ WORDS={}; DISABLED={}
 def run_point(pid,a,now,sender_factory,hb):
     P=POINTS[pid]; ctrl=controls(pid,P); STATE=os.path.join(D,P["state"])
     if a.sim:
+        global _ASSUME_SB_OK; _ASSUME_SB_OK=True  # history has no SB Uptime log; assume healthy device
         s,e=[dt.datetime.fromisoformat(x).replace(tzinfo=HEL).astimezone(UTC) for x in a.sim]
         allr=query(P["var"],s-dt.timedelta(hours=24),e); state={}; t=s; n=0; ts=[r[0] for r in allr]
         while t<=e:
