@@ -11,7 +11,7 @@
 //   hb     HbOk===false          "Täyttöpumppu: heartbeat puuttuu" (debounce 45 s)
 import fs from "node:fs";
 import mqtt from "mqtt";
-import { tg, allowedChats } from "./telegram.js";
+import { notifyAlert } from "./notifyAlert.js";
 
 const TOPIC = "Sensors/PLC_2/FillPump";
 const CMD_TOPIC = "Myko/Cmd/FillPump";
@@ -143,13 +143,11 @@ function validate(body) {
 }
 
 async function notify(text) {
-  for (const chat_id of await allowedChats()) await tg("sendMessage", { chat_id, text });
+  await notifyAlert(text, { tag: "fillpump " });
 }
 async function notifySafe(t) {
-  for (let i = 0; i < 3; i++) {
-    try { await notify(t); return; }
-    catch (e) { console.warn("[fillpump] telegram", e.message); await new Promise((r) => setTimeout(r, 5000 * (i + 1))); }
-  }
+  const r = await notifyAlert(t, { tag: "fillpump " });
+  if (!r.ok) console.warn("[fillpump] notify fail", r.error || r.channel);
 }
 
 // Negatiiviset id:t hälytyslistaan: -1.85e9..-1.89e9 (fert -2e9, kasvamo -1.9e9, disabled -1.8e9).

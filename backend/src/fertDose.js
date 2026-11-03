@@ -8,7 +8,7 @@
 // VAROITUS -> vain UI/hälytyslista. HI/LO palautuvat kukin oman rajansa perusteella (eivät jumita toisiaan).
 import mqtt from "mqtt";
 import { query } from "./db.js";
-import { tg, allowedChats } from "./telegram.js";
+import { notifyAlert } from "./notifyAlert.js";
 import { disableMinutes, untilTxt, logToggle, DIS_DEFAULT_MIN } from "./alarmDisable.js";
 
 const DEF = {
@@ -98,10 +98,8 @@ async function backfillTrend(ecKey) {
 }
 const logRow = (fert, ms, ec, sp, reason, mode) => query("INSERT INTO fert_dose_log (ts, fert, requested_ms, actual_ms, ec_before, ec_sp, reason, mode) VALUES (UTC_TIMESTAMP(), ?, ?, NULL, ?, ?, ?, ?)", [fert, ms, ec ?? null, sp ?? null, String(reason).slice(0, 200), mode]);
 async function notify(text) {
-  for (let i = 0; i < 4; i++) {
-    try { for (const chat_id of await allowedChats()) await tg("sendMessage", { chat_id, text }); return; }
-    catch (e) { console.warn(`[fertdose] telegram (yritys ${i + 1}/4)`, e.message); await new Promise((r) => setTimeout(r, 5000 * (i + 1))); }
-  }
+  const r = await notifyAlert(text, { tag: "fertdose " });
+  if (!r.ok) console.warn("[fertdose] notify fail", r.error || r.channel);
 }
 
 // ---------- MQTT / bridge ----------

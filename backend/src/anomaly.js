@@ -1,25 +1,14 @@
 // DeepSeek anomaly monitor: every 15 min, READ-ONLY. Summarises PID + sensor data, stores findings (llm_findings),
-// logs them as events (alarm_events point LLM_Advisor), severity high -> WhatsApp via the normal wa_alert.send path.
+// logs them as events (alarm_events point LLM_Advisor), severity high -> notifyAlert (Telegram primary, WhatsApp fallback).
 // It may RECOMMEND a sensor 5 V reset (recommend_reset) but never executes one.
 import { processContext } from "./processDoc.js";
-import { execFile } from "node:child_process";
 import { deepseekChat } from "./deepseek.js";
+import { notifyAlert } from "./notifyAlert.js";
 
 const EVERY_MIN = 15, DEDUPE_H = 6, FROZEN_MIN = 60, STALE_MIN = 10;
-const WA_PY = "/usr/bin/python3", WA_DIR = "/home/atte/myko-ml";
 const SEV = ["info", "low", "medium", "high"];
-// "high" (-> WhatsApp) only for control-relevant points: the PIDs and their PV sensors. Other sensors are capped at medium.
+// "high" (-> notify) only for control-relevant points: the PIDs and their PV sensors. Other sensors are capped at medium.
 const CRITICAL = new Set(["F1", "T1", "G_Air", "SYSTEM", "dl00", "dl02", "dl31"]);
-
-function sendWhatsApp(text) {
-  return new Promise((resolve) => execFile(WA_PY, ["-c", "import sys; sys.path.insert(0, sys.argv[1]); from wa_alert import send; r = send(sys.argv[2], tag='llm'); print('OK' if r[0] else 'FAIL', r[1])", WA_DIR, text],
-    { timeout: 60_000, cwd: WA_DIR }, (err, out) => resolve(!err && String(out).startsWith("OK"))));
-}
-
-function sendTelegram(text) {
-  return new Promise((resolve) => execFile(WA_PY, ["-c", "import sys; sys.path.insert(0, sys.argv[1]); from tg_alert import send; send(sys.argv[2])", WA_DIR, text],
-    { timeout: 30_000, cwd: WA_DIR }, (err) => resolve(!err)));
-}
 
 export function registerAnomaly(app, { query, asyncRoute, pidState, PID_POINTS }) {
   let running = false, lastRun = 0;
@@ -84,8 +73,7 @@ high vain, jos säätö on vaarassa tai tuote vaarassa (esim. PID:n PV jäätyny
         if (!dup) {
           await query("INSERT INTO alarm_events (point_id, alarm, bit, event, at, value, status_word) VALUES ('LLM_Advisor', ?, NULL, 'llm', UTC_TIMESTAMP(3), NULL, NULL)",
             [`[${sev}] ${point}: ${f.finding}${f.recommend_reset ? " (suositus: anturireset)" : ""}`.slice(0, 255)]).catch((e) => console.error("[anomaly] event", e.message));
-          if (sev === "high") { const msg = `🤖 Myko-valvoja: ${point} – ${String(f.finding ?? "").split(/(?<=[.!?])\s/)[0]}`.slice(0, 160); sendTelegram(msg); wa = await sendWhatsApp(msg); }
-          if (false) wa = await sendWhatsApp(`🤖 Myko-valvoja: ${point} – ${String(f.finding ?? "").split(/(?<=[.!?])\s/)[0]}`.slice(0, 160));
+          if (sev === "high") { const msg = `🤖 Myko-valvoja: ${point} – ${String(f.finding ?? "").split(/(?<=[.!?])\s/)[0]}`.slice(0, 160); const n = await notifyAlert(msg, { tag: "llm " }); wa = n.ok; }
         }
         await query(`INSERT INTO llm_findings (at, run_id, \`trigger\`, severity, point, category, finding, suggestion, recommend_reset, duplicate, whatsapp, prompt_tokens, completion_tokens)
           VALUES (UTC_TIMESTAMP(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [runId, trigger, sev, point, cat, String(f.finding ?? "").slice(0, 1000), String(f.suggestion ?? "").slice(0, 1000), f.recommend_reset ? 1 : 0, dup ? 1 : 0, wa === null ? null : wa ? 1 : 0, u.prompt_tokens ?? null, u.completion_tokens ?? null]);

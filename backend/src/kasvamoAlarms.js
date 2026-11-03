@@ -4,7 +4,7 @@
 // Tila: /home/atte/.config/myko/kasvamo_alarm_state.json. Vain luku: ei PLC-kirjoituksia.
 import fs from "node:fs";
 import { query } from "./db.js";
-import { tg, allowedChats } from "./telegram.js";
+import { notifyAlert } from "./notifyAlert.js";
 import { disableMinutes, untilTxt, logToggle, DIS_DEFAULT_MIN } from "./alarmDisable.js";
 const STATE = "/home/atte/.config/myko/kasvamo_alarm_state.json";
 const DEF = { enabled: true, delay_min: 5, stale_min: 20, limits: {
@@ -23,7 +23,7 @@ async function cfg() {
 }
 const NAME = (k) => (k === "all" ? "Kasvamo (kaikki)" : `Kasvamo ${SIG[k]?.[1] ?? k}`);
 const saveKas = (next) => query("INSERT INTO myko_settings (k, v, updated_by) VALUES ('kasvamo_alarms', ?, 'ui') ON DUPLICATE KEY UPDATE v = VALUES(v), updated_by = VALUES(updated_by)", [JSON.stringify(next)]);
-async function notifySafe(t) { for (let i = 0; i < 3; i++) { try { await notify(t); return; } catch (e) { console.warn("[kasvamo] telegram", e.message); await new Promise((r) => setTimeout(r, 5000 * (i + 1))); } } }
+async function notifySafe(t) { const r = await notifyAlert(t, { tag: "kasvamo " }); if (!r.ok) console.warn("[kasvamo] notify fail", r.error || r.channel); }
 // Poiskytkentöjen aikarajat: puuttuva aikaraja -> oletus, erääntynyt -> takaisin päälle + loki + Telegram.
 async function disableCheck(c) {
   let dirty = false; const now = Date.now();
@@ -69,7 +69,7 @@ async function evaluate(c, port) {
   } catch (e) { console.warn("[kasvamo] pumput", e.message); }
   return out;
 }
-async function notify(text) { for (const chat_id of await allowedChats()) await tg("sendMessage", { chat_id, text }); }
+async function notify(text) { await notifyAlert(text, { tag: "kasvamo " }); }
 export function kasvamoAlarmRows() {
   return Object.entries(st.active).filter(([, v]) => v).map(([k]) => ({ id: kId(k), pointId: "Kasvamo", pointName: "Kasvamo", unit: "", alarm: k.toUpperCase(),
     bit: null, priority: 1, start: new Date(st.at?.[k] ?? Date.now()).toISOString(), end: null, active: true, value: null, endValue: null,

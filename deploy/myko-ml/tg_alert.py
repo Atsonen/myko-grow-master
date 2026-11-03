@@ -17,7 +17,10 @@ def _env():
     return c
 def _log(s):
     import datetime
-    with open(LOG,"a",encoding="utf-8") as f: f.write(f"{datetime.datetime.now().isoformat(timespec='seconds')} {s}\n")
+    try:
+        with open(LOG,"a",encoding="utf-8") as f: f.write(f"{datetime.datetime.now().isoformat(timespec='seconds')} {s}\n")
+    except OSError:
+        pass
 def chat_ids(db_ids=()):
     e=_env(); raw=os.environ.get("MYKO_TELEGRAM_CHAT_IDS") or e.get("MYKO_TELEGRAM_CHAT_IDS","")
     ids=[x.strip() for x in raw.split(",") if x.strip()]+[str(x) for x in db_ids]
@@ -34,7 +37,7 @@ def send(text,buttons_key=None,chat_ids_=None):
                                                       {"text":"Ohita 1 h","callback_data":f"mute:{buttons_key}"[:64]}]]}
         try:
             req=urllib.request.Request(f"https://api.telegram.org/bot{tok}/sendMessage",data=json.dumps(body).encode(),headers={"Content-Type":"application/json"})
-            r=json.load(urllib.request.urlopen(req,timeout=15)); ok=bool(r.get("ok"))
+            r=json.load(urllib.request.urlopen(req,timeout=10)); ok=bool(r.get("ok"))
         except Exception as ex: ok=False; r={"description":type(ex).__name__}  # exception text could contain the URL -> only the type
         _log(f"send chat={cid} ok={ok} {'' if ok else r.get('description','')} msg={text!r}"); ok_any|=ok
     return ok_any

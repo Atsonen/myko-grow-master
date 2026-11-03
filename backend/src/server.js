@@ -24,6 +24,7 @@ import { registerAutoRecovery } from "./autoRecovery.js";
 import { registerIncidents } from "./incidents.js";
 import { kpLogAction, kpOpenIncidentFor, kq } from "./kunnossapito.js";
 import { tg, allowedChats } from "./telegram.js";
+import { notifyAlert } from "./notifyAlert.js";
 import { normalizeOrigins, registerTraceRoutes, writeOrigins } from "./trace.js";
 
 dotenv.config();
@@ -1167,7 +1168,7 @@ async function kpLogPidCommand({ key, cmd, result, actor = "myko-ui", label }) {
 const { pidCommand, pidState, setFeedAlarms, setHC, hcMode, pidActive, pidRestartAt, pidPvAt, pidTrend, pidIntent, mqttConnected } = registerPidRoutes(app, { mqttClient: mqttPublisher, query, asyncRoute, onCommand: (a) => kpLogPidCommand(a) });
 // kunnossapito auto-recovery watcher (Telegram Tee/Älä, 10 min timeout -> autonomous); see autoRecovery.js
 const autoRec = registerAutoRecovery(app, { pidState, pidActive, pidRestartAt, pidPvAt, PID_POINTS, asyncRoute, port: Number(process.env.PORT || 3010),
-  notify: async (text, reply_markup) => { const out = []; for (const chat_id of await allowedChats()) out.push(await tg("sendMessage", { chat_id, text, ...(reply_markup ? { reply_markup } : {}) })); return out; } });
+  notify: async (text, reply_markup) => { const r = await notifyAlert(text, { reply_markup, tag: "autorecovery " }); return r.ok ? [r] : []; } });
 registerIncidents({ query, PID_POINTS, PID_BY_POINT, pidState, pidActive, pidRestartAt, pidPvAt, pidTrend, pidIntent, mqttConnected, autoRecoveryMode: () => autoRec.mode() });
 startWeather({ query });
 registerFmiWeather(app, { query, asyncRoute });
