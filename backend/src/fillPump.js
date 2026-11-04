@@ -23,6 +23,9 @@ const EVENTS_PATH = "/home/atte/.config/myko/fillpump_events.json";
 const HB_DELAY_MS = 45_000; // debounce heartbeat (30–60 s)
 const ERR_DELAY_MS = 10_000; // St_Error on jo PLC:n päättämä vika – lyhyt varmistus
 const HIST_KEEP_MS = 24 * 3600_000; // ~24 h minute buckets
+/** Break / backfill threshold: missing > ~2.5 min between minute buckets. */
+export const HIST_GAP_MS = 150_000;
+const DL_LEVEL_KEY = "dl25"; // same tank level as FillPump (numeric_value %, timestamps UTC)
 const EVENTS_KEEP = 80;
 const ALLOWED = {
   Cfg_Enable: { type: "bool" },
@@ -62,7 +65,11 @@ const saveSt = () => {
 let hist = [];
 try {
   const j = JSON.parse(fs.readFileSync(HIST_PATH, "utf8"));
-  if (Array.isArray(j)) hist = j.filter((p) => p && Number.isFinite(p.t) && Number.isFinite(p.v));
+  if (Array.isArray(j)) {
+    hist = j.filter((p) => p && Number.isFinite(p.t) && Number.isFinite(p.v)).map((p) => (
+      p.bf ? { t: p.t, v: p.v, bf: true } : { t: p.t, v: p.v }
+    ));
+  }
 } catch { /* first run */ }
 
 /** @type {{ ts: string, kind: string, text: string, code?: string }[]} */
@@ -87,10 +94,114 @@ const saveEvents = () => {
   } catch (e) { console.warn("[fillpump] events", e.message); }
 };
 
+/** Atomic persist of hist (+ events/alarms). Safe to call from SIGTERM/SIGINT. */
+export function persistFillPumpState() {
+  saveHist();
+  saveEvents();
+  saveSt();
+}
+
 function pushEvent(kind, text, code) {
   events.push({ ts: new Date().toISOString(), kind, text: String(text).slice(0, 200), ...(code ? { code } : {}) });
   events = events.slice(-EVENTS_KEEP);
   saveEvents();
+}
+
+function pruneHist(now = Date.now()) {
+  const cut = now - HIST_KEEP_MS;
+  if (hist.length > 10 && hist[0].t < cut) hist = hist.filter((p) => p.t >= cut);
+}
+
+/**
+ * Merge minute-bucket DL points into hist across gaps (> gapMs).
+ * Backfilled points get `{ bf: true }`. Pure — used by startup backfill + tests.
+ * @param {{ t: number, v: number, bf?: boolean }[]} cur
+ * @param {{ t: number, v: number }[]} dlBuckets minute-aligned
+ */
+export function backfillHistGaps(cur, dlBuckets, opts = {}) {
+  const gapMs = opts.gapMs ?? HIST_GAP_MS;
+  const now = opts.now ?? Date.now();
+  const keepMs = opts.keepMs ?? HIST_KEEP_MS;
+  const cut = opts.cut ?? now - keepMs;
+  /** @type {Map<number, { t: number, v: number, bf?: boolean }>} */
+  const byT = new Map();
+  for (const p of cur ?? []) {
+    if (!p || !Number.isFinite(p.t) || !Number.isFinite(p.v) || p.t < cut) continue;
+    byT.set(p.t, p.bf ? { t: p.t, v: p.v, bf: true } : { t: p.t, v: p.v });
+  }
+  /** @type {Map<number, number>} */
+  const dl = new Map();
+  for (const p of dlBuckets ?? []) {
+    if (!p || !Number.isFinite(p.t) || !Number.isFinite(p.v) || p.t < cut || p.t > now) continue;
+    const m = Math.floor(p.t / 60_000) * 60_000;
+    dl.set(m, p.v);
+  }
+  const times = [...byT.keys()].sort((a, b) => a - b);
+  /** @type {[number, number, "open" | "closed"][]} g0..g1; "closed" includes g0 (empty/leading window). */
+  const gaps = [];
+  if (!times.length) {
+    gaps.push([cut, now, "closed"]);
+  } else {
+    if (times[0] - cut > gapMs) gaps.push([cut, times[0], "closed"]); // include cut..first-
+    for (let i = 0; i < times.length - 1; i++) {
+      if (times[i + 1] - times[i] > gapMs) gaps.push([times[i], times[i + 1], "open"]);
+    }
+    if (now - times[times.length - 1] > gapMs) gaps.push([times[times.length - 1], now, "open"]);
+  }
+  let added = 0;
+  for (const [g0, g1, mode] of gaps) {
+    for (const [t, v] of dl) {
+      const inGap = mode === "closed" ? (t >= g0 && t <= g1) : (t > g0 && t <= g1);
+      if (inGap && !byT.has(t)) {
+        byT.set(t, { t, v, bf: true });
+        added++;
+      }
+    }
+  }
+  const out = [...byT.values()].sort((a, b) => a.t - b.t);
+  return { hist: out, added, gaps: gaps.length };
+}
+
+/** Bucket raw DL rows (ms timestamps) to 1 min. */
+export function bucketDlMinutes(rows) {
+  /** @type {{ t: number, v: number }[]} */
+  const byMin = [];
+  for (const r of rows ?? []) {
+    const tRaw = Number(r.t);
+    const v = Number(r.v);
+    if (!Number.isFinite(tRaw) || !Number.isFinite(v)) continue;
+    const t = Math.floor(tRaw / 60_000) * 60_000;
+    if (!byMin.length || byMin[byMin.length - 1].t !== t) byMin.push({ t, v });
+    else byMin[byMin.length - 1].v = v;
+  }
+  return byMin;
+}
+
+async function backfillFromDl25() {
+  try {
+    const { query } = await import("./db.js");
+    // DATETIME is UTC; pool session time_zone=+00:00 (db.js TZ=UTC). Use numeric_value (dl25 scale 0.01 → %).
+    const rows = await query(
+      `SELECT UNIX_TIMESTAMP(timestamp) * 1000 AS t, CAST(numeric_value AS DECIMAL(12,3)) AS v
+       FROM datalogger_values
+       WHERE variable_key = ? AND timestamp > UTC_TIMESTAMP() - INTERVAL 25 HOUR
+       ORDER BY timestamp`,
+      [DL_LEVEL_KEY],
+    );
+    const buckets = bucketDlMinutes(rows);
+    const now = Date.now();
+    const { hist: merged, added, gaps } = backfillHistGaps(hist, buckets, { now, keepMs: HIST_KEEP_MS, gapMs: HIST_GAP_MS });
+    hist = merged;
+    pruneHist(now);
+    if (added > 0) {
+      saveHist();
+      console.log(`[fillpump] trend backfill ${DL_LEVEL_KEY}: +${added} pts across ${gaps} gap(s) → ${hist.length} pts`);
+    } else {
+      console.log(`[fillpump] trend backfill ${DL_LEVEL_KEY}: no gaps to fill (${buckets.length} dl min, hist ${hist.length})`);
+    }
+  } catch (e) {
+    console.warn("[fillpump] trend backfill", e.message);
+  }
 }
 
 function sampleLevel(plc) {
@@ -98,12 +209,15 @@ function sampleLevel(plc) {
   if (!Number.isFinite(v)) return;
   const now = Date.now();
   const m = Math.floor(now / 60_000) * 60_000;
-  if (!hist.length || hist[hist.length - 1].t !== m) hist.push({ t: m, v });
-  else hist[hist.length - 1].v = v;
-  const cut = now - HIST_KEEP_MS;
-  if (hist.length > 10 && hist[0].t < cut) hist = hist.filter((p) => p.t >= cut);
-  // Persist throttled: every ~5 samples or first
-  if (hist.length % 5 === 1) saveHist();
+  const last = hist.length ? hist[hist.length - 1] : null;
+  if (!last || last.t !== m) {
+    hist.push({ t: m, v });
+    pruneHist(now);
+    saveHist(); // new minute bucket → persist immediately (survives crash better)
+  } else {
+    last.v = v;
+    if (last.bf) delete last.bf; // live sample replaces backfill mark
+  }
 }
 
 function cmd(body, timeoutMs = 5000) {
@@ -257,7 +371,22 @@ export function fillPumpActiveAlarms() {
   return Object.entries(st.active).filter(([, v]) => v).map(([k]) => st.msg[k] ?? k);
 }
 
+let _shutdownHooked = false;
+function hookFillPumpShutdown() {
+  if (_shutdownHooked) return;
+  _shutdownHooked = true;
+  const onSig = (sig) => {
+    try {
+      console.log(`[fillpump] ${sig} → persist hist/events/alarms`);
+      persistFillPumpState();
+    } catch (e) { console.warn("[fillpump] shutdown persist", e?.message ?? e); }
+  };
+  process.on("SIGTERM", () => onSig("SIGTERM"));
+  process.on("SIGINT", () => onSig("SIGINT"));
+}
+
 export function startFillPump({ mqttUrl }) {
+  hookFillPumpShutdown();
   const mq = mqtt.connect(mqttUrl, { clientId: `myko-backend-fillpump-${process.pid}`, reconnectPeriod: 5000 });
   MQ = mq;
   mq.on("connect", () => { mq.subscribe(TOPIC); mq.subscribe(CMD_TOPIC + "/ack"); });
@@ -269,6 +398,10 @@ export function startFillPump({ mqttUrl }) {
     } catch { /* ignore */ }
   });
   mq.on("error", () => undefined);
+  // Startup: fill hist gaps from datalogger dl25 (UTC), like fertdose EC backfill.
+  backfillFromDl25().catch((e) => console.warn("[fillpump] backfill", e?.message ?? e));
+  // Periodic persist (value updates within a minute bucket do not always save).
+  setInterval(() => { try { saveHist(); } catch { /* ignore */ } }, 60_000);
   // Hälytysarvio ~10 s (ei PLC-kirjoituksia). Viiveet ERR_DELAY_MS / HB_DELAY_MS.
   setTimeout(() => {
     evalAlarms().catch((e) => console.warn("[fillpump] alarm", e.message));
@@ -282,7 +415,9 @@ export function registerFillPumpRoutes(app) {
     const p = S.plc || {};
     if (!stale && p.present) sampleLevel(p); // keep minute bucket fresh even if MQTT quiet
     const cut = Date.now() - HIST_KEEP_MS;
-    const trend = hist.filter((h) => h.t >= cut).map((h) => [h.t, h.v]);
+    const slice = hist.filter((h) => h.t >= cut);
+    const trend = slice.map((h) => [h.t, h.v]);
+    const trend_backfilled = slice.filter((h) => h.bf).length;
     res.json({
       plc: p,
       plc_at: S.at ? new Date(S.at).toISOString() : null,
@@ -293,6 +428,8 @@ export function registerFillPumpRoutes(app) {
       err_codes: ERR,
       allowed_writes: Object.keys(ALLOWED),
       trend,
+      trend_backfilled,
+      trend_gap_ms: HIST_GAP_MS,
       events: events.slice().reverse(),
       alarms: {
         active: Object.fromEntries(Object.entries(st.active).filter(([, v]) => v)),

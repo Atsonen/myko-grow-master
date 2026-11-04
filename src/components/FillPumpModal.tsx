@@ -1,9 +1,34 @@
 // Täyttöpumppu detail dialog – same informative style as EC & lannoiteannostelu.
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { setFillPump, type FillPumpResponse } from "@/lib/apiClient";
 import { DfBadge, DfKV, DfSection, DfSpBandTrend, DfSwitch, dfHm, dfYn } from "@/components/DeviceFaceplate";
+import { DEFAULT_PUMP_META, PumpRunLegend, usePumpRuns } from "@/components/trends/PumpRunOverlay";
 import { toast } from "sonner";
+
+/** Faceplate level trend windows (same set as PID, without 7 d — hist is ~24 h). */
+export const FILL_PUMP_TREND_RANGES = [
+  { h: 0.5, label: "30 min" },
+  { h: 1, label: "1 h" },
+  { h: 3, label: "3 h" },
+  { h: 12, label: "12 h" },
+  { h: 24, label: "24 h" },
+] as const;
+
+const LS_TREND_H = "myko.fillPump.rangeHours";
+export function loadFillPumpTrendHours(): number {
+  try {
+    const n = Number(localStorage.getItem(LS_TREND_H));
+    if (FILL_PUMP_TREND_RANGES.some((r) => r.h === n)) return n;
+  } catch { /* ignore */ }
+  return 24;
+}
+export function saveFillPumpTrendHours(h: number) {
+  try { localStorage.setItem(LS_TREND_H, String(h)); } catch { /* ignore */ }
+}
+
+/** Pumps shown on fill faceplate chart (fill + both circ). */
+const FP_PUMP_IDS = new Set(["fill", "circ_l", "circ_r"]);
 
 const FP_ERR: Record<number, string> = { 0: "ok", 1: "MaxRun ylitetty", 2: "käyntitieto / pinta-anturi" };
 
@@ -31,6 +56,11 @@ export function FillPumpModal({
   const [hyst, setHyst] = useState("");
   const [maxRun, setMaxRun] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
+  const [rangeHours, setRangeHours] = useState(loadFillPumpTrendHours);
+  const [pumpMaster, setPumpMaster] = useState(true);
+  const [pumpVisible, setPumpVisible] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries(DEFAULT_PUMP_META.filter((x) => FP_PUMP_IDS.has(x.id)).map((x) => [x.id, true])),
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -38,6 +68,25 @@ export function FillPumpModal({
     if (typeof p.Cfg_Hyst === "number") setHyst(String(p.Cfg_Hyst));
     if (typeof p.Cfg_MaxRun_s === "number") setMaxRun(String(p.Cfg_MaxRun_s));
   }, [open, p.Cfg_LvlSP, p.Cfg_Hyst, p.Cfg_MaxRun_s]);
+
+  const tEnd = useMemo(() => Date.now(), [d?.plc_at, d?.trend, rangeHours, open]);
+  const tStart = tEnd - rangeHours * 3600_000;
+  const fromIso = useMemo(() => new Date(tStart).toISOString(), [tStart]);
+  const toIso = useMemo(() => new Date(tEnd).toISOString(), [tEnd]);
+  const { pumps: pumpMetaAll, intervals: pumpIntervalsAll } = usePumpRuns(open && pumpMaster, fromIso, toIso);
+  const pumpMeta = useMemo(
+    () => (pumpMetaAll.length ? pumpMetaAll : DEFAULT_PUMP_META).filter((x) => FP_PUMP_IDS.has(x.id)),
+    [pumpMetaAll],
+  );
+  const pumpIntervals = useMemo(
+    () => pumpIntervalsAll.filter((iv) => FP_PUMP_IDS.has(iv.pump)),
+    [pumpIntervalsAll],
+  );
+  const pumpCounts = useMemo(() => {
+    const c: Record<string, number> = {};
+    for (const iv of pumpIntervals) c[iv.pump] = (c[iv.pump] ?? 0) + 1;
+    return c;
+  }, [pumpIntervals]);
 
   if (!open) return null;
 
@@ -124,8 +173,54 @@ export function FillPumpModal({
           </section>
 
           <section className="rounded-lg border border-border bg-card/60 p-3 lg:col-span-2">
-            <div className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Pintatrendi (~24 h)</div>
-            <DfSpBandTrend pts={trend} sp={spN} hyst={hystN} min={p.Cfg_LvlMin} max={p.Cfg_LvlMax} unit="%" testid="fp-trend" />
+            <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+              <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Pintatrendi ({FILL_PUMP_TREND_RANGES.find((r) => r.h === rangeHours)?.label ?? `${rangeHours} h`})
+              </div>
+              <div className="flex flex-wrap items-center gap-1" role="radiogroup" aria-label="Trendin aikaikkuna">
+                {FILL_PUMP_TREND_RANGES.map((r) => (
+                  <button
+                    key={r.h}
+                    type="button"
+                    role="radio"
+                    aria-checked={rangeHours === r.h}
+                    data-testid={`fp-trend-range-${r.h}`}
+                    onClick={() => { setRangeHours(r.h); saveFillPumpTrendHours(r.h); }}
+                    className={`h-7 rounded border px-2 text-[11px] font-mono ${
+                      rangeHours === r.h
+                        ? "border-zinc-300 bg-zinc-200 text-zinc-900"
+                        : "border-border bg-secondary/40 text-muted-foreground hover:bg-secondary/70"
+                    }`}
+                  >
+                    {r.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <DfSpBandTrend
+              pts={trend.filter((pt) => pt[0] >= tStart - 60_000 && pt[0] <= tEnd + 60_000)}
+              sp={spN}
+              hyst={hystN}
+              min={p.Cfg_LvlMin}
+              max={p.Cfg_LvlMax}
+              unit="%"
+              testid="fp-trend"
+              tStart={tStart}
+              tEnd={tEnd}
+              pumpIntervals={pumpMaster ? pumpIntervals : []}
+              pumpMeta={pumpMeta}
+              pumpVisible={pumpVisible}
+            />
+            <div className="mt-2">
+              <PumpRunLegend
+                pumps={pumpMeta}
+                visible={pumpVisible}
+                onToggle={(id) => setPumpVisible((v) => ({ ...v, [id]: v[id] === false }))}
+                counts={pumpCounts}
+                master={pumpMaster}
+                onMaster={setPumpMaster}
+              />
+            </div>
           </section>
 
           <DfSection title="Asetukset (Cfg_*)">
