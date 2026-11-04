@@ -102,7 +102,7 @@ function fromSequence(j) {
 }
 
 function fromFill(j) {
-  edge("fill", j.Pump === true || j.St_Running === true || j.Run === true);
+  edge("fill", j.Pump === true || j.St_Running === true);
 }
 
 let lastDoseCount = null;
