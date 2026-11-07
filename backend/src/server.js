@@ -1158,7 +1158,7 @@ startKasvamoAlarms({ port: PORT }); registerKasvamoAlarmRoutes(app); // Kasvamo 
 startFertDose({ port: PORT, mqttUrl: process.env.MQTT_URL || "mqtt://192.168.1.51:1883" }); registerFertDoseRoutes(app); // lannoiteannostelu: live-ohjaus bridgen kautta (hyväksytty 27.10.2026)
 startSequence({ mqttUrl: process.env.MQTT_URL || "mqtt://192.168.1.51:1883" }); registerSequenceRoutes(app); // kiertovesisekvenssi
 startFillPump({ mqttUrl: process.env.MQTT_URL || "mqtt://192.168.1.51:1883" }); registerFillPumpRoutes(app); // FillPump faceplate (Cfg_*/Cmd_Ack, ei startup-synkkaa)
-startFbLight({ mqttUrl: process.env.MQTT_URL || "mqtt://192.168.1.51:1883" }); registerFbLightRoutes(app); // FB_Light (mapping myko_settings fb_light)
+startFbLight(); registerFbLightRoutes(app); // FB_Light: suora OPC UA (fbLightOpcUa.js)
 startPumpRuns({ mqttUrl: process.env.MQTT_URL || "mqtt://192.168.1.51:1883" }); registerPumpRunsRoutes(app); // pump run intervals for trend overlays
 startSensorBlock({ mqttUrl: process.env.MQTT_URL || "mqtt://192.168.1.51:1883" }); registerSensorBlockRoutes(app); // SensorBlock faceplate (Sensors/CommandAck/Commands)
 // kunnossapito: log a manual PID command (UI / Kuittaa PLC-viat) as an action, linked to the PID's open auto-incident

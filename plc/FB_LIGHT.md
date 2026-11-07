@@ -1,47 +1,63 @@
-# FB_Light – Garden_Light_DB (CPU1215C)
+# Garden_Light_DB – suora OPC UA (backend)
 
-## LIVE-tila (2026-11-07 16:09 EET)
+## Arkkitehtuuri
 
-| Kerros | Tila |
-|--------|------|
-| OPC UA publish (Garden_Light_DB) | **Vahvistettu** browse-polulla |
-| MQTT `Sensors/PLC_2/Garden_Light` | **Puuttuu** (passiivinen tarkistus) |
-| opcua-bridge mapping | **Puuttuu** repossa / tuotannon `/home/atte/opcua-bridge` |
-| Myko UI + backend API | Valmis, commissioning (EI LIVE) |
-| End-to-end ohjaus | **Estetty** – ei bridge Cmd + ei myko_settings mqtt |
+| Kerros | Toteutus |
+|--------|----------|
+| PLC | `Garden_Light_DB` @ `ServerInterfaces/Controls/` |
+| Backend | `node-opcua` poll (`fbLightOpcUa.js`) — **ei lighting-MQTT:ä** |
+| UI | `/api/light` → prosessikuva chip + faceplate |
+| Hälytys | `fbLight.js` → `/api/alarms/summary` |
 
-Endpoint: `opc.tcp://192.168.1.103:4840`, Controls `http://Controls` ns5.
+Ulkoista opcua-bridge-muutosta valaistukselle **ei tarvita**. Muu MQTT/bridge säilyy ennallaan.
 
-Browse: `ServerInterfaces/Controls/Garden_Light_DB` (BrowseName **Garden_Light_DB**).
+## OPC (vahvistettu 2026-11-07)
 
-**ID drift:** `ns=5;i=1456` oli aiemmin `Garden Temperature_Night`. Käytä browse-polkuja; numeric id vain informational.
+- Endpoint: `opc.tcp://192.168.1.103:4840`
+- Namespace URI `http://Controls` (nykyinen ns5)
+- Browse: `ServerInterfaces/Controls/Garden_Light_DB`
+- **ID drift:** `ns=5;i=1456` oli `Garden Temperature_Night` — käytä browse-nimeä + BrowseName-tarkistusta
 
-### Vahvistetut jäsenet (luku)
+### Kentät
 
-| Ryhmä | Jäsen | Tyyppi | Esimerkki |
-|-------|-------|--------|-----------|
-| Input | Init, Enable, ClockValid, HB_OK | Bool | Enable=false, HB_OK=true |
-| Input | Mode, OnHour, OffHour, LocalHour | Int16 | Mode=0, LocalHour=16 |
-| Output | LightOn, ConfigOK, ClockOK, ScheduleActive, Ready | Bool | LightOn=false, Ready=false |
-| Static | Armed | Bool | false |
-| Static | Watchdog, BaselineValid, … | — | **Ei UI / ei kirjoita** |
+**Input:** Init, Enable, Mode, OnHour, OffHour, LocalHour, ClockValid, HB_OK  
+**Output:** LightOn, ConfigOK, ClockOK, ScheduleActive, Ready  
+**Static:** Armed (näyttö); **ei** Watchdog/BaselineValid/LastCounter/SeenChange
 
-Kirjoitusallowlist (app): **Enable, Mode, OnHour, OffHour** — ei outputs/statics/Init/HB/kello.
+**Kirjoitusallowlist:** Enable, Mode, OnHour, OffHour (Input)
 
-Odotettu commissioning UI: Enable=false, Mode 0, LightOn=false, Ready=false, HB/config/clock OK → **ei hälytystä**.
+## Deploy (Lubuntu `/home/atte/kehitys/myko`)
 
-## Myko
+1. `cd backend && npm ci` (sis. `node-opcua`)
+2. `npm run migrate` — lisää `myko_settings.fb_light` jos puuttuu (ei ylikirjoita)
+3. Kopioi `deploy/myko-fb-light.env.example` → systemd env (`FB_LIGHT_OPC_CONNECT=1`)
+4. Branch `deploy/lighting-a101dc7-20261107` tai uudempi commit, **ei merge täältä**
+5. Käynnistä vain `myko-backend` paikallisesti — **älä** käynnistä opcua-bridgeä uudelleen tämän takia
 
-- Backend: `backend/src/fbLight.js` (MQTT contract validation, hälytykset vain Enable=true + commissioned)
-- UI: prosessikuvan vasen ylä (chip) + faceplate (`LightFaceplate.tsx`)
-- Asetus: `myko_settings.k = fb_light` — ehdotus: `deploy/myko_settings/fb_light.proposed.json` (**älä ota käyttöön** ennen bridgea)
-- Bridge snippet: `deploy/opcua-bridge/garden_light.verified-snippet.yaml`
+`assistant.js` LABEL_PY — paikallinen, ei repossa.
 
-## Ulkoiset toimet (ei tässä PR:ssä)
+## LIVE-validointi
 
-1. Lisää `topics: Sensors/PLC_2/Garden_Light` → `~/opcua-bridge/config.yaml` (snippet).
-2. Laajenna bridge **Cmd** `Myko/Cmd/Garden_Light` (repo `bridge.py` tukee vain `pids` – sama työ kuin FertDose/FillPump tuotannossa).
-3. INSERT/UPDATE `myko_settings` fb_light mqtt_sensor + mqtt_cmd.
-4. Bridge restart (PID 1259 tms.) — **ei automaattista kirjoitusta testeissä**.
+- **Code-tested:** mock OPC -testit (`fbLightOpc.test.js`, `fbLight.test.js`)
+- **PLC read:** käyttäjä Lubuntuilla `FB_LIGHT_OPC_CONNECT=1` — **ei testattu tästä VM:stä**
 
-Täysi sanitisoitu JSON: `/home/atte/myko-light-opcua-discovery-20261107-1609.json` (paikallinen, ei repossa).
+Odotettu ensimmäinen live-read: Enable=false, Mode=0, LightOn=false, Ready=false, HB/config/clock OK → ei hälytystä.
+
+## Konfig (myko_settings `fb_light`)
+
+```json
+{
+  "opc_direct": true,
+  "poll_s": 5,
+  "groups": [{ "id": "garden", "label": "Garden_Light_DB", "enabled": true }],
+  "opc": {
+    "endpoint": "opc.tcp://192.168.1.103:4840",
+    "interfaces_id": "ServerInterfaces",
+    "interface_name": "Controls",
+    "controls_ns_uri": "http://Controls",
+    "db_browse_name": "Garden_Light_DB"
+  }
+}
+```
+
+Migrate täyttää tämän automaattisesti ensimmäisellä ajolla.

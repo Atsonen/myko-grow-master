@@ -27,7 +27,7 @@ function modeOptions() {
 }
 
 function statusBadge(g: LightGroupState) {
-  if (g.mapping_pending) return <DfBadge kind="muted">Ei kartoitettu (commissioning)</DfBadge>;
+  if (g.mapping_pending) return <DfBadge kind="muted">OPC odottaa / ei yhteyttä</DfBadge>;
   if (g.stale) return <DfBadge kind="warning">Vanhentunut</DfBadge>;
   if (!g.present) return <DfBadge kind="muted">Ei dataa</DfBadge>;
   if (g.plc.Armed === false && g.plc.Enable) return <DfBadge kind="warning">Ei viritetty</DfBadge>;
@@ -90,12 +90,9 @@ export function LightFaceplate({
             </div>
             {g.mapping_pending && (
               <p className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs text-amber-200">
-                OPC UA: Garden_Light_DB julkaistu (2026-11-07). MQTT/bridge puuttuu — end-to-end ei käytössä.
-                Seuraava: garden_light.verified-snippet.yaml → /home/atte/opcua-bridge + myko_settings fb_light.
+                Suora OPC UA backendissä. LIVE kun `FB_LIGHT_OPC_CONNECT=1` ja migrate fb_light ajettu.
+                {d?.opc_runtime?.last_error ? ` Virhe: ${d.opc_runtime.last_error}` : ""}
               </p>
-            )}
-            {d?.commissioning?.discovery_summary && g.mapping_pending && (
-              <p className="text-[11px] text-muted-foreground">{d.commissioning.discovery_summary}</p>
             )}
             <DfSection title="Tila">
               <DfKV k="Mode" v={g.mode_label} />
@@ -196,7 +193,7 @@ export function LightCompactChip({
   const stale = !unmapped && g?.stale;
   const fill = unmapped ? "#1e293b" : alarm ? "#4a1d22" : stale ? "#1e293b" : on ? "#052e16" : "#0f172a";
   const stroke = unmapped ? "#64748b" : alarm ? "#ef4444" : stale ? "#64748b" : on ? "#22c55e" : "#475569";
-  const label = unmapped ? "EI LIVE" : g?.output?.on ? "PÄÄLLÄ" : "POIS";
+  const label = unmapped ? "EI LIVE" : g?.present ? (g?.output?.on ? "PÄÄLLÄ" : "POIS") : "—";
   return (
     <g
       transform="translate(12,14)"

@@ -482,8 +482,8 @@ export type LightGroupState = {
   id: string;
   label: string;
   mapping_pending: boolean;
-  mqtt_sensor: string | null;
-  mqtt_cmd: string | null;
+  transport?: string;
+  opc_status?: Record<string, unknown>;
   plc: LightPlc;
   plc_at: string | null;
   stale: boolean;
@@ -510,7 +510,14 @@ export type LightResponse = {
   mapping_pending: boolean;
   commissioned?: boolean;
   live_ready?: boolean;
-  commissioning?: LightCommissioning;
+  opc_runtime?: {
+    connect_enabled?: boolean;
+    running?: boolean;
+    resolved?: boolean;
+    last_error?: string | null;
+    endpoint?: string | null;
+  };
+  transport?: string;
   opc?: {
     endpoint?: string;
     db_browse_name?: string;

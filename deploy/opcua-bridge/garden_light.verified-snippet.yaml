@@ -1,41 +1,6 @@
-# Garden_Light_DB – vahvistettu 2026-11-07 ~16:09 EET (browse path, ei kiinteää node-id:ä kirjoituksessa).
-# Kopioi /home/atte/opcua-bridge/config.yaml:ään ja käynnistä bridge uudelleen.
-# HUOM: ns=5;i=1456 oli aiemmin Garden Temperature_Night – tarkista BrowseName=Garden_Light_DB jokaisella connectilla.
-#
-# LUKU (nykyinen bridge.py topics-tuki riittää):
-# Lisää topics-osioon:
-#
-#   Sensors/PLC_2/Garden_Light:
-#     Init: "@Controls/Garden_Light_DB/Input/Init"
-#     Enable: "@Controls/Garden_Light_DB/Input/Enable"
-#     Mode: "@Controls/Garden_Light_DB/Input/Mode"
-#     OnHour: "@Controls/Garden_Light_DB/Input/OnHour"
-#     OffHour: "@Controls/Garden_Light_DB/Input/OffHour"
-#     LocalHour: "@Controls/Garden_Light_DB/Input/LocalHour"
-#     ClockValid: "@Controls/Garden_Light_DB/Input/ClockValid"
-#     HB_OK: "@Controls/Garden_Light_DB/Input/HB_OK"
-#     LightOn: "@Controls/Garden_Light_DB/Output/LightOn"
-#     ConfigOK: "@Controls/Garden_Light_DB/Output/ConfigOK"
-#     ClockOK: "@Controls/Garden_Light_DB/Output/ClockOK"
-#     ScheduleActive: "@Controls/Garden_Light_DB/Output/ScheduleActive"
-#     Ready: "@Controls/Garden_Light_DB/Output/Ready"
-#     Armed: "@Controls/Garden_Light_DB/Static/Armed"
-#
-# Ei julkaista: Static/BaselineValid, LastCounter, SeenChange, Watchdog/* (legacy / ei UI:ta).
-#
-# KIRJOITUS: repo bridge.py tukee tällä hetkellä vain pids + pid_commands.
-# Tarvitaan laajennus ~/opcua-bridge (sama malli kuin FertDose/FillPump tuotannossa):
-#
-# light_commands:
-#   Garden_Light:
-#     instance: Garden_Light_DB
-#     interface: Controls
-#     mqtt_sensor: Sensors/PLC_2/Garden_Light
-#     mqtt_cmd: Myko/Cmd/Garden_Light
-#     writes:
-#       Enable:  { path: Input/Enable,  type: Boolean }
-#       Mode:    { path: Input/Mode,    type: Int16, allowed: [0, 1, 2] }
-#       OnHour:  { path: Input/OnHour,  type: Int16, min: 0, max: 23, readback: true }
-#       OffHour: { path: Input/OffHour, type: Int16, min: 0, max: 23, readback: true }
-#
-# Myko backend (fb_light.js) allowlist vastaa yllä olevaa – ei Init/HB/outputs/statics.
+# DEPRECATED for lighting (2026-11-07): backend käyttää suoraa OPC UA:ta (fbLightOpcUa.js).
+# Älä lisää Garden_Light MQTT-topiceja bridgeen tämän featuren vuoksi.
+# Tiedosto säilytetty viitteeksi browse-polkuista (ei node-id-kiinnitystä):
+#   @Controls/Garden_Light_DB/Input/Enable
+#   @Controls/Garden_Light_DB/Output/LightOn
+#   @Controls/Garden_Light_DB/Static/Armed

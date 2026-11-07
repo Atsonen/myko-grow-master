@@ -455,6 +455,25 @@ const seedStatements = [
   { sql: "INSERT IGNORE INTO taxonomy_terms (category, value) VALUES ('locations','KYLMASAILYTYSTILA-1'),('locations','TERRARIO-1'),('locations','TERRARIO-2'),('locations','GARDEN')", params: [] },
   { sql: "INSERT IGNORE INTO taxonomy_terms (category, value) VALUES ('substrates','BR'),('substrates','BULK'),('substrates','FCR'),('substrates','GRAIN'),('substrates','OAT'),('substrates','RICE')", params: [] },
   {
+    sql: `INSERT INTO myko_settings (k, v, updated_by) VALUES (?, ?, 'migration')
+          ON DUPLICATE KEY UPDATE k=k`,
+    params: [
+      "fb_light",
+      JSON.stringify({
+        opc_direct: true,
+        poll_s: 5,
+        groups: [{ id: "garden", label: "Garden_Light_DB", enabled: true }],
+        opc: {
+          endpoint: "opc.tcp://192.168.1.103:4840",
+          interfaces_id: "ServerInterfaces",
+          interface_name: "Controls",
+          controls_ns_uri: "http://Controls",
+          db_browse_name: "Garden_Light_DB",
+        },
+      }),
+    ],
+  },
+  {
     sql: `INSERT INTO environment_sources (id, name, location, mqtt_topic, description)
           VALUES (?, ?, ?, ?, ?)
           ON DUPLICATE KEY UPDATE name=VALUES(name), location=VALUES(location), mqtt_topic=VALUES(mqtt_topic), description=VALUES(description)`,
