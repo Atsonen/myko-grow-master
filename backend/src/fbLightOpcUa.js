@@ -45,6 +45,46 @@ export function memberPath(cfg, rel) {
   return `ServerInterfaces/${cfg.interface_name}/${cfg.db_browse_name}/${rel}`;
 }
 
+/**
+ * node-opcua requires readNamespaceArray() before getNamespaceIndex() (ClientSessionImpl).
+ * @param {import("node-opcua").ClientSession} session
+ * @param {{ controls_ns_uri?: string }} [cfg]
+ */
+export async function prepareOpcSession(session, cfg = {}) {
+  const uris = await session.readNamespaceArray();
+  if (!Array.isArray(uris) || !uris.length) throw new Error("OPC NamespaceArray tyhjä");
+  const required = [
+    SIEMENS_IFACE_URI,
+    cfg.controls_ns_uri ?? DEFAULT_OPC.controls_ns_uri,
+  ];
+  for (const u of required) {
+    if (!uris.includes(u)) throw new Error(`namespace URI puuttuu palvelimelta: ${u}`);
+    const idx = session.getNamespaceIndex(u);
+    if (idx < 0) throw new Error(`getNamespaceIndex failed for ${u}`);
+  }
+  return uris;
+}
+
+/** Strict mock matching node-opcua ClientSessionImpl namespace gating (lifecycle tests). */
+export function createStrictNamespaceSession(namespaceArray) {
+  let loaded = false;
+  const uris = [...namespaceArray];
+  return {
+    uris,
+    nsLoaded: () => loaded,
+    async readNamespaceArray() {
+      loaded = true;
+      return [...uris];
+    },
+    getNamespaceIndex(uri) {
+      if (!loaded) throw new Error("please make sure that readNamespaceArray has been called");
+      const idx = uris.indexOf(uri);
+      if (idx < 0) throw new Error(`URI not in NamespaceArray: ${uri}`);
+      return idx;
+    },
+  };
+}
+
 function statusGood(sc) {
   if (sc === undefined || sc === null) return true;
   if (typeof sc === "string") return sc === "Good";
@@ -83,7 +123,7 @@ export function createMockOpcDriver(opts = {}) {
     writes,
     setValues(v) { values = { ...v }; },
     setDbName(n) { dbName = n; },
-    async connect() { connected = true; },
+    async connect(_endpoint, _opcCfg) { connected = true; },
     async disconnect() { connected = false; },
     async readGroup(cfg) {
       if (!connected) return { values: {}, error: "not connected" };
@@ -121,10 +161,13 @@ async function createNodeOpcDriver() {
     return ref.nodeId;
   }
 
+  let sessionCfg = null;
+
   async function resolveDb(cfg) {
     const key = `${cfg.endpoint}|${cfg.db_browse_name}`;
     if (cache.has(key)) return cache.get(key);
-    const siemensNs = await session.getNamespaceIndex(SIEMENS_IFACE_URI);
+    const siemensNs = session.getNamespaceIndex(SIEMENS_IFACE_URI);
+    if (siemensNs < 0) throw new Error(`namespace index not found: ${SIEMENS_IFACE_URI}`);
     const root = makeNodeId(cfg.interfaces_id ?? DEFAULT_OPC.interfaces_id, siemensNs);
     const iface = await browseChild(root, cfg.interface_name ?? DEFAULT_OPC.interface_name);
     const db = await browseChild(iface, cfg.db_browse_name);
@@ -151,7 +194,7 @@ async function createNodeOpcDriver() {
   }
 
   return {
-    async connect(endpoint) {
+    async connect(endpoint, opcCfg = {}) {
       client = OPCUAClient.create({
         endpointMustExist: false,
         securityMode: opcua.MessageSecurityMode.None,
@@ -160,12 +203,14 @@ async function createNodeOpcDriver() {
       });
       await client.connect(endpoint);
       session = await client.createSession();
+      sessionCfg = opcCfg;
+      await prepareOpcSession(session, opcCfg);
       cache.clear();
     },
     async disconnect() {
       try { if (session) await session.close(); } catch { /* ignore */ }
       try { if (client) await client.disconnect(); } catch { /* ignore */ }
-      session = null; client = null; cache.clear();
+      session = null; client = null; sessionCfg = null; cache.clear();
     },
     async readGroup(cfg) {
       try {
@@ -180,8 +225,13 @@ async function createNodeOpcDriver() {
         mapped.present = true;
         return { values: mapped };
       } catch (e) {
-        cache.delete(`${cfg.endpoint}|${cfg.db_browse_name}`);
-        return { values: {}, error: String(e.message ?? e) };
+        const msg = String(e.message ?? e);
+        if (/readNamespaceArray|NamespaceArray|BadSession|SessionId|not valid/i.test(msg)) {
+          cache.clear();
+        } else {
+          cache.delete(`${cfg.endpoint}|${cfg.db_browse_name}`);
+        }
+        return { values: {}, error: msg };
       }
     },
     async writeFields(cfg, fields) {
@@ -216,6 +266,11 @@ let driverPromise = null;
 
 export function injectOpcDriver(driver) {
   injectedDriver = driver;
+}
+
+export function resetOpcDriverFactory() {
+  injectedDriver = null;
+  driverPromise = null;
 }
 
 export async function getOpcDriver() {
@@ -258,10 +313,19 @@ export class LightOpcPoller extends EventEmitter {
     this.driver = await getOpcDriver();
     this.opc = this.opcCfg(opc ?? {});
     this.endpoint = this.opc.endpoint;
-    await this.driver.connect(this.endpoint);
+    await this.driver.connect(this.endpoint, this.opc);
     this.running = true;
     const tick = async () => {
-      const r = await this.driver.readGroup(this.opc);
+      let r = await this.driver.readGroup(this.opc);
+      if (r.error && /readNamespaceArray|BadSession|SessionId|not valid/i.test(r.error) && this.driver.disconnect) {
+        try {
+          await this.driver.disconnect();
+          await this.driver.connect(this.endpoint, this.opc);
+          r = await this.driver.readGroup(this.opc);
+        } catch (re) {
+          r = { values: {}, error: String(re.message ?? re) };
+        }
+      }
       if (r.error) {
         this.lastError = r.error;
         this.resolved = false;
