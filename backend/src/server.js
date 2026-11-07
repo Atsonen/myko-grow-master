@@ -12,6 +12,7 @@ import { startKasvamoAlarms, registerKasvamoAlarmRoutes, kasvamoAlarmRows, kasva
 import { startFertDose, registerFertDoseRoutes, fertAlarmRows, fertAck, fertDisabledRows } from "./fertDose.js";
 import { startSequence, registerSequenceRoutes } from "./sequence.js";
 import { startFillPump, registerFillPumpRoutes, fillPumpAlarmRows, fillPumpAck } from "./fillPump.js";
+import { startFbLight, registerFbLightRoutes, fbLightAlarmRows, fbLightAck } from "./fbLight.js";
 import { startPumpRuns, registerPumpRunsRoutes } from "./pumpRuns.js";
 import { startSensorBlock, registerSensorBlockRoutes } from "./sensorBlock.js";
 import { untilTxt } from "./alarmDisable.js";
@@ -894,7 +895,7 @@ app.get(
         source: "LLM", desc: String(f.finding ?? ""), acked: true, ackedAt: null, ackedBy: null, ackRequired: false,
       });
     } catch (e) { console.error("[alarms] llm rows", e.message); }
-    try { rows.push(...(await fertAlarmRows(hours)), ...kasvamoAlarmRows(), ...fillPumpAlarmRows()); } catch (e) { console.error("[alarms] kasvamo/fillpump rows", e.message); }
+    try { rows.push(...(await fertAlarmRows(hours)), ...kasvamoAlarmRows(), ...fillPumpAlarmRows(), ...fbLightAlarmRows()); } catch (e) { console.error("[alarms] kasvamo/fillpump/light rows", e.message); }
     // Väliaikaisesti poiskytketyt hälytykset (aikaraja) näkyvät listassa aktiivisina info-riveinä
     for (const [i, d] of [...fertDisabledRows().map((d) => ({ ...d, kind: "fert" })), ...kasvamoDisabledRows().map((d) => ({ ...d, kind: "kasvamo" }))].entries()) rows.push({
       id: -(1_800_000_000 + i), pointId: d.kind === "fert" ? "Kasvamo_EC" : "Kasvamo", pointName: d.name, unit: "", alarm: "POIS_KAYTOSTA", bit: null, priority: 3,
@@ -905,7 +906,7 @@ app.get(
       .map((r) => ({ ...r, durationSec: Math.round(((r.end ? new Date(r.end).getTime() : now) - new Date(r.start).getTime()) / 1000) }))
       .sort((a, b) => b.start.localeCompare(a.start))
       .slice(0, limit);
-    res.json({ hours, generatedAt: new Date().toISOString(), points: [...points.map((p) => ({ id: p.id, name: p.name, source: PLC_POINT_IDS.has(p.id) ? "PLC" : "Myko" })), { id: "Kasvamo_EC", name: "Kasvamo · EC / lannoitus", source: "Kasvamo" }, { id: "Kasvamo_FillPump", name: "Kasvamo · Täyttöpumppu", source: "Kasvamo" }, { id: "Kasvamo", name: "Kasvamo", source: "Kasvamo" }], rows: out, plc: plcStatus() });
+    res.json({ hours, generatedAt: new Date().toISOString(), points: [...points.map((p) => ({ id: p.id, name: p.name, source: PLC_POINT_IDS.has(p.id) ? "PLC" : "Myko" })), { id: "Kasvamo_EC", name: "Kasvamo · EC / lannoitus", source: "Kasvamo" }, { id: "Kasvamo_FillPump", name: "Kasvamo · Täyttöpumppu", source: "Kasvamo" }, { id: "Kasvamo_Light", name: "Kasvamo · Valaistus", source: "Kasvamo" }, { id: "Kasvamo", name: "Kasvamo", source: "Kasvamo" }], rows: out, plc: plcStatus() });
   }),
 );
 
@@ -1058,15 +1059,17 @@ app.post(
     const fert = num.filter((x) => x <= -2_000_000_000).map((x) => -x - 2_000_000_000);
     const kas = num.filter((x) => x <= -1_900_000_000 && x > -2_000_000_000);
     const fp = num.filter((x) => x <= -1_850_000_000 && x > -1_900_000_000);
+    const lt = num.filter((x) => x <= -1_840_000_000 && x > -1_850_000_000);
     const rest = ids.filter((_, i) => {
       const x = num[i];
       if (!Number.isFinite(x)) return false;
       if (x <= -2_000_000_000) return false; // fert
       if (x <= -1_900_000_000) return false; // kasvamo
       if (x <= -1_850_000_000 && x > -1_900_000_000) return false; // fillpump
+      if (x <= -1_840_000_000 && x > -1_850_000_000) return false; // fblight
       return true; // DB ids + disabled info (-1.8e9) + other
     });
-    let extra = 0; if (!dry) { extra += await fertAck(fert, by); extra += kasvamoAck(kas, by); extra += fillPumpAck(fp, by); }
+    let extra = 0; if (!dry) { extra += await fertAck(fert, by); extra += kasvamoAck(kas, by); extra += fillPumpAck(fp, by); extra += fbLightAck(lt, by); }
     const r = rest.length ? await ackAlarms(rest, by, dry) : { acked: 0 };
     res.json({ ...r, kasvamoAcked: extra, ...(typeof r.acked === "number" ? { acked: r.acked + extra } : {}) });
   }),
@@ -1155,6 +1158,7 @@ startKasvamoAlarms({ port: PORT }); registerKasvamoAlarmRoutes(app); // Kasvamo 
 startFertDose({ port: PORT, mqttUrl: process.env.MQTT_URL || "mqtt://192.168.1.51:1883" }); registerFertDoseRoutes(app); // lannoiteannostelu: live-ohjaus bridgen kautta (hyväksytty 27.10.2026)
 startSequence({ mqttUrl: process.env.MQTT_URL || "mqtt://192.168.1.51:1883" }); registerSequenceRoutes(app); // kiertovesisekvenssi
 startFillPump({ mqttUrl: process.env.MQTT_URL || "mqtt://192.168.1.51:1883" }); registerFillPumpRoutes(app); // FillPump faceplate (Cfg_*/Cmd_Ack, ei startup-synkkaa)
+startFbLight({ mqttUrl: process.env.MQTT_URL || "mqtt://192.168.1.51:1883" }); registerFbLightRoutes(app); // FB_Light (mapping myko_settings fb_light)
 startPumpRuns({ mqttUrl: process.env.MQTT_URL || "mqtt://192.168.1.51:1883" }); registerPumpRunsRoutes(app); // pump run intervals for trend overlays
 startSensorBlock({ mqttUrl: process.env.MQTT_URL || "mqtt://192.168.1.51:1883" }); registerSensorBlockRoutes(app); // SensorBlock faceplate (Sensors/CommandAck/Commands)
 // kunnossapito: log a manual PID command (UI / Kuittaa PLC-viat) as an action, linked to the PID's open auto-incident

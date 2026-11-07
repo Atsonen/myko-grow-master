@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { FertDosePanel, FertEcModal, useFertDose } from "@/components/FertDosePanel";
 import { SequencePanel, useSequence, useFillPump, SEQ_STEPS, seqMmss } from "@/components/SequencePanel";
 import { FillPumpModal, fillPumpStatus } from "@/components/FillPumpModal";
+import { LightCompactChip, LightFaceplate, useLight } from "@/components/LightFaceplate";
 import { getDataloggerLatest, getKasvamoAlarms, putKasvamoAlarms, type KasvamoAlarms, type KasLimit, getPumput, getPvFeed, type DataloggerLatest, type PumputResponse, setFertPumpEnable, setCircPumpEnable, setSequenceEnable } from "@/lib/apiClient";
 import { toast } from "sonner";
 import { MeasurementPointWidget } from "@/components/dashboard/MeasurementPointWidget";
@@ -597,6 +598,8 @@ export function ProcessDiagramWidget() {
   const [seqBusy, setSeqBusy] = useState(false);
   const [seqDlg, setSeqDlg] = useState(false);
   const fillPump = useFillPump();
+  const light = useLight();
+  const [lightDlg, setLightDlg] = useState(false);
   const pe = useProcessBoxEdit();
   const toggleFert = async (en: boolean) => {
     if (!window.confirm(`Vahvista: lannoitepumppu Käyttö → ${en ? "ON" : "OFF"}?`)) return;
@@ -688,6 +691,7 @@ export function ProcessDiagramWidget() {
       <MeasurementPointWidget config={{ pointId: "GardenAir", name: "Kasvamo ilma · G_Air (PF-1)" }} open={fpOpen} onOpenChange={setFpOpen} dialogOnly />
       <FertEcModal open={ecDlg} d={fd.d} reload={fd.load} onClose={() => setEcDlg(false)} />
       <FillPumpModal open={fpDlg} d={fillPump.d} reload={fillPump.load} onClose={() => setFpDlg(false)} />
+      <LightFaceplate open={lightDlg} onOpenChange={setLightDlg} d={light.d} reload={light.load} groupId={light.d?.groups[0]?.id} />
       <Dialog open={seqDlg} onOpenChange={(o) => !o && setSeqDlg(false)}>
         <DialogContent className="max-h-[92vh] w-[min(96vw,960px)] max-w-none overflow-y-auto border-zinc-700 bg-zinc-950 p-4 font-mono" data-testid="pd-seq-modal">
           <DialogHeader className="sr-only"><DialogTitle>Kiertovesisekvenssi</DialogTitle></DialogHeader>
@@ -760,6 +764,9 @@ export function ProcessDiagramWidget() {
           data-testid="pd-zoom-layer"
         >
         <svg ref={pe.svgRef} viewBox={`0 0 ${PROCESS_VIEW_W} ${PROCESS_VIEW_H}`} width={PROCESS_VIEW_W} height={PROCESS_VIEW_H} style={{ background: C.bg, borderRadius: 8, display: "block" }}>
+          {!pe.editing && (
+            <LightCompactChip d={light.d} onOpen={() => setLightDlg(true)} />
+          )}
           {/* Air duct + fan */}
           <Pipe d="M 560 70 H 700" active={(fan ?? 0) > 0} />
           <Pipe d="M 780 70 H 870 Q 900 70 900 40" active={(fan ?? 0) > 0} />

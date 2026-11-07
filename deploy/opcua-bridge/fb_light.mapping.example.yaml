@@ -1,0 +1,28 @@
+# FB_Light – esimerkkirakenne opcua-bridge / myko_settings -kartoitusta varten.
+# TÄYTÄ vasta kun LAN-readonly-skannaus on vahvistanut browse-polut ja tyypit.
+# Älä commitoi tuotantotietoja ennen vahvistusta.
+
+# myko_settings fb_light (MariaDB):
+# {
+#   "groups": [
+#     {
+#       "id": "kasvamo",
+#       "label": "Kasvamo",
+#       "mqtt_sensor": "Sensors/PLC_2/Light_Kasvamo",
+#       "mqtt_cmd": "Myko/Cmd/Light_Kasvamo"
+#     }
+#   ]
+# }
+
+# bridge topics (lisää config.yaml topics + commands kun polut tiedossa):
+# publish:
+#   Sensors/PLC_2/Light_Kasvamo:
+#     Enable: "@*/<TBD_DB>/Static/Light_<TBD>/Enable"
+#     HB_OK: "@*/<TBD_DB>/Static/Light_<TBD>/HB_OK"
+#     ...
+# commands:
+#   Myko/Cmd/Light_Kasvamo:
+#     Enable: { path: "<TBD>", type: Boolean, readback: true }
+#     Mode:   { path: "<TBD>", type: Int16, allowed: [0,1,2], readback: true }
+#     OnHour: { path: "<TBD>", type: Int16, min: 0, max: 23, readback: true }
+#     OffHour:{ path: "<TBD>", type: Int16, min: 0, max: 23, readback: true }

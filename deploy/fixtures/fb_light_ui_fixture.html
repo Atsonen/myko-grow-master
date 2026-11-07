@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="fi">
+<head>
+  <meta charset="utf-8" />
+  <title>FIXTURE – FB_Light UI (ei oikeaa PLC:ä)</title>
+  <style>
+    body { font-family: ui-monospace, monospace; background: #0f172a; color: #e2e8f0; margin: 24px; }
+    .banner { background: #78350f; color: #fef3c7; padding: 8px 12px; border-radius: 6px; margin-bottom: 16px; font-size: 13px; }
+    .chip { display: inline-block; border: 1.5px solid #22c55e; background: #052e16; border-radius: 6px; padding: 8px 12px; width: 96px; }
+    .chip small { color: #94a3b8; font-size: 9px; }
+    .chip strong { font-size: 13px; }
+    .panel { margin-top: 20px; max-width: 420px; border: 1px solid #334155; border-radius: 8px; padding: 16px; background: #1e293b; }
+    h2 { font-size: 14px; margin: 0 0 12px; }
+    .row { display: flex; justify-content: space-between; border-bottom: 1px solid #33415566; padding: 4px 0; font-size: 12px; }
+    .warn { color: #fbbf24; font-size: 11px; margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <div class="banner">FIXTURE – OPC Garden_Light_DB vahvistettu LANilla; MQTT/bridge puuttuu. Odotettu PLC: Enable OFF, Mode 0. Ei kirjoja.</div>
+  <p style="font-size:12px;color:#94a3b8">Prosessikuva · vasen yläkulma (kompakti merkki)</p>
+  <div class="chip" data-testid="fixture-chip">
+    <small>Valo</small><br />
+    <strong>EI LIVE</strong><br />
+    <small>kartoitus puuttuu</small>
+  </div>
+  <div class="panel" data-testid="fixture-faceplate">
+    <h2>Valaistus · Kasvamo <span class="warn">(FIXTURE)</span></h2>
+    <div class="row"><span>Mode</span><span>Auto</span></div>
+    <div class="row"><span>Lähtö</span><span style="color:#4ade80">Käsky ON</span></div>
+    <div class="row"><span>Aikataulu</span><span>06:00–22:00 (PLC)</span></div>
+    <div class="row"><span>HB_OK</span><span>OK</span></div>
+    <div class="row"><span>Armed</span><span>Kyllä</span></div>
+    <p class="warn">mqtt_sensor / mqtt_cmd puuttuu – odottaa LAN-kartoitusta.</p>
+  </div>
+</body>
+</html>

@@ -1,0 +1,25 @@
+{
+  "groups": [
+    {
+      "id": "garden",
+      "label": "Garden_Light_DB",
+      "mqtt_sensor": "Sensors/PLC_2/Garden_Light",
+      "mqtt_cmd": "Myko/Cmd/Garden_Light",
+      "enabled": true
+    }
+  ],
+  "opc": {
+    "endpoint": "opc.tcp://192.168.1.103:4840",
+    "interface_uri": "http://Controls",
+    "db_browse_name": "Garden_Light_DB",
+    "browse_path": "ServerInterfaces/Controls/Garden_Light_DB",
+    "verified_at": "2026-11-07T16:09:00+02:00",
+    "id_drift_note": "Numeric ns=5;i=1456 previously Garden Temperature_Night — always resolve by browse path"
+  },
+  "commissioning": {
+    "opc_published": true,
+    "mqtt_observed": false,
+    "bridge_snippet": "deploy/opcua-bridge/garden_light.verified-snippet.yaml",
+    "live_ready": false
+  }
+}

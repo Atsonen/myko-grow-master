@@ -1,0 +1,20 @@
+{
+  "_note": "FIXTURE – vahvistettu OPC UA -luku 2026-11-07, ei MQTT eikä live-kirjoituksia",
+  "db": "Garden_Light_DB",
+  "browse_path": "ServerInterfaces/Controls/Garden_Light_DB",
+  "expected_ui_disabled_healthy": {
+    "Enable": false,
+    "Mode": 0,
+    "LightOn": false,
+    "Ready": false,
+    "ScheduleActive": false,
+    "HB_OK": true,
+    "ConfigOK": true,
+    "ClockOK": true,
+    "ClockValid": true,
+    "Armed": false,
+    "LocalHour": 16,
+    "OnHour": 0,
+    "OffHour": 0
+  }
+}

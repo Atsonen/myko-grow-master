@@ -459,6 +459,81 @@ export async function setFillPump(body: Record<string, unknown>) {
   });
 }
 
+export type LightPlc = {
+  present?: boolean;
+  Init?: boolean;
+  Enable?: boolean;
+  HB_OK?: boolean;
+  Mode?: number;
+  OnHour?: number;
+  OffHour?: number;
+  LocalHour?: number;
+  ClockValid?: boolean;
+  LightOn?: boolean;
+  LightFb?: boolean;
+  ConfigOK?: boolean;
+  ClockOK?: boolean;
+  ScheduleActive?: boolean;
+  Ready?: boolean;
+  Armed?: boolean;
+};
+
+export type LightGroupState = {
+  id: string;
+  label: string;
+  mapping_pending: boolean;
+  mqtt_sensor: string | null;
+  mqtt_cmd: string | null;
+  plc: LightPlc;
+  plc_at: string | null;
+  stale: boolean;
+  present: boolean;
+  write_allowed: boolean;
+  schedule: { text: string; inWindow: boolean | null };
+  output: { kind: "cmd" | "fb"; on: boolean; text: string; cmd?: boolean };
+  mode_label: string;
+  alarms: { active: Record<string, boolean>; texts: Record<string, string> };
+};
+
+export type LightCommissioning = {
+  live_ready?: boolean;
+  opc_endpoint?: string;
+  discovery_at?: string;
+  discovery_summary?: string;
+};
+
+export type LightResponse = {
+  groups: LightGroupState[];
+  config: { groups?: unknown[]; bridge_note?: string; commissioning?: LightCommissioning };
+  write_note: string;
+  allowed_writes: string[];
+  mapping_pending: boolean;
+  commissioned?: boolean;
+  live_ready?: boolean;
+  commissioning?: LightCommissioning;
+  opc?: {
+    endpoint?: string;
+    db_browse_name?: string;
+    browse_path?: string;
+    verified_at?: string;
+    id_drift_note?: string;
+  };
+  bridge_note?: string;
+  stale_ms: number;
+  startup_grace_s: number;
+};
+
+export async function getLight() {
+  return requestJson<LightResponse>("/api/light");
+}
+
+export async function setLight(groupId: string, body: Record<string, unknown>) {
+  return requestJson<{ ok: boolean; results: Record<string, unknown> }>(`/api/light/${encodeURIComponent(groupId)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...body, confirm: true, by: "myko-ui" }),
+  });
+}
 
 export interface SeriesStyleDefault {
   name?: string;
