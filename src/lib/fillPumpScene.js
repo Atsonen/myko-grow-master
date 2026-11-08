@@ -6,6 +6,22 @@ export const FILL_DISCHARGE_PATH = "M 360 320 V 230 H 892";
 
 const OUTPUT_NOTE = "Tallennettu lähtö · ei virtausmittausta";
 
+/** Wall time for the UI. The estimate itself stays pump-runtime seconds. */
+export function formatHelsinki(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return new Intl.DateTimeFormat("fi-FI", {
+    timeZone: "Europe/Helsinki",
+    day: "numeric",
+    month: "numeric",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).format(d);
+}
+
 function esc(s) {
   return String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[c]));
 }
@@ -124,7 +140,7 @@ export function sourceDialogModel(estimate) {
     coarsePct: estimate?.available ? estimate.remainingCoarsePct : null,
     available: !!estimate?.available,
     qualityNote: estimate?.qualityNote ?? "",
-    refLog: estimate?.refLog ?? [],
+    refLog: (estimate?.refLog ?? []).map((r) => ({ ...r, atLabel: formatHelsinki(r.at ?? r.atMs) })),
   };
 }
 
@@ -267,7 +283,7 @@ export function renderExampleHtml() {
       <p>Viite ${dialog.referenceS} s · kertymä ${dialog.accumulatedS} s · ${dialog.coarsePct} %</p>
       <p>${esc(dialog.fullRefillHelp)}</p>
       <p>${esc(dialog.refHelp)}</p>
-      <p>Viimeisin viitemuutos: ${esc(dialog.refLog[0]?.oldS)} s → ${esc(dialog.refLog[0]?.newS)} s · ${esc(dialog.refLog[0]?.at)}</p>
+      <p>Viimeisin viitemuutos: ${esc(dialog.refLog[0]?.oldS)} s → ${esc(dialog.refLog[0]?.newS)} s · ${esc(dialog.refLog[0]?.atLabel)} Helsinki</p>
       <button type="button">${esc(dialog.fullRefill)}</button>
       <button type="button">Tallenna viite</button>
     </section>

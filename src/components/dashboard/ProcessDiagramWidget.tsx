@@ -702,7 +702,7 @@ export function ProcessDiagramWidget() {
       </Dialog>
       <div className="flex h-full min-h-0 flex-col gap-1 overflow-hidden p-1" data-testid="pd-process">
         <div className="shrink-0 text-[10px] font-mono text-muted-foreground" data-testid="pd-status">
-          {err ? `Virhe: ${err}` : ts ? `Päivitetty ${new Date(ts).toLocaleTimeString("fi-FI")}` : "Ladataan…"} · {POLL_MS / 1000} s
+          {err ? `Virhe: ${err}` : ts ? `Päivitetty ${new Date(ts).toLocaleTimeString("fi-FI", { timeZone: "Europe/Helsinki", hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Ladataan…"} · {POLL_MS / 1000} s
           {sqLive ? ` · Seq ${seqRunning ? "Käynnissä" : "Pysäytetty"} · askel ${seqStep ?? "–"} · HB ${seqHb === true ? "OK" : seqHb === false ? "PUUTTUU" : "–"} · vuoto ${seqLeak === true ? "HÄLYTYS" : seqLeak === false ? "ei" : "–"} · pinta ${tankLevel != null ? `${Number(tankLevel).toFixed(1)} %` : "–"}` : ""}
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2" data-testid="pd-elem-toolbar">

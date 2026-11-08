@@ -140,7 +140,7 @@ export function FillSourceDialog({ panel }: { panel: ReturnType<typeof useFillSo
           {dialog.refLog.length > 0 && (
             <ul className="max-h-28 overflow-auto text-xs text-muted-foreground">
               {dialog.refLog.slice(-5).reverse().map((r, i) => (
-                <li key={`${r.at}-${i}`}>{r.at} · {r.oldS} s → {r.newS} s</li>
+                <li key={`${r.atLabel}-${i}`}>{r.atLabel} Helsinki · {r.oldS} s → {r.newS} s</li>
               ))}
             </ul>
           )}

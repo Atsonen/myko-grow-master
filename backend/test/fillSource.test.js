@@ -12,7 +12,7 @@ import {
 } from "../src/fillSource.js";
 import {
   ESTIMATE_LABEL as UI_LABEL, FILL_DISCHARGE_PATH, buildFillPresentation, fillActionEffect,
-  renderExampleHtml, renderFillPumpInner, sourceDialogModel,
+  formatHelsinki, renderExampleHtml, renderFillPumpInner, sourceDialogModel,
 } from "../../src/lib/fillPumpScene.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -108,6 +108,8 @@ test("fill source", { concurrency: false }, async (t) => {
       { pump: "fill", startMs: 120_000, endMs: 125_000 },
     ], { now: 200_000, lastFreshMs: 200_000, outputOn: false });
     assert.equal(gap.accumulatedS, 10);
+    assert.equal(gap.quality, "ok");
+    assert.doesNotMatch(gap.qualityNote, /aukko|katko|epävarm/i);
     const stale = buildEstimate(state, [
       { pump: "fill", startMs: 100_000, open: true },
     ], { now: 200_000, lastFreshMs: 110_000, outputOn: true });
@@ -330,6 +332,9 @@ test("fill source", { concurrency: false }, async (t) => {
     assert.match(html, /ESIMERKKI · ei tuotantodataa/);
     assert.match(html, /Ei arviota/);
     assert.match(html, /data-pct="50"/);
+    assert.equal(formatHelsinki("2026-11-08T08:25:00.000Z"), "8.11.2026 klo 10.25.00");
+    assert.match(html, /8\.11\.2026 klo 10\.25\.00 Helsinki/);
+    assert.doesNotMatch(html, /2026-11-08T08:25:00\.000Z/);
     assert.equal(FILL_DISCHARGE_PATH, "M 360 320 V 230 H 892");
     const same = (rel) => {
       const cur = fs.readFileSync(path.join(ROOT, rel));
