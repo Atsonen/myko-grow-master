@@ -11,7 +11,8 @@ import { registerPumputRoutes } from "./pumput.js";
 import { startKasvamoAlarms, registerKasvamoAlarmRoutes, kasvamoAlarmRows, kasvamoAck, kasvamoDisabledRows } from "./kasvamoAlarms.js";
 import { startFertDose, registerFertDoseRoutes, fertAlarmRows, fertAck, fertDisabledRows } from "./fertDose.js";
 import { startSequence, registerSequenceRoutes } from "./sequence.js";
-import { startFillPump, registerFillPumpRoutes, fillPumpAlarmRows, fillPumpAck } from "./fillPump.js";
+import { startFillPump, registerFillPumpRoutes, fillPumpAlarmRows, fillPumpAck, fillPumpObserved } from "./fillPump.js";
+import { registerFillSourceRoutes, startFillSourceMaintenance, useDefaultFillSourcePaths } from "./fillSource.js";
 import { startFbLight, registerFbLightRoutes, fbLightAlarmRows, fbLightAck } from "./fbLight.js";
 import { startPumpRuns, registerPumpRunsRoutes } from "./pumpRuns.js";
 import { startSensorBlock, registerSensorBlockRoutes } from "./sensorBlock.js";
@@ -1158,6 +1159,9 @@ startKasvamoAlarms({ port: PORT }); registerKasvamoAlarmRoutes(app); // Kasvamo 
 startFertDose({ port: PORT, mqttUrl: process.env.MQTT_URL || "mqtt://192.168.1.51:1883" }); registerFertDoseRoutes(app); // lannoiteannostelu: live-ohjaus bridgen kautta (hyväksytty 27.10.2026)
 startSequence({ mqttUrl: process.env.MQTT_URL || "mqtt://192.168.1.51:1883" }); registerSequenceRoutes(app); // kiertovesisekvenssi
 startFillPump({ mqttUrl: process.env.MQTT_URL || "mqtt://192.168.1.51:1883" }); registerFillPumpRoutes(app); // FillPump faceplate (Cfg_*/Cmd_Ack, ei startup-synkkaa)
+useDefaultFillSourcePaths();
+registerFillSourceRoutes(app);
+startFillSourceMaintenance({ getFreshness: () => fillPumpObserved() }); // local JSON only; no MQTT publish
 startFbLight(); registerFbLightRoutes(app); // FB_Light: suora OPC UA (fbLightOpcUa.js)
 startPumpRuns({ mqttUrl: process.env.MQTT_URL || "mqtt://192.168.1.51:1883" }); registerPumpRunsRoutes(app); // pump run intervals for trend overlays
 startSensorBlock({ mqttUrl: process.env.MQTT_URL || "mqtt://192.168.1.51:1883" }); registerSensorBlockRoutes(app); // SensorBlock faceplate (Sensors/CommandAck/Commands)

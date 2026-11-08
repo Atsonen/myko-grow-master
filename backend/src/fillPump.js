@@ -46,6 +46,12 @@ const TEXTS = {
 let MQ = null;
 const PENDING = new Map();
 const S = { plc: { present: false }, at: 0 };
+/** Last FillPump MQTT receive time and recorded output. Does not subscribe, publish, or write. */
+export function fillPumpObserved() {
+  if (!(S.at > 0)) return { lastFreshMs: null, outputOn: null };
+  const p = S.plc || {};
+  return { lastFreshMs: S.at, outputOn: p.Pump === true || p.St_Running === true };
+}
 /** @type {{ active: Record<string, boolean>, since: Record<string, number>, at: Record<string, number>, msg: Record<string, string>, acked: Record<string, {at:string,by:string}> }} */
 let st = { active: {}, since: {}, at: {}, msg: {}, acked: {} };
 try {

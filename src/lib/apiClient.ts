@@ -459,6 +459,41 @@ export async function setFillPump(body: Record<string, unknown>) {
   });
 }
 
+export type FillSourceEstimate = {
+  ok: boolean;
+  label: string;
+  available: boolean;
+  persisted: boolean;
+  referenceS: number;
+  accumulatedS: number;
+  remainingRatio: number | null;
+  remainingCoarsePct: number | null;
+  zeroIsNotMeasuredEmpty: boolean;
+  quality: "ok" | "stale" | "unknown" | "invalid";
+  qualityNote: string;
+  anchor: { id: string; atMs: number; at: string; by: string } | null;
+  refLog: { atMs: number; at: string; oldS: number; newS: number; by: string }[];
+  plcWrite: false;
+  partialRefill: false;
+  fullRefillOnly: true;
+  meaning: string;
+};
+export async function getFillSource() {
+  return requestJson<FillSourceEstimate>("/api/fillpump/source");
+}
+export async function postFillSourceRefill(idempotencyKey: string) {
+  return requestJson<{ ok: boolean; duplicate: boolean; anchorId: string }>("/api/fillpump/source/refill", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ confirm: true, by: "myko-ui", idempotencyKey }),
+  });
+}
+export async function postFillSourceReference(referenceS: number, idempotencyKey: string) {
+  return requestJson<{ ok: boolean; duplicate: boolean; referenceS: number }>("/api/fillpump/source/reference", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ confirm: true, by: "myko-ui", referenceS, idempotencyKey }),
+  });
+}
+
 export type LightPlc = {
   present?: boolean;
   Init?: boolean;

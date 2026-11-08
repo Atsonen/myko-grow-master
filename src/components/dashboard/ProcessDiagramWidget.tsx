@@ -9,7 +9,9 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { FertDosePanel, FertEcModal, useFertDose } from "@/components/FertDosePanel";
 import { SequencePanel, useSequence, useFillPump, SEQ_STEPS, seqMmss } from "@/components/SequencePanel";
-import { FillPumpModal, fillPumpStatus } from "@/components/FillPumpModal";
+import { FillPumpModal } from "@/components/FillPumpModal";
+import { FillPumpSvg, FillSourceDialog, useFillSourcePanel } from "@/components/dashboard/FillPumpGraphic";
+import { FILL_DISCHARGE_PATH, buildFillPresentation } from "@/lib/fillPumpScene.js";
 import { LightCompactChip, LightFaceplate, useLight } from "@/components/LightFaceplate";
 import { getDataloggerLatest, getKasvamoAlarms, putKasvamoAlarms, type KasvamoAlarms, type KasLimit, getPumput, getPvFeed, type DataloggerLatest, type PumputResponse, setFertPumpEnable, setCircPumpEnable, setSequenceEnable } from "@/lib/apiClient";
 import { toast } from "sonner";
@@ -598,6 +600,7 @@ export function ProcessDiagramWidget() {
   const [seqBusy, setSeqBusy] = useState(false);
   const [seqDlg, setSeqDlg] = useState(false);
   const fillPump = useFillPump();
+  const fillSource = useFillSourcePanel();
   const light = useLight();
   const [lightDlg, setLightDlg] = useState(false);
   const pe = useProcessBoxEdit();
@@ -670,9 +673,7 @@ export function ProcessDiagramWidget() {
   const fpPlc = fillPump.d?.plc as Record<string, unknown> | undefined;
   const fpRunS = typeof fpPlc?.St_RunTime_s === "number" ? (fpPlc.St_RunTime_s as number) : undefined;
   const fpPumpOn = fpPlc?.Pump === true || fpPlc?.St_Running === true;
-  const fpLive = !!fillPump.d?.present;
-  const fpSt = fillPumpStatus(fillPump.d?.plc, fpLive);
-  const fpStatusTxt = !fpLive ? undefined : fpSt.label === "Käy" ? "KÄY" : fpSt.label === "Vika" || fpSt.label.startsWith("Vika") ? "VIKA" : fpSt.label;
+  const fillPres = buildFillPresentation(fillPump.d, fillSource.est, fillSource.estError);
 
   const fertIlok = (fp as { Interlock?: boolean } | undefined)?.Interlock;
   const fertFault = fertLive && (fp!.HB_OK === false || fertIlok === false || (typeof fp!.Status === "number" && [4,5,6,7,8,9,10,11,13,14,15].includes(fp!.Status)));
@@ -691,6 +692,7 @@ export function ProcessDiagramWidget() {
       <MeasurementPointWidget config={{ pointId: "GardenAir", name: "Kasvamo ilma · G_Air (PF-1)" }} open={fpOpen} onOpenChange={setFpOpen} dialogOnly />
       <FertEcModal open={ecDlg} d={fd.d} reload={fd.load} onClose={() => setEcDlg(false)} />
       <FillPumpModal open={fpDlg} d={fillPump.d} reload={fillPump.load} onClose={() => setFpDlg(false)} />
+      <FillSourceDialog panel={fillSource} />
       <LightFaceplate open={lightDlg} onOpenChange={setLightDlg} d={light.d} reload={light.load} groupId={light.d?.groups[0]?.id} />
       <Dialog open={seqDlg} onOpenChange={(o) => !o && setSeqDlg(false)}>
         <DialogContent className="max-h-[92vh] w-[min(96vw,960px)] max-w-none overflow-y-auto border-zinc-700 bg-zinc-950 p-4 font-mono" data-testid="pd-seq-modal">
@@ -808,7 +810,7 @@ export function ProcessDiagramWidget() {
           {/* Pipes: Circ L/R flow tank → station (L path drawn station→tank ⇒ flow=-1) */}
           <Pipe d="M 60 360 V 260 H 300 V 320" active={cL.run && !cL.err} flow={-1} />
           <Pipe d="M 160 420 V 350 H 330" active={fertLive && fp?.Pump === true} />
-          <Pipe d="M 360 320 V 230 H 800 V 360" active={pu.b("Filling")} />
+          <Pipe d={FILL_DISCHARGE_PATH} active={fillPres.pipeAnimate} />
           <Pipe d="M 400 320 V 270 H 690 V 360" active={cR.run && !cR.err} flow={1} />
 
           {/* Main tank – click opens Sequence panel (same Dialog pattern as EC / G_Air) */}
@@ -901,16 +903,7 @@ export function ProcessDiagramWidget() {
             writeAllowed={!!seq.d?.pump_write_allowed} busy={circBusy === "R"} onToggle={(en) => void toggleCirc("R", en)}
             detail={cR.wired ? `CircPump_R: ${cR.label}, Enable ${cR.en ?? "–"}, ErrCode ${cR.errCode ?? 0}, käynti ${cR.rt != null ? Math.round(cR.rt/1000)+" s" : "–"}, käynnistyksiä ${cR.starts ?? "–"}` : "Pumppu R: ei CircPump-dataa"} />
           <Tank x={730} y={420} w={90} h={100} label="" sub="R" />
-          <Pump x={800} y={350} label="Täyttö"
-            state={fpLive ? fpPumpOn : pu.b("Filling")}
-            status={fpStatusTxt}
-            enable={fpLive ? (fillPump.d?.plc?.Cfg_Enable as boolean | undefined) : undefined}
-            detail={fpLive
-              ? `Täyttöpumppu: ${fpSt.label}, Level ${typeof fillPump.d?.plc?.Level === "number" ? fillPump.d.plc.Level.toFixed(1) + " %" : "–"}, SP ${fillPump.d?.plc?.Cfg_LvlSP ?? "–"}, Enable ${fillPump.d?.plc?.Cfg_Enable ?? "–"} · Pumput.FillPump`
-              : "Täyttöpumppu (Pumput.FillPump): ei dataa"}
-            onClick={pe.editing ? undefined : () => setFpDlg(true)}
-            clickHint=" – avaa Täyttöpumppu-tiedot" />
-          <Tank x={840} y={420} w={90} h={100} label="" sub="Täyttövesi (Fill)" />
+          <FillPumpSvg editing={pe.editing} fill={fillPump.d} panel={fillSource} onOpenModal={() => setFpDlg(true)} onChanged={fillPump.load} />
         </svg>
         </div>
         </div>
